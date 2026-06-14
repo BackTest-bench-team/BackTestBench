@@ -1,0 +1,609 @@
+BackTestBench — First Customer Meeting Transcript
+
+------------------------------------------------------------
+SUMMARY — Key takeaways
+------------------------------------------------------------
+
+1. TEAM & ROLES INTRODUCED
+   8-person team with roles: Business Analyst (Liubov), System
+   Architect/Tech Lead (Georgii), Data Engineer (Bogdan), Strategy Module
+   Developer (Philip), Core Engine Developer (Samy), Analytics/Sentiment
+   Developer (Maxim), Frontend Developer (Marat), DevOps/QA (Nikolay).
+
+2. PROJECT GOAL
+   Build a flexible, modular backtesting and simulation tool for trading
+   strategies — explicitly NOT a production trading bot. Focus is on
+   engineering qualities (flexibility, reliability, modularity), not on
+   making money. Customer repeatedly disclaims any promotion of real
+   trading due to risk.
+
+3. TWO SEQUENTIAL STAGES
+   - Backtesting: run strategies against historical data, compute
+     metrics (P&L, etc.), rank strategies.
+   - Sandbox/live validation: run the selected top strategies against
+     fresh data via T-Bank sandbox (or similar), without real money.
+   These are sequential, not mutually exclusive modes.
+
+4. KEY ARCHITECTURAL ELEMENTS DISCUSSED
+   - Broker Adapter: abstraction layer so the system can work with
+     different brokers/providers (T-Bank, Binance, MOEX, etc.) without
+     rewriting core logic. Motivated by flexibility (commissions/
+     conditions can change between providers).
+   - Strategy definition: leaning toward config files (JSON/YAML) or
+     simple functions rather than a custom DSL or raw Python scripts the
+     system dynamically loads — customer is open but wants flexibility
+     without rewriting the core for every new strategy.
+   - Indicators / filters / actions as composable building blocks (MA,
+     EMA, RSI thresholds, time filters, risk filters, stop-loss/take-
+     profit, trailing stops).
+   - Risk management: position sizing, hedging (e.g. oil vs silver
+     correlation), risk/profit ratios, stop-loss/take-profit, trailing
+     stops.
+   - Data sources: historical data via T-Bank Investments sandbox API
+     (or others); candles vs. tick/trade-level data; multiple instruments
+     (oil, gold, equities, crypto derivatives via T-Bank).
+   - Performance: backtesting many strategies x instruments x parameter
+     combinations is computationally heavy (potentially many hours on a
+     laptop). Vectorization, GPU (e.g. A100) discussed as future options,
+     but explicitly NOT required for MVP — Python is fine, no real-time
+     latency requirements.
+
+5. SCHEDULED RECALCULATION / TOP-N CONCEPT
+   The customer described a loop: run backtests across many
+   strategies/instruments/parameters -> rank by P&L (compared against a
+   baseline deposit rate, ~13% annual) -> take top-N -> run those as bots
+   on fresh data -> periodically (e.g. every 1-2 weeks) recalculate and
+   update the top-N list. This recalculation should run automatically
+   without manual intervention.
+
+6. NON-FUNCTIONAL REQUIREMENTS EMPHASIZED
+   - Fault tolerance: a failed backtest/recalculation run should not
+     break the system or silently corrupt the top-N list; notifications
+     (e.g. email) should be sent on failure.
+   - Reliability/testing: customer stresses this is closer to a
+     "mission-critical" system (bugs could cause large simulated losses
+     if ever connected to real trading) — testing and QA are important,
+     and the team is missing a dedicated QA role (later addressed —
+     DevOps/QA role added).
+   - The system should support adding new strategies/signal sources
+     (news sentiment, ML pattern prediction, whale tracking) without
+     rewriting the core — flagged as optional/"starred" advanced
+     features.
+
+7. OPTIONAL / ADVANCED FEATURES (marked with a star in the project
+   description, lower priority)
+   - News sentiment analysis (weighted signal contributions).
+   - ML-based pattern prediction (e.g. head-and-shoulders probability).
+   - "Whale" / large-order tracking as a signal.
+   - Multi-broker support beyond T-Bank (Binance, MOEX, US equities via
+     derivatives).
+
+8. FRONTEND / VISUALIZATION
+   Customer explicitly said a complex custom UI is NOT mandatory if it
+   doesn't add immediate value — Grafana or similar tools on top of the
+   database are acceptable alternatives, especially for MVP. Lean
+   development emphasized: don't build what you don't need yet.
+
+9. SCOPE FOR MVP (2 WEEKS)
+   Customer strongly pushed for a drastically reduced initial scope:
+   - One simple strategy
+   - One instrument
+   - One bot/instance
+   - Just "buy and sell" as a starting point, then iterate.
+   Goal: working MVP within ~2 weeks to validate direction before
+   investing more in architecture/breadth.
+
+10. PROCESS / TEAM MANAGEMENT
+    - Customer raised concerns about coordinating an 8-person team
+      (communication overhead grows roughly with team size squared);
+      suggested smaller sub-groups and clear ownership.
+    - Recommended agile/scrum-style process with weekly demos, each
+      sprint increasing product value.
+    - Customer is available roughly weekly, flexible on day (next meeting
+      also proposed for Sunday). Asked the team to set up a Telegram
+      group for async communication and possibly a smaller in-person
+      follow-up (team lead + a couple of analysts).
+    - Customer is open to giving feedback on a written requirements doc
+      / Google Doc asynchronously between meetings.
+    - Customer is also course staff in some capacity (was a developer for
+      ~7 years) and is available for technical/organizational questions
+      between meetings — doesn't need to wait for the next scheduled
+      meeting for important blockers.
+
+------------------------------------------------------------
+OPEN QUESTIONS RAISED DURING THE MEETING (worth tracking)
+------------------------------------------------------------
+- Strategy definition format: config-driven (JSON/YAML/text files) vs.
+  dynamically-loaded Python scripts vs. form-based parameters — customer
+  leans config-driven but open to discussion; final call left to the
+  team based on what's feasible without constant core rewrites.
+- Sentiment analysis scope: mock news feed to prove architecture, vs.
+  real integration with a live financial news API — customer suggested
+  starting by checking which historical news affected which instruments,
+  i.e. start retrospective/historical rather than live.
+- Recalculation frequency: customer's instinct is ~1-2 weeks by default,
+  but explicitly says "we'll see with prototypes" and wants it
+  configurable.
+- Whether to compare strategy P&L against a baseline deposit rate (~13%
+  annual) as a go/no-go filter for running a strategy live — customer
+  leans yes but flags it's not a fully settled criterion yet.
+- Handling of repeated identical signals (e.g. multiple consecutive "buy"
+  signals) — does the bot buy multiple times, ignore subsequent signals,
+  or adjust position size? Customer flags this as a real design question
+  for the Strategy/Core Engine modules, not yet resolved.
+- Sandbox vs. real account API differences in T-Bank Investments — token
+  swap may now make sandbox and real API nearly identical (customer
+  mentions a recent API version change but hasn't verified
+  compatibility).
+
+------------------------------------------------------------
+BOTTOM LINE
+------------------------------------------------------------
+This meeting establishes the foundational scope, team roles, and
+customer's mental model: a modular backtesting/sandbox platform with a
+Broker Adapter for flexibility, config-driven strategies, scheduled
+recalculation producing a ranked top-N list, and a strong push toward a
+minimal 2-week MVP (one strategy, one instrument, one bot) before
+expanding scope. Most "advanced" features (sentiment, ML, whale tracking,
+multi-broker, custom frontend) are explicitly optional / post-MVP.
+
+
+==============================================================
+TRANSCRIPT (speaker-tagged, with timecodes, as provided)
+==============================================================
+
+Спикер 2:
+00:00:01 — So, firstly, I want to introduce our team. So, we have 8 people and we partially distribute our roles into 8 roles. So, business analysis is Lyubov, who will communicate with you at the meetings, take a backlog, so reports, presentation and all this stuff.
+00:00:30 — Okay, the system architect is Grigory Georgiy, and he is responsible for connecting the different models of our product in the future. So, data engineer, so Bogdan want to have this role, so we assigned to him.
+00:00:57 — Just someone who is responsible for parsing data. Also the strategy model developer, it's Felix. He is responsible for implementing the strategies. So, core engine developer, it's Sami. For me, it's just a writing simulation. And now, as a sense, I'm the developer, Maxim.
+00:01:25 — So, the front-end developer is me, and the Ops is Nikolai. We have several questions about what is the project itself. So, time frames, what do I take?
+Спикер 3:
+00:01:53 — Okay, what time frames or historical data are we testing? We're talking about daily closing prices, one-minute candles, roll tick-to-tick order. Mm-hmm okay yeah actually we are not limiting ourselves with some exact time frame actually who has some experience with trading with something like that okay good good good good good interesting have you tried to do something like that I mean have you tried to automate your trading.
+00:02:29 — Previously. Or just, ok, this price is too low, I should buy. This price is too high, I should sell. Something like that? Or some more smart strategies?
+Спикер 4:
+00:02:43 — Ok, some more interesting strategies with analysis.
+Спикер 3:
+00:02:48 — Ok, what kind of analysis are you using?
+Спикер 4:
+00:02:50 — Okay, different types of analysis. Okay, I don't trade with patterns. I trade something like I buy and export different cryptocurrencies with different months and months, for example. Okay. And it's like average cost.
+Спикер 2:
+00:03:11 — Mm-hmm.
+Спикер 3:
+00:03:12 — Mm-hmm. Just to diversify your savings, right?
+Спикер 2:
+00:03:20 — Yeah.
+Спикер 3:
+00:03:20 — Okay, good.
+Спикер 4:
+00:03:22 — And of course, with derivatives too.
+Спикер 3:
+00:03:25 — Okay. But it's risky, of course. Of course, it's too risky, too risky. And actually, just disclaimer that I am not anyhow, you know, promote trading because it's really too risky and you can lose even money that you don't have. And this is a big problem, that's why I'm actually looking for this like from engineering point of view, right?
+00:03:52 — Because it's really interesting task. I know that this task already solved somehow. I mean, if we're talking about big companies who has like a big... I mean, good machines for doing that. They even buy, you know, some servers that is close enough to the exact market, I mean, the stock market, yeah.
+00:04:18 — So, just to, you know, to have this like small latency and so on, but we are not talking about that. We are not aiming to, you know, to gain money of the whole world, we are just looking at this like engineers, right? We are, I believe, engineers, and this idea is really interesting from the engineering point of view because, well, we have different platforms, okay?
+00:04:47 — Somebody using, I don't know, T-Bank is better for investment, something like that, right? Or Binance, you know, that stuff is a private currency or what is available right now in Russia. Okay, yeah, yeah, just general Moscow stock market, there are different providers of such services, different brokers, right, who are providing these things, but what is interesting, so some of them are, well, have better conditions than others, for example, with the commissions and stuff.
+00:05:22 — So, what is the idea, first idea maybe, okay, can we work, operate with different providers of the I mean different brokers and from this point of view okay maybe we need some adaptivity or if we're talking about some flexibility to you know provide this make it possible to do that with different providers right with one
+00:05:45 — solution so some level of flexibility if we're talking about some adapters you know that stuff maybe you you know something from the system design course something like that right you have some patterns yeah good so that's one thing another thing okay actually when you create some strategy usually it may be different strategies right you may just use this MA, EMA lines like.
+00:06:19 — Average averages just to understand. Okay, is it bullish market or bearish, right? Yeah, so you may use a simple indicators You may use some advanced indicators just to understand where when to buy when to sell how much to sell That's one thing another thing you may have some different filters.
+00:06:45 — Okay, I mean my filter out some. Some. Okay, I will not buy it after some time, for example, some time filters or some, you know, you have different levels, you're asking about different time frames, but usually we may use combinations of them, right, just to, okay, I will not open long position if it is bearish market, right?
+00:07:14 — If on the higher time frames, I see that it is like trending to the down, right? So it's...
+Спикер 4:
+00:07:22 — We need to find the bottom.
+Спикер 3:
+00:07:24 — Yeah, somehow, yeah. And don't try to find the second one, right? Okay, so the idea is to have the data, hold the data and look at them and try to make some ideas how to use it to... Okay, for this we may use metrics like P&L, right? Profit and losses, just to optimize the strategy but we will look on this more like a tool than exact strategies. All right now, what I mean that I would like to...
+00:08:02 — Okay, I have like five, let's say, ideas, different ideas. Okay, should I buy one, I don't know, future, right, or I should buy like 10 and, you know, to sell it differently with like different amount, maybe with Fibonacci stuff and so on, you know, this correction stuff.
+00:08:26 — So, and how can I create a function inside, I mean, if it will be just a function, okay, I can, just using that API, do whatever I want. But what is the problem? Actually, strategies are different, right?
+00:08:44 — And it is a problem. Maybe I would use some hedging, right? Because, okay, I would like to decrease risks. So maybe with, I don't know, futures for oil. I will take some futures for silver because they are, you know, the correlation is reversed, right? That's why I May take like some hedge for To lower the risk at the same time.
+00:09:16 — Maybe I will roll lower the profit somehow, right? But anyway. It is not. No, it's not like that, so it should be wisely, and you know this, usually we are operating with some ratio for profit and risks, right? Risk, profit and risk ratio.
+00:09:42 — Risk management. Yeah, actually it is, actually it is, but you know, I'm a mentor for industrial projects, and usually we have this like separate area of risk management. Of course you may use such practices there with different, I mean with some adaptation, but yeah, it is some risk management here, so we use all the data
+00:10:06 — with maybe different source of data, because sometimes, okay, can you use on the London stock market? I think no, you don't have an account there, bla bla bla. But you may use something from the Moscow stock market, but they are actually related, somehow there is some dependency on London stock market, right? That's why we may use this information.
+00:10:38 — Okay, can we get this information faster from there? Or, you know that we have different working time of stock markets. Yeah. So, London stock market right now is not working. Yeah. But we may...
+Спикер 4:
+00:10:54 — New York.
+Спикер 3:
+00:10:55 — Also is not working right now.
+Спикер 4:
+00:10:57 — Hong Kong.
+Спикер 3:
+00:10:58 — No, no, no.
+Спикер 6:
+00:10:59 — Asian time is working.
+Спикер 3:
+00:11:01 — Right now, I mean, on the vacation, no stock markets are working, right? Yeah. But we have some out-of-the-stock market trading, but, you know, it is risky, blah, blah, blah, but, I mean, it's different. Time difference also important, ok, we may actually predict trend based on the, you know, if our market opens at 9, I believe, right?
+00:11:33 — So, how can we understand what is the next price for oil? Okay, we're looking for the other markets like China, right, because they are trading right now, I mean, at 3-4 o'clock in the morning and so on, right.
+00:11:55 — So, we may somehow understand and put some points. Good. So, we may actually look for different sources, right, of information. Not so one of connection is to them some brokers that we may work with and at the same time we may actually gather some information from different sources plus you know what is important i believe
+00:12:20 — right now it's some news right that is actually really affect some some prices right for for.
+Спикер 2:
+00:12:33 — But you market it in the project description as a star, it means it's a bit optional?
+Спикер 3:
+00:12:39 — I mean, you have a lot of people, and I believe for you it will be really interesting to work with some sentiment analysis, right? I mean, usually it is already in use in many directions, not only in trading, so it will be useful for you in the future, just to understand what is going on And do you have some AI stuff that allow you to understand what they are writing about?
+00:13:10 — I mean, what is the sentiment, right? Just to, you know, make some actions, not only in trading, just, I don't know, for example, some YouTube videos, right? You are content creator, so actually you go through that comments and understand what is, do they really like that, what is points of improvements or something like that, so it's also something where you can use that.
+00:13:39 — So, I believe it's a good place to try it. Yeah, and some, okay, there are some advanced techniques that I also marked like with a star, right? Yes.
+00:13:52 — Okay, that with some complex technical analysis of the stock market, some different patterns, looking for that, you may use some ML models, you know, to find some correlation, maybe some, well, to predict, to make some prediction model, right, to understand what will be there, yeah, so there are different factors that are actually affect the prices, right, so that's why you may use different sorts of
+00:14:22 — information or use just some limited amount of information but with lower risk ratio, right, because you understand that at this time we have not all the information we are not actually we cannot predict whatever Trump will say in five minutes right and it's yeah yeah so actually it's a good source I mean it is a good source of information because the amount of people who you know it's like I don't know if we're talking about sports events right there.
+00:15:05 — There are some bets on the spot, I don't know how to say it, some bets, and actually how to understand who will win? Using this coefficient, right?
+00:15:18 — Of course it will not tell you exactly, but you may have some hints, right?
+Спикер 6:
+00:15:23 — That also reduces the percentage of what you can win. You are not risking much if you just follow the... I mean, it's practical to always follow the percentage states of higher side,
+Спикер 3:
+00:15:38 — So yeah. Yeah, yeah, but you may use this information also, like, fully market or... If you see, like, someone pays 1 million dollars for some event that it will occur at some day, well, most probably it will, you know, some inside trading, yeah. Yeah, but that's a different story. Let's go back to our story so we are talking about going through the
+00:16:04 — question so we use all the data that the source okay we have some API actually I tried with t-bank investment and using they have good sandbox so you may work with the sandbox and well it's pretty much safe for you so that's why I am Actually, I think we will not use real accounts,
+00:16:30 — no, so we will use historical data and sandboxes, like just to try it, you know, because it is really a big difference, so you're doing the back-testing, right, you actually try this, some strategies with historical data And you're actually expecting, okay, this strategy actually giving me like 30% P&L for a month.
+00:16:55 — Okay, I will be a millionaire in a month, right? But after that you understand that this month the market is not so generous, right? And giving like maybe 5% is good if 5, right? Or minus 10 or something, right? Because those strategies are not working, right?
+Спикер 2:
+00:17:16 — So, yeah, for a long time we were talking about some strategies, so we can use some open source strategies for the market.
+Спикер 3:
+00:17:31 — Okay, you may find some already existing strategies, yes, but what I would like to test, I mean, you know, to create this, some rules that I'm describing, some form, and actually. I'm checking that it works somehow, maybe with, you know, testing with different parameters and actually start some calculations, right, and go through whole historical data, maybe on the different instruments, I mean, some oil, silver, gold, whatever.
+00:18:05 — And then I'm checking how it's working on different tools, with different parameters, with different strategies and then looking for something that is that may work at the same time I would like to have the proper visualization of that because sometimes you see okay I would like to visualize this all the trade
+00:18:25 — that some strategy did just to understand okay this strategy usually tend to you know to sell early or buy early maybe I should increase the the window somehow and so on right just just to see it yeah so i would like to have some flexible way to describe it right and i uh without you know need for uh rewrite everything
+00:18:54 — in the solution right usually it's going like that because strategies are different and that's why usually you need to make a lot of adjustments in the core that's what I would like to actually avoid so I would like to you know to have maybe some specific language I don't know how to form it you know maybe some simple functions that will come in combination will create a strategy and.
+00:19:29 — It's a good engineering task about finding this flexible way to combine this diversity of action that you can do among these strategies, right?
+Спикер 1:
+00:19:46 — So like some flexible parameters you're talking about?
+Спикер 3:
+00:19:49 — Yeah, it's maybe like parameters inside some action. Like, OK, we have some, I don't know, for some indicators. We're using some indicators like a signal for some action, right? And we actually try to calculate what's the best parameter for such indicator, right? For example, okay, should I buy when RSI will reach some level like 60, 65 or 70 percent, right? So, and I actually trying to find the best value for such instrument.
+00:20:27 — For example, oil, right? So, I'm using, let's say, futures, right? So, I'm selling some derivatives with the oil and actually I'm trying to understand when to enter to the trade and when to exit.
+00:20:45 — And actually, this signals, let's say, is going from some bunch of indicators, right?
+Спикер 1:
+00:20:53 — So, we are trying not to predict the market, but we are having already the behavior of market, and we are setting our strategies according to this behavior.
+Спикер 3:
+00:21:04 — Actually, it is already a prediction.
+Спикер 1:
+00:21:07 — Yeah, but the point is that we are not building the behavior of the market, we are already taking some data about it.
+Спикер 3:
+00:21:15 — But usually when you make some prediction, you're taking some historical data and actually trying to understand what will be there. Because actually when I'm trying to understand, when I enter some trade, that means that I make some information somehow, right? That the chances that some point, let's say I'm buying some active with 100, right?
+00:21:44 — And then I predict that it is more likely that it will reach 110 then 95 let's say and with that window I start this trade so it is about somehow a.
+Спикер 1:
+00:21:58 — Prediction yeah but how the result will be like we do not what exactly will happen with this why that's how I see I mean there are two different ways first.
+Спикер 3:
+00:22:12 — Of all is back-testing when you just using historical data and well pretend that it is okay you have this part of data what will be next you don't know yeah actually you know because you have next part that's what I was asking yeah yeah that's one thing another thing you have already some strategies and you may actually run in parallel different bots let's say trading bots which operating
+00:22:41 — on sandbox with real data which is going to you in real time there are actual different ways to extract this data let's say one of them is just to get candles right so we're operating usually in candles you know that was candles is right switch it came from Japan okay yeah and and another way you can have
+00:23:14 — data from the real trades that is was right now I mean was finished right now right and with it is an anonymous some actual data yeah like online more like sales okay I sell one one one thing and it is actually you can see my cells in the stack on right so it's you can know it's the kind you know how to say it in English but I don't know what is proper word in in the this domain yeah it's.
+00:23:49 — But actually you can see how many trades someone actually would like to have with some prices, right? And there's another way like log of trades.
+00:24:03 — And the last trade actually defines the price of some instrument, let's say, right?
+Спикер 4:
+00:24:10 — I think also we need to indicate stock loss, I think, and take profits.
+Спикер 3:
+00:24:15 — Yes, yes. There are different ways of that. It's about risk management right from one thing another thing you have some trailing stops and so on there are different strategies interesting strategies you know even with this trailing stop you you may play with percentage when you you know you will trade a trail with this i don't know different you will divide this you buy 100 and divide it by parts with different levels of
+00:24:47 — risks and so on and you may find a good way to find something more stable that works in more cases yes okay so if we're talking about specific historical data set so you you may use some API's like T-bank investment or others or you don't have a limitation here so you may extract as many information as you want, it is available I mean there is no problem with with that.
+00:25:23 — Strategy definition, how do we envision user defining strategy? Should we write a. Python script that the system dynamically load or should we fill out a form with parameters? Actually it's a good question about how should I define this strategy Because from one side, I mean Python scripts is okay, but it depends how many things I should change actually to define this strategy.
+00:25:54 — Because sometimes you need to rewrite some core part to make it possible to use some operations, let's say, to use some indicators, do some combinations with his trailing stops with his filters for example with
+00:26:12 — time right because okay if I'm usually when you working with I don't know derivatives you are not was when market is really volatile right it's correct in English. I think so. With high chance of change, right?
+00:26:41 — Yeah, non-stable market, okay. In this case, it is really risky to actually transfer position to another day. Yeah. So, and you work in intraday. That means that you would like to open some trade at, I don't know, five minutes before the stock market will close, right? That's why you may actually set up some filters, okay? We are trading from this time to this time. We are not actually...
+00:27:18 — Some signals during the other time, we are actually... Something like that. So, some filters that may be actually applied for the trading bots, let's say. So, yeah, I think when you will start to work with these strategies,
+00:27:38 — you will try to define, okay, some simple strategies that may be and try to implement it in your solution, you will understand how it's really hard to make some common way to and you know that will not broke everything else right it's something that is well it may be you know some files some extra I don't know some text files or some JSON
+00:28:05 — files whatever which will define the strategy itself and actually you will you may run it yeah you may run different strategy at the same time but it's something different I believe okay your sentiment scope or the sentiment analysis model should we mock a feed of news headlines to prove the architecture or do you expect integration with a live financial news API actually what is
+00:28:34 — interesting here let's maybe try to decrease our scope with what okay we already have some historical data right and we may actually may actually understand which news affect some stocks more than others and so trying to find this but you know what's right now it's interesting many companies using that
+00:29:03 — sentiment analysis and actually other well other people try to manipulate with the news right and trying to okay to put something some loud headers with to make okay this thing like slating so yeah we should also should be extra careful with
+00:29:31 — You know that usually what we're trying to understand, okay, right now, at this point of time, so we have different sources of information, we may actually use these sources of information with some decisions that they are suggesting, and make some, you know, have some weights to multiply all of them to make some decisions.
+00:30:04 — So, it's maybe the best way how we can do that, right? So, we're using different approaches, and actually try to take them into consideration while while we are, well, try to make some trades, right?
+00:30:22 — Maybe it is a good way, so when you actually separate these models, right? So, our sentiment analysis models telling us that we should go down with some, maybe, probability or something. It may be, you know, these weights may actually depend on the probability which tools are giving for exact situation, right, maybe I'm sure that 100% sure that it will be something, I don't know, that will affect it and it will go up, right.
+00:30:57 — That's why I may actually use this with some weight just to, okay, maybe with higher weight if it is 100%.
+Спикер 2:
+00:31:08 — Yeah, sure. We can add this sentiment analysis just as a part of the advanced analysis? Yeah. Maybe we can use AI?
+Спикер 3:
+00:31:18 — Yeah, maybe, why not? By the way, have you tried to make some trades based on AI analysis?
+Спикер 2:
+00:31:28 — Yeah?
+Спикер 6:
+00:31:29 — Actually, no, sometimes.
+Спикер 3:
+00:31:31 — Okay. Sometimes, yeah. You know, it helps you when you are zero in trading at all. And you're starting your path and actually you understand better.
+Спикер 6:
+00:31:40 — It just gives like a vague answer. Yes. Okay, this is not here right now, so try to get into it.
+Спикер 3:
+00:31:48 — If I'm not mistaken, Opus actually added some financial analysis in the last model. So, I don't know how it works, but I haven't tried it. I don't really believe in that. But what I know that if you will upload some picture of a chat into some, I don't know, perplexity or something, it will give you some analysis of what is going on.
+00:32:15 — So, it may read pictures and explain what is going on. So, you may, it's maybe one of way how you may analyze. So, it's like a second, third, fifth opinion of what you may look at or not.
+Спикер 2:
+00:32:34 — So, we can just use AI to parse the data, it finds some keywords and just using these keywords...
+Спикер 3:
+00:32:42 — It depends. I mean, if you're using charts, it's one thing. You may actually upload CSV file with the last phrase or whatever. Or you may upload, I don't know, your last trades that you did, and, man, okay, try to make some recommendations, what is wrong, just, you know, analysis on your trades and maybe you, it's a way how you can improve your strategy, let's say.
+Спикер 6:
+00:33:11 — Like, use AI to monitor news that has happened and how it affected the trade as well,
+Спикер 3:
+00:33:18 — So. Yes, yes, yes, yes. But only thing here that usually right now people are manipulating with the news really intensively, just, you know, they're using some really not, well, huge news agencies, some reputable, yeah, reputable news agency just you know to make some like fake news and so on just to manipulate the market yeah yeah I think do you have any other questions.
+00:33:58 — So, actually, we go through all of them, right?
+Спикер 5:
+00:34:06 — I have a question about functionality.
+Спикер 3:
+00:34:09 — Yeah, okay.
+Спикер 5:
+00:34:09 — Because you said not to focus on functionality in the description of the project. Not the main focus.
+Спикер 3:
+00:34:17 — Not the main focus on the training itself, but it's more about technical stuff. But, of course, you need to understand what you should do, right?
+Спикер 5:
+00:34:25 — Of course. Functionally, as a user. What do you expect him to be able to do? So, we already have the full timeline of some stock market, for example.
+00:34:43 — So, I understand that we give the user the possibility to buy anything, to sell anything at this, like, at some point of time and see what will happen with his accounts later.
+Спикер 4:
+00:35:01 — I see that...
+Спикер 3:
+00:35:02 — Okay. For now, we are not connecting directly with the real sales, real trades, right? Because it is dangerous, blah, blah, blah, and you know what's important? Usually people using some vibe coding to create, you know, some solutions with that and, or even without this vibe coding. Anyway, you will have some bugs inside your solutions, and it may actually have big losses for you.
+00:35:30 — Because, okay, some price may be different. He expects some data, I don't know, pricing points, and actually provide pricing rubles. And it will create a crazy stuff for you. I can guarantee that it may actually, you may lose all your money just because of small bugs inside your solution, inside this box.
+00:35:56 — That's why I actually wouldn't like to try with a real trading account. So, if we're working with something, we're working with sandbox.
+Спикер 5:
+00:36:06 — So, like, why do we need historical data? Hmm? Why do we need historical data?
+Спикер 3:
+00:36:11 — Why do we need to... Okay, we have strategies. How to understand these strategies works?
+Спикер 2:
+00:36:19 — It is...
+Спикер 3:
+00:36:20 — Yes, it is fact-testing. We try to understand how these stocks will behave based on the data from the history.
+Спикер 5:
+00:36:32 — But, like, the user doesn't need historical data. He doesn't, like...
+Спикер 2:
+00:36:36 — You know, in this...
+Спикер 3:
+00:36:39 — You know, I know what is the problem. Who is the user? For now, it is not a guy who will actually use these trading bots, it's a guy who creates these trading bots, testing some strategies, and then may use this data, these bots for real trading, right? But may not. I mean, for now, I'm looking only for this part when we're creating this. And I'm a user who's creating these bots, but I'm not a user who's using them.
+00:37:09 — So, it's the main focus, right? That's why we need...
+Спикер 2:
+00:37:13 — Maybe let me write something, right? Okay, thank you. So, we have several models, right? Some back-tests. Back-tests. So, what do we have? We have different data that is going here.
+Спикер 3:
+00:37:32 — From the stock markets, some historical data.
+Спикер 2:
+00:37:40 — What we need for that also, like extra input, is strategy, strategies, right? So we actually providing this information regarding data that we have and strategies that we would like to check on this data. With this history, it may be different, actually stocks, it may be different instruments, right? So, it's not only like one separate or maybe only one.
+00:38:13 — So, I will actually show maybe some, we will have some extra data about what to check, right? But actually, we may provide this inside the history just to show which exact data to provide. On the output, like an output, what we will have?
+00:38:36 — Results. So we will have a list of strategies with some data like P&L, some metrics, yes, yes. So we would like to have some metrics with this strategy. I think that's all, right? So it's like if we're looking at this like a big whole page and this is like one for us, right? So we have history, we have strategies, we have a list of this.
+00:39:05 — Well, soft list of strategies. Well, after that, we may have another box of visualizer, right? Of such strategies. Like an input and some graphs like output, right? It's one part. And for now, it's not connected to trace anyhow.
+00:39:32 — I mean, you may use API of some stock markets or some brokers just to get this data. That's all. But for now, there is no trading here.
+Спикер 3:
+00:39:44 — After when you have this list of soft strategies,
+Спикер 2:
+00:39:47 — You would like to create another module with what? It's trading bot. Right? Okay, so you have a training bot, so you're actually sending input to this list of strategies. You may tell it, okay, try top 10 of this with their symbols.
+00:40:16 — And like an output, you will have also this list of strategies, right? With these metrics and so on, right? But with the real data that you have right now. Something like that. What am I missing?
+Спикер 6:
+00:40:38 — That refers to strategies you are talking about. Is it the strategy that you put somewhere?
+Спикер 2:
+00:40:43 — List of strategies. List? Ah, strategies. List of strategies. How to have it?
+Спикер 6:
+00:40:49 — Yeah, do you mean like whether what we are using exactly, if it's news or... That's what I want to know.
+Спикер 2:
+00:40:59 — For now we are using some common meaning, some common sense of strategies, right? We are not... It's like abstraction, right? For now. But another thing is like big task. Big task, how to actually make implementation of this abstract entity, right? Strategies. What a strategy is. And how to...
+00:41:25 — Which information may be there. Because it is not so simple, let's say, right? Because we may actually add in strategy what you want to add. News, some, I don't know, some prediction, maybe, you know, phase of move, also may affect. I mean, you may add it in the strategy. Whatever you want to add, just to check, okay, what will work better.
+00:41:51 — So we try to predict, you know, with some... It is a question what will be better for now. And, I mean, the way, how you will form that. It may be some indicators, of course. I will suggest maybe some of them, right? Indicators. Some filters. It's like... Let's say filters.
+00:42:21 — Some actions.
+Спикер 1:
+00:42:22 — Keywords, maybe. Keywords.
+Спикер 2:
+00:42:25 — Keywords? You mean in the news, right?
+Спикер 1:
+00:42:28 — Yeah, yeah, maybe.
+Спикер 2:
+00:42:30 — Yeah, I will write just news, news, or maybe some sentiment analysis, maybe keywords.
+Спикер 4:
+00:42:41 — Also, I think we can follow big money. Wages. Wages. Yeah.
+Спикер 2:
+00:42:55 — Yes, I'm doing this wrong. Correct, but anyway. Whales and what else? And you actually, what the strategy is? So it's like signal, right? For enter, enter signal. Signal for exit, right?
+00:43:22 — And maybe actually it's not signals, because sometimes you may generate different signals for, so you open some, with different risk factors, you may open different traits, right? At the same time, with one image, at the exact point of time, right? So, you may use everything like strategy here, but it should affect somehow and you may flexibly using the same modules with any strategies you have.
+00:43:59 — Of course, with some new strategies, I don't know, how you will include, for example, new module, new function of whale analysis if you don't have it inside these modules, right? So, you need to add as much as possible from one side, from another side, or, you know, provide a way how I can add it seamlessly.
+00:44:35 — You show me. But you said that it's as a creature of our black box. We get the list of statuses.
+00:44:47 — But why don't we get a list of statuses and not just a matrix, for example, number of transactions, profit, risks? Sorted list.
+Спикер 6:
+00:44:54 — We'd like to know which strategies work best.
+Спикер 2:
+00:44:57 — Ah, so we apply all strategies? Yes. Ah. Just to understand which one is better. We make a sorted list.
+Спикер 5:
+00:45:06 — So, we're not doing the training book. Training book is the one who uses our sandbox tool.
+Спикер 2:
+00:45:11 — You know, we will try, as one part of testing, so we're supposing historical data we're looking for. For now, it's working right now with trading bots. And we may, you know, have a bunch of such bots for each strategy that we actually define, like some best strategy or whatever.
+Спикер 5:
+00:45:32 — To test how good perform the block testing?
+Спикер 2:
+00:45:35 — Yes, yes. I mean, not... We actually already defined how it works with...
+Спикер 5:
+00:45:42 — I mean, how good it works.
+Спикер 2:
+00:45:43 — Yeah, I mean, how good it works, these metrics will say. But, how good it works right now... This is also part of... Yeah. I mean, usually, it will... There are implementations of these two really close. It's just the same thing, but... You may have, like, common block...
+Спикер 1:
+00:46:05 — Different data.
+Спикер 2:
+00:46:07 — Common block that will use this and this. I mean, just to decrease the amount of code, you know, it's not only about code decrease, but it's more about maintainability, right? It's another important stuff here, because usually when you're creating such stuff, you're spending a lot of time to correct this, this, this, this, this, this, but you can do this only once in some utilities or whatever model that you will have for a lot of them.
+Спикер 5:
+00:46:46 — And, like, I didn't really understand why implementing this, like, strategy is so hard.
+Спикер 2:
+00:46:55 — It's not hard. I mean, it's hard to make it flexible.
+Спикер 5:
+00:46:58 — Ah, ah, okay.
+Спикер 2:
+00:46:59 — It is easy. It is easy to implement. I mean, it's like that, but it's hard to make it, you know, you're adding something new, and it is not broken this one. It is, here we're starting some, you know, some design tasks, some architectural tasks just to make it, you know, flexible enough, maintainable enough, you know. And if we're talking about different sources of data, right, we have not only one way, one source of data.
+00:47:31 — So, we have different sources. We may have. So, Ed, you know, what if it's not only sources? What if I'm using different brokers? For example, can you trade cryptocurrency of Moscow market?
+00:47:53 — No? That's why you need to use another market, another stock market, to use the same stuff, but you need some, you know, different implementation for some adapters, let's say, if we're talking about exact architectural decisions, right?
+00:48:11 — So we have some adapter that will allow you to use different brokers, just writing this wrapper for some, okay, broker, right? Just to define what means sell, what means buy, and so on, right? So, you just adapt it to the API that some broker provides you. So, another thing is adapter. Data broker adapter, let's say. It will be used by that, and by that, and maybe by that.
+00:48:52 — You know, if it is common, it may be even better to do like that.
+Спикер 5:
+00:48:57 — And we need to visualize the strategies of bots also, right?
+Спикер 2:
+00:49:04 — Yeah, why not? Even if it's common, it's really easy to do. Should we have a site or a website? I don't know, should we have... If you ask me because we need to actually have a front-end role right here, for me it's okay if it will be just a Python script or whatever, I mean it's not really important to have front-end part.
+00:49:37 — I mean, for now. Maybe we'll use this visualizing or stuff that we may add somewhere. Maybe we'll use just, I don't know, Grafana or other tools to visualize it. I mean, don't try to avoid creating something that you may not need. You know, this lean development, when you try to actually do what actually matters.
+00:50:04 — But in general, this historical data is not quite similar, because it's just the curves of some currencies or acts. If it doesn't include some news. So, broken adapter is just some adapter mechanism for using different APIs or different stuff. Yes, true. Here, actually, I have a list here, like some list of strategies.
+00:50:34 — It may be a list of lists for different instruments, like oil, gold, something like that. So it may work differently, different strategies will work differently with exact moment of time. It also depends how broad your historical data is. It may be like 1 year, 10 years, 1 month, right?
+00:51:01 — But if you will have a lot of information, you will spend ages to perform that. From the other side, should you have this like total information? No, because, well, there is something specific on the market. Let's say, oil is really affected right now by some crisis, you know, some Middle East, right?
+00:51:27 — That's why this time starting from the end of February till now is really different from the time that was before. So, in this meaning, you may take all of that information from that time just to perform, you know, from one side just to decrease the amount of calculation, because if you will have a lot of parameters of the strategies, different strategies, different parameters, it will take you, well, a lot of time.
+00:52:00 — We may think about how to do that calculation faster, it is not a task about performance, because we may have some cap on the time that I should spend to calculate. If it is calculated in one year, it's not okay for me, right? That means that we may use some different approaches of vectorization, using some GPUs and so on.
+00:52:27 — Actually, we may try to find some hardware to make it faster. I mean, for example, we have this innovative app, right? You may actually run some GPUs like A100 and actually make it much faster, right? But you should actually create it with that in mind that it should be populated by the GPU,
+Спикер 3:
+00:52:56 — for example.
+Спикер 2:
+00:52:57 — It's a different task if you compare it with CPU population, right? So actually, there are a lot of ways to think about these tasks, so I don't think that you will feel that you have not enough to do, even for people. By the way, what is your goal of the course?
+00:53:26 — Maybe I haven't asked it before, but it's an important. Yeah, I mean, you know, we are expecting that our goals are shared, but actually it is not. Someone expecting, okay, I would like to have a sea and that's all. For me it's all.
+00:53:52 — I wouldn't like to go in deep with that. I would like to spend my summer days chilling and so on, right? For some, it is a way. For other people, it is, OK, I would like to try to understand better architectural stuff, blah, blah, blah. I would like to have experience, to have work earlier, right? Another goal. You may have different goals. And actually, when you create a team, when you have eight people from one side, it's good.
+00:54:22 — You have a lot of resources. From another slide, it is a big headache. Who is the manager? Team lead. Okay, good. Good luck to you. Because usually, you know that usual, let's say, agile teams is like 5-7 people, right? It's not just, well, if they can take more people, they will, but they're not.
+00:54:52 — Why? It's hard to manage sometimes. Yeah, you know, it's not because two pizzas is not enough to feed all of them. There are like pizza principle, you know. The good thing is when you can actually feed them with two pizzas. No, it's not about that.
+00:55:13 — It's about communications. Because you're creating different points, you know, and you have eight people, each with each other, which will create a lot of communications. It's really hard to, you know, to visualize that, but you understand the idea. And each you will create, Well, it's exponential growth, right?
+00:55:45 — So, well, that's why one more doesn't mean better somehow. But, okay, it's good. Good experience for you. I need just to understand that managing a large team is, well, not easy. So you should think about some ways, some tools of managing that you will be using just to help you not to cry.
+00:56:15 — Yeah. Good, good, good. So I think, just I'm asking about your goal. It's maybe not so important for me, but it is like important for you. Just to understand that you actually share the same goal. Good, good, good, good, good. Because, I mean, this topic is, well, interesting enough.
+00:56:43 — I don't think, I'm not sure that you will use it somewhere in the future to gain, like, millions and so on. But it is possible somehow, I mean, to gain something or lose something, right? So you may use this result as you would like to use it. But still, yeah, of course, it's losses and so on, risks, blah, blah, blah, you know.
+00:57:13 — So what is important? It's much better if we compare it just, okay, I'm a newbie, I would like to trade. I put all my money for the red, right? And it's much better because you have strategies. You understand why you are doing that. You actually limit your risks with stop-losses.
+00:57:38 — You already predefined what you will do there. So you are not actually losing everything at once. And it is important. You have strategies. You have a systematic way how you're actually defining your strategies. You're defining some metrics. You're defining some strategies. You're trying to understand which is better and applying it.
+00:58:06 — Actually, what is important here? Wow. Another question. How often you should update these metrics, right? Okay. Matrices?
+Спикер 5:
+00:58:21 — Well, I mean...
+Спикер 2:
+00:58:24 — With time it will differ.
+Спикер 5:
+00:58:26 — I mean... Every week?
+Спикер 2:
+00:58:30 — Yeah, that's the question. Maybe every week, every month, every... Well, two weeks. Two weeks. I thought that the user is coming to the website or something. And just click that, show the results. These results appear once. You think that it should update automatically? I mean, I believe so.
+00:58:58 — And it is an infrastructural part. And data works, let's say. I'm not doing some high-frequency training. No, absolutely. Yes, that's true. But it's about infrastructure. How it will support your... They stop. How you will update your data, how long you will update it, how it will affect your bots, how updated is your list of strategies that you will apply, how you will actually execute those bots in parallel.
+00:59:31 — You know, even with one strategy, it is a question. Okay, let's. Like that you have some curve, right. Okay here you have a signal to buy. You make this buy Okay Will you stop on taking these signals or you will proceed to that to take the signals in actions? Like here you have also signal buy.
+01:00:05 — You will proceed buying or not? Okay, here you also have a signal for buying. Okay, that's a problem with buying.
+01:00:20 — It is a question, right? So, with one bought, you may do that several times or you will stop buying when you actually enter the trade. Is this handy part just for configuring? Yeah, it's about strategies, I believe. But actually, it makes it really harder to make this bot.
+01:00:48 — You should actually take it into consideration when you're creating this bot. Because why is it important? When you have one trade for the bot, it's extra easy. Because you are not actually care about amount of money that you have, right? But when you have separate, several trades for the one bot, you should care about money that you have right now on your account, right?
+01:01:22 — I mean, you can do the, like, just add 1 million and it will give you 1 million in Sandbox, it's not a problem, but if you would like to, you know, change your account from Sandbox to real account, what will be?
+01:01:43 — Because I told you that we are not talking about real trading right now, but it doesn't. That doesn't mean that we shouldn't care about it at all. Because if I change my account from the expert one to the real one, I should use the same both to make trade. But if we use the same both, our shares will not differ from online casino.
+01:02:12 — I mean, these signals depend on how we configured the history and strategy. But when we are doing the same at the T-Bank investment, we cannot just apply the same thing the same way.
+01:02:36 — By the way, if I'm not mistaken, the last version of API of T-Bank Investments, they actually changed the way how you're operating with Sandbox to make it exactly the same way like you're operating with a real account, you just change a token. But, you should, well, maybe I will try, I will check, maybe, I don't know. Is the real account, just to understand, is it compatible with the real API? Because the versions of them are slightly different.
+01:03:17 — Okay, you cannot add money, like 1 billion to the account. In the sandbox you can, in the real account you should actually give some money, right? You will not trade like that, right? It's like some difference comparing with the sandbox.
+01:03:44 — Yeah, it's a huge work. But most of the work is concentrated at the strategies. Some of them, yes. One part of this work is about architectural stuff. How you will actually create this architectural platform.
+01:04:10 — Yes, yes, yes. How you will support it with infrastructure. Okay, it's good when you do this recalculation every, I don't know, every two weeks, let's say. And then it affects the list of top 10 mods and it will actually execute not previous 10 top, but new top 10.
+01:04:37 — So, today I'm actually executing top 10 from this list, right? But after the recalculation, this top 10 may change. So, I should actually execute different top 10, well, next date, let's say, after recalculations. But you say the server is not reconfigurable. So, this regular update will include only those configurations that we set?
+01:05:05 — Or it also has to calculate by different measures that we set? Okay, I got the question. So, actually, we may add some strategies that will affect this recalculation and, you know, that data is changing. But it should be updated automatically, I mean, without our efforts on our side.
+01:05:33 — Let's say, so I run it and it's operating. I don't know, you may use some Chrome or something, you know, just to use this, to run this backtesting and actually, yeah, update this list. It is actually the source information, which strategies to use with which instruments, right, and actually which bots to run, right?
+01:06:03 — And maybe, you know, I think there's some important non-functional requirements here. It's about fault tolerance. Because there's something wrong with that. Okay, our backtesting didn't happen. For some reason. We haven't updated this list.
+01:06:29 — What should be? Should I work with the same strategies that I had before? From one perspective, we should work with the same, because, okay, we're talking about some fault tolerance, right? So that some faults are not affecting our iteration, right? From other side, it somehow increases the risk that something wrong, right?
+01:06:56 — That we may actually have lower P&L of time, you know. What should happen after that? I believe we may add some notifications. Maybe, I don't know, on the email, whatever. About, okay, this model wasn't finished successfully. Because I should know that some changes happens.
+01:07:23 — Or not happens, right? Because it will affect maybe PNL at the end because it may be different based on the recent data, right? Okay, and this is about fault tolerance and this is about reliability. I wouldn't like, you know, to catch some bugs when I actually may use it for the real account.
+01:07:55 — So, we need some extensive testing here. So, maybe in your list of people, I haven't seen someone who will be reliable for, who will be responsible for QA. So, it is important part. If we're talking about testing, there are also DevOps and QA. Okay, maybe I wasn't seeing that.
+01:08:21 — Okay, good. Because, you know, What is important right now, even more importantly, when you're using some AI tools for code generation, to check that it's working as you would like it to work, right? And testing becomes more crucial these days.
+01:08:43 — Yeah, and if we're working with some, let's say, mission-critical system, We may name it like that because, you know, there is different type of criticality of software, right? There is like life-critical systems, where you will test everything, because some people may die because of the system. I don't know, some medical things, some avionics. There are different types, different systems of this type, life-critical.
+01:09:16 — Mission critical, when the company may actually stop existing because, well, of some bugs inside the system. Because I believe that one bug inside this trading bot may actually affect big losses that actually stop operating of this. Yes. Very narrow.
+01:09:42 — I mean, some person who is using this, you mean if this part failed, it will have a big impact. Yes. Huge impact and actually it may actually stop working with this at all. Because, okay, if you have some big losses, I don't know, you really believe that this And this part will, I don't know, give you millions of monies, right? And you're using that.
+01:10:14 — You go to the bank, you take some credit, you take some million and putting it here. And eventually, even if you have not lost everything, You may actually not gain good enough to cover that interest that bank will expect from you.
+01:10:38 — So, let's say you're taking a credit for 20% and you gain 10 from this loan. It's not enough. It's better not to take anything, right? So, you may actually, when you see that, okay, I will not work with that anyhow. Or even worse, you get it for 20% and you lost 20% more. So, eventually, we have minus 40.
+01:11:08 — Good enough, right? For the trading. So, you mean, if we have this list of places to see, the best one shows 10% margin, And the teapot after the testing on the news data shows only 5%. We shouldn't start at all. Yeah, but... Okay, and here we may add to know that we compare with the list of, I don't know, deposits.
+01:11:38 — Deposits. That we may actually put money. We compare the profit with that deposits. Our best strategy. If it is less than that, we may not start to work with that. For example, there's also a way how to outweigh that. Because after the update, let's assume the situation, after the update, your strategy becomes worse.
+01:12:04 — Because, okay, before you... Oh, it's really simple to imagine. I actually worked with oil because of this conflict in the Middle. And it gives you big profits because the market is unstable. After this conflict will be finished, what will be?
+Спикер 4:
+01:12:30 — The price will return to the bank.
+Спикер 2:
+01:12:32 — Yeah, maybe, that's one thing. And we lose this, market will become more stable. And you will not gain this percent that you would like to have. And this time you should start to execute the plot because you may not gain those money that you want. Actually, maybe it's not so important here because, well, such strategies may just noticeably generate signals and that's all.
+01:13:03 — But from the other side, what if it will be differently? It will change in another direction. Another content will start and it will change how you trade, right? Yeah. You know, maybe some notification model will be important to create about the process, how it works, right? Maybe some reports at the end of the day. It will send me an email. I'm looking for the good numbers, green numbers.
+01:13:32 — And with these strategies and so on. And maybe something wrong with updates, something, maybe some strategies changes drastically and we need to take some actions about that. Right? Yeah, it's not like complex system, right? Complex. And complex, it's even more interesting, right?
+01:13:59 — That's why I chose the program. Super, super, super, super. I like this idea. I will work on this, actually, if I have enough time. But I don't. That's why, actually, I suggested this project. Because from engineering point of view, for me, it's really super interesting.
+01:14:26 — I mean, how to create such system. You're talking about flexibility and stuff.
+Спикер 1:
+01:14:33 — And what about the stack? Do you have some preferences, or do we choose by ourselves?
+Спикер 2:
+01:14:39 — You may choose. I mean, if you're not using Haskell or something for that, why not? I think Python is the simplest way to create that. I understand many languages, but nowadays with LLM it's not a problem at all. I mean, it would write it in something, right? That's why, but, well, Python may be good, simple enough.
+01:15:09 — Yeah. Anyway, we're not working with a real-time training where seconds matters, like milliseconds matters, right? So we shouldn't care about some performance of some exact commands of language, right? Yeah, because we have no servers in Mannheim. Yeah, yeah, yeah.
+01:15:39 — We have other roles, DevOps. But after the discussion, I think we don't really need this role. I think so. Do we need this? DevOps slash MLOps. Not ML data, let's say, right? But, you know, nobody tells you that in these strategies you may not use some ML model to predict that, right? It's another good way how it's operating.
+01:16:10 — I mean, usually, it's like simple models. If you're just using some ML model to predict the price, why not? Just advance analysis. Yeah.
+01:16:25 — So, here I might add a canal part and there are different ways how you can actually extend it.
+Спикер 5:
+01:16:36 — Did I understand correctly that different race bots they just chose the different top 10?
+Спикер 2:
+01:16:43 — No, not the top 10, exactly exactly, like let's say top 1. Yeah, top 2 and so on, so you can go with top, I write 10, but it may be top n, and it may be configurable with, or it's maybe not top 10, maybe p and l more than 10, or.
+01:17:14 — P&L more than deposit P&L. No, profit. It's not losses, I believe. If you're talking about deposits. Profit. Deposit. Call. Deposit. Let's say like that.
+01:17:40 — If I know that our current deposits can give me like 17%, should I start strategies that will not generate more than that? I don't know. Maybe yes. If it is safe enough, why not? I'm not sure about this part, about this criteria right now. We will see when we will have the first prototypes, right?
+01:18:09 — What is good about that, we test it before applying it to the real scenarios, right? And we actually may understand which scenario is more preferable. If it will give me… No, I think we should take into consideration what if I will not put this money in the investment, I will not get this money, I will just put it in the deposit and I will get safe 13%.
+01:18:42 — But at the same time, these numbers, this P&L doesn't guarantee that it will give you exact amount, right? It may be less, it may be more. So maybe at the top, n will be better in this case. Is it understandable?
+Спикер 4:
+01:19:07 — Yeah.
+Спикер 2:
+01:19:08 — Okay, good. This topic is really interesting. I would like to have something like that when I was a student. But at the same time, you should be extra careful about trading itself. I'm not promoting it anyhow. Just a disclaimer that it is important. Because I wouldn't like that you will end up with, you know, big losses because of, okay, your tool is not working.
+01:19:36 — I expected to be a millionaire and I'm actually having big debts right now. So, yeah. But, you know, some extra critical thinking will begin, I believe, with this tool. You will understand how it may differ from time to time, From text testing to real training and so on, it's important.
+01:20:02 — And another thing here, maybe... I don't know, I forget about it. My window of context is so short. Yes, yes, yes, yes. It's a good experience to create some real systems. That will create some value, right? You will understand better this stock market and stuff.
+01:20:32 — I believe it may be useful for you somehow. Yes, some risk management, right? Good. So I believe we should update the history. Because if we also update it, our database is getting larger and larger.
+01:21:01 — But we have it limited. You really just update this list. Or even, actually, don't really care about this amount of database. It will not be gigabytes. It will not be in terabytes. I mean, it will be, like, pretty much small, let's say. I mean, this metrics and, like, strategies like this, well, instruments, it will not, like, run 1,000 of rows per one time.
+01:21:30 — I'm not telling you this every hour, right? Maybe even every day is too much. Maybe in one or two weeks, you may start with this number. But it should be configurable. If you will see that, this number is not really changed much. Maybe it will decrease.
+01:21:53 — If you will see that it is changing really, I mean, data from that is really different from that, maybe it's a sign that you need to update it more often. It's my suggestion. I don't know exactly how it works. So, we will see with the prototypes. Because, as I said, because if we use the same strategies on the same history data set, we get the same results. And if we want to update the...
+01:22:28 — Yeah. We need a good difference on the history, right? Because some little portion of data will not affect much, right? Maybe. That's why I believe that two weeks is maybe good enough to make this update.
+01:22:47 — But, at the same time, make a guess how much time we will spend to calculate, let's say, ten strategies by ten instruments with twenty different parameters of strategies.
+Спикер 3:
+01:23:04 — On that, two months history.
+Спикер 2:
+01:23:09 — Three months history. And so on. You got the point, right? This calculation will take days. With good hardware, maybe hours. That's why I mentioned that performance here is not something desirable, it's a must. Because it will take a lot of time.
+01:23:41 — That's why I mentioned some GPU calculations, it's also a good way to practice your multi-threading It's all about how you're calculating, because dealing with your calculation, if you compare calculation with A100, NVIDIA A100, the server video card.
+01:24:26 — With some CPU on your laptop, well, you know, the difference will be huge. And if you will prepare your data to make it, you know, vectorize some calculation and stuff, it will be even more faster.
+01:24:42 — I checked, I checked some strategies previously, and. And actually, it took like maybe 20, 40 hours for some simple strategies. But by my laptop, not something huge. It's like i7, like maybe 10th generation of Intel. So it's not really powerful enough, but at the same time, it will take some time.
+01:25:09 — And adding new parameters, you know, increasing much. So that's something, well, yeah. Here we may add something else. I had a little different ideas about that. You know, some, let's say, some predictor, maybe not based on the strategies, but based on some technical analysis.
+01:25:43 — So, mostly about how it will, it may behave based on different patterns. So, I have some probabilities of different patterns. So, here, okay, you have this like head and shoulders, head and shoulders pattern.
+01:26:05 — So if it's an effect like that, where it will go, it will go down, right? So, I mean, with the bigger probabilities, so we may actually try to operate differently with the probabilities, with different, like, patterns, and calculating just probabilities.
+01:26:30 — And it may work with some small, you know, range, like scalping, right? When you try to gain with big money, you are trying to have at least like 0.1, 0.3% of some movement and it will give you some good profit. But with some big movement, you may actually wait for it too much.
+01:27:02 — You may not have the biggest trade-off in your life. So you may actually play with probabilities. You are here. What is the probability to move farther? Farther and so on. So it is actually decreasing. So, you're actually selling, but, you know, with multiple sales, multiple exits, multiple enters.
+01:27:32 — Yeah, it's like different way how you can actually look at that. This is the most, maybe, simple way how you can actually try some, find some new strategies to do. And maybe you will create this growth that will generate maybe several percent or extra several percent per month. Because you know what's important here? Why it may be better than this profit of deposits.
+01:28:04 — Usually 13% it is by year. So actually every month if you will gain more than 1%, Like, 1.5. It's already more than 13 if we calculate it by year, right? So, it is enough to have at least 1% to gain, like 1.5, let's say 2. If you would like to gain more than deposit profit.
+01:28:34 — But, only question is, simple question, right? They have constant profit with at least, like, several percent, right? And it's not so easy. That's why this system exists. Because, well, you are, like, in IT you may have, like, good numbers and good salaries.
+01:29:00 — That's why maybe you are here, right? And when you will have good money, you will think how to preserve it then, right? Not to lose, preserve. And maybe how to multiply them. I mean, it is a way, but risks, risks, risks. Risk analysis here is like a huge part that you also will use maybe in this part in strategies, right? Risk analysis, I don't remember how it's called.
+01:29:41 — Oh, actually, well, okay. I'll just go. So, in other stuff, yeah, you may use it just to calculate stop-loss, take profits, levels, right? Something like that. Are you tired? Overdo my speech.
+Спикер ?:
+01:30:02 — Am I speaking too much?
+Спикер 4:
+01:30:03 — No, no.
+Спикер 5:
+01:30:06 — You cleared, like, a huge bar of questions here.
+Спикер 2:
+01:30:11 — Good, good. Maybe you have some left?
+Спикер 4:
+01:30:15 — Yeah, I have a question. Of course, in these countries we have rich so-called cryptocurrencies. So, we analyzed, we discussed only Russian currency. What about American stock market?
+Спикер 2:
+01:30:36 — Well, why not? I mean, it is right now harder to operate with them. But as I remember, recently it was added, even in T-Bank investments in the form of derivatives for the Tesla or whatever companies you may have. Yeah, but why not? Let's try to... We may actually define the initial list and you may actually check some instrument that right now seems promising and start with that.
+01:31:15 — Why not? I mean, the list may be different. It's not super important because it's not actually defined somewhere separately without huge headache. I mean, you may add it in the file, okay? Please operate with such 10 or such 20 instruments in the file. That will define the parameters, that's why it's not a big deal,
+Спикер ?:
+01:31:41 — right?
+Спикер 2:
+01:31:41 — Okay. Are you happy?
+Спикер 1:
+01:31:54 — Why not?
+Спикер 2:
+01:31:55 — With the answers, yes. What was the project? Because it was somehow a black box, like a cat inside a bag,
+Спикер ?:
+01:32:09 — Right?
+Спикер 2:
+01:32:09 — Before the meeting we had seen the structural logic in a different way. But now we just changed the focus from the overall simulation tool, just how to make strategies more modular. Because using this board, how to make it more structural?
+01:32:39 — How to make it more stable somehow? How does this work? It's... No, I don't know. Predictable, yeah, I think it's predictable. Because you should somehow understand what will be, what you should, yeah, take into account. There's braces, things, and so on, there's white.
+01:33:05 — Yeah, it may work. Or we don't. We'll see.
+Спикер 7:
+01:33:13 — Are you trying to promise that one memory?
+Спикер 2:
+01:33:17 — One. Okay, any other questions? Okay, maybe we need to pre-define the roles? Because, yeah, overall it's just suitable for the project we are discussing. But they need a bit of change, folks. I think you will need more developers. And we will define those more based on the modules that you have.
+01:33:46 — So you may have a pool of developers, between which you will distribute those tasks. So you need, first of all, to create some requirements, right? Separate them by function, and function will understand what the... You know, it remembers your software project, right? I mean, the process, you may use the same, or you may actually use a different one.
+01:34:19 — I mean, here, on the Capstone project, you are actually free to choose. There's good news and bad news. It may affect your efficiency, actually. Scrum is a more obvious way, because we already did it. Maybe it will be easier for you to work in springs, to create some globe springs, actually create some exact modules and so on.
+01:34:49 — I mean, to add it inside the script. Well, I mean, it is not a must. As I told you, you may use any approaches that you would like to use.
+01:35:08 — Only one thing, what results it will produce. Because, you know, many companies are using some gel processes. But for a reason, right? Because you may actually change your way faster. You may understand that something is not working. And you will not produce your own result at the end. Because you will correct them. It's like a half, a quarter, 10% of your work.
+01:35:36 — It is important. So the best way how you may create that, so if we're. Now, we're talking about prototypes, let's say. You need to show the result as fast as possible. Let's say, can you provide the result in two weeks? Some working MVP. Something that you may show, and that may actually already give some value.
+01:36:06 — Not two, but maybe three. I think in two weeks it's possible. I can do it in two weeks. Very good. Okay. I mean, but I don't have these two weeks right now. I mean that it is possible. Try to focus more not on providing full solution, no.
+01:36:30 — Try to understand what of this generates more value in this time frame, in two weeks, let's say.
+Спикер 1:
+01:36:39 — Some minimal.
+Спикер 2:
+01:36:40 — Some minimal functionality. Maybe not even in the beat. It will create some value. In two weeks? Starting from that week? From today. It's possible. Maybe you will start with no simplest strategies. Maybe you will start with one instrument instead of a bunch of them, right? Maybe you will start with one instance of the board.
+01:37:08 — Maybe you will start with a simple visualizer result showing, I don't know, some exact strategy or you just admit it. And it is important. I mean, I believe we need extra admitting when you will actually collect all the requirements in some written form. And we will actually talk like a team with a product owner, and I will tell you what exact priorities for these models we have, right? Because you may actually create not all of them.
+01:37:42 — I provided a huge list of general picture. You may decrease scope, or maybe even increase. I don't know, who knows? But you will sort them based on the priorities that's important, and you will provide some functions based on these priorities.
+01:38:02 — That means that you will increase the chance to provide me value earlier, right? Looks like that. Good. So let's maybe find next meeting when you will show me all the requirements. At the same time, I mean, while you're creating that, you may feel your busy context, start working with, I don't know, let's start working with some of the guy, maybe a T-bank investor, right?
+01:38:39 — And try to learn what functions are there, what is possibilities for the sandbox, what's the limitation of it, right? And so, I mean, you may distribute some work between your team.
+01:38:54 — You have a lot of team members, so someone will work on the requirements, someone will work on some different source of information, someone will work with strategy how to make it, someone will work on the architecture, and so on, right?
+Спикер 5:
+01:39:10 — Maybe we just create a group and, like, we will send you, like, all our possible... Because we can't really, like, immediately think of all the wishes time suitable for it.
+Спикер 2:
+01:39:23 — Yes, yes, yes. It's really hard to work synchronously with a huge team. It's another down... Cons?
+Спикер 4:
+01:39:34 — Downside.
+Спикер 2:
+01:39:35 — Downside. Yeah, that's why it's maybe better to create some Telegram group and synchronize with that. Anyway, we will meet some day with Sue, or maybe we will work asynchronously, I will just correct, maybe you will send me a Google Doc, and I will comment or add some priorities or something like that. But maybe it's better on a second meeting to do this in person.
+01:40:07 — Maybe not all of you.
+Спикер 1:
+01:40:08 — Yeah, maybe some team lead, like the project manager.
+Спикер 2:
+01:40:12 — Yeah, yeah, yeah, and maybe some analysts might be working on the requirements. Good, good, good, good, good, good, good, good. That's great.
+Спикер 1:
+01:40:23 — And, like, how often do you want, do you, how often do you see, like, our meetings? Weekly or more often?
+Спикер 2:
+01:40:31 — You know, I don't think that we need more often than one time. We have a limited amount of time. So if it will be like full semester, maybe like one per several weeks, right? But right now, it's maybe one a week. It will be good. And I will expect over time, you may have like one-week screens, and providing each week some value. And we will have a real demo session where you will show me some results, and actually I will understand how it increases the value.
+01:41:07 — Because your focus should be on increasing the value of your product with each spring, right? Great. I still have some questions.
+01:41:26 — I know you also own the TA or SAP?
+Спикер 3:
+01:41:30 — Yes.
+Спикер 2:
+01:41:31 — And are you TA for Capstone? So, now, maybe we could discuss the project with you as a cup of tea. No, I don't think so. I mean, I'm open from the point of some technical expertise, or some project, like organizational stuff, because actually I'm working mostly on all the projects versus the university,
+Спикер ?:
+01:42:00 — right?
+Спикер 2:
+01:42:00 — So, and I have good experience with some technical stuff, right, because, well, I've worked like a developer for like seven years, so, well, understand something, right? Well, and so I'm open to some questions, if not, you shouldn't wait until our next meeting to add something, that is really important. And so...
+01:42:34 — Yes, yes, yes, yes. So, our next meeting also will be on Sunday. Are you okay with that? I mean, whatever, I'm pretty much flexible. Because we need some time to just...
+01:42:54 — I mean, you need to make some plans, right? Spring planning. For that you need to understand what is the scope of the work and so on. And try to include not only tasks that are connected to the development, but also some general tasks that you have for that, right? Because just creating a list of tasks is also a task.
+01:43:21 — Important. I mean, usually developers try to ignore work that is different from development. But it is also important. Sometimes it is defining success or not. Good. So I think we may stop on that. We already took like 7 hours meeting
+Спикер 5:
+01:43:49 — The first meeting.
+Спикер ?:
+01:43:51 — It's fine for me.
+Спикер 2:
+01:43:54 — It's fine for me. It's fine for me .
