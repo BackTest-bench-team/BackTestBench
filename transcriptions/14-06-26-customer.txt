@@ -1,0 +1,721 @@
+BackTestBench — customer Meeting Transcript (cleaned & translated)
+
+------------------------------------------------------------
+SUMMARY — Key takeaways
+------------------------------------------------------------
+
+1. ARCHITECTURE LAYERS CONFIRMED AS CORRECT
+   The customer independently arrives at the same three-layer split we already
+   designed:
+     - "Testing"   = runs purely on historical data, no broker connection
+                      (our Simulation Engine / b_Test)
+     - "Simulation" = connects to the broker/sandbox and actually places
+                      orders, but on near-real-time / fresh data, no real
+                      money (our Trading Bot)
+     - "Real trading" = same code, only the API token changes from sandbox
+                      to production. Explicitly OUT OF SCOPE for this
+                      project, but the architecture should not block it.
+   No architectural change needed. Recommendation: document this mapping
+   explicitly (testing -> Simulation Engine, simulation -> Trading Bot,
+   real trading -> out of scope but token-swappable).
+
+2. ARCHITECTURE = ANSWER TO NON-FUNCTIONAL REQUIREMENTS, NOT A PICTURE
+   The customer spent significant time explaining that architecture is not a
+   diagram — it's the set of decisions that guarantee non-functional
+   requirements (availability, flexibility, reliability, etc.) are met.
+   Concrete example given: the Broker/Data Adapter pattern exists
+   specifically to satisfy a FLEXIBILITY requirement (ability to switch
+   brokers/data sources cheaply when conditions change, e.g. switching
+   from T-Bank to another provider due to fee increases).
+   Action: in our architecture doc, explicitly map each major pattern
+   (Broker Adapter, Strategy plugin, etc.) to the NFR it satisfies.
+
+3. THREE ARCHITECTURAL VIEWS RECOMMENDED
+   Standard split into:
+     - Static view      -> module dependencies, what functionality lives
+                            where (e.g. class diagram)
+     - Dynamic view      -> runtime interaction between modules, message
+                            order/sequence
+     - Deployment view   -> where things run, how they communicate over
+                            the network
+   Currently everything is mixed into one diagram. Not urgent, but
+   splitting into these three views would make future presentations to
+   the customer/customer look more professional.
+
+4. COUPLING / COHESION — GENERAL PRINCIPLE, ALREADY FOLLOWED
+   customer reiterates the standard "high cohesion, low coupling" idea — group
+   related functionality together, minimize dependencies between modules,
+   make changes localized. This validates the modular-monolith +
+   interfaces.py approach we already have.
+
+5. STRATEGY VISUALIZATION / "STRATEGY GENERATOR" IDEA (OPTIONAL, FUTURE)
+   The customer floated an idea for a possible future feature: a visual
+   "strategy generator" UI where users connect signals/indicators with
+   probabilities/weights/thresholds to build strategies graphically,
+   built on top of the existing list of implemented strategies/signals.
+   Explicitly framed as optional / a "maybe", not core scope. Worth
+   noting as a stretch goal for later MVPs.
+
+6. PROCESS FEEDBACK — BACKLOG / BOARD HYGIENE
+   The customer reviewed the GitHub board and noted some issues were "in
+   progress" but not updated/reviewed. Concrete ask: keep board status
+   current (move items to review, get sign-off from Georgii/team lead),
+   add a milestone filter for "this week", and send a weekly report
+   (deadline mentioned: Monday 8pm).
+
+7. SEQUENCING ADVICE: PROTOTYPE FIRST, POLISH ARCHITECTURE AFTER
+   Strong, repeated advice: don't over-invest in a "perfect" architecture
+   before a working MVP exists. Build something minimal that works (even
+   just "buy and sell"), show it to the customer, learn what the customer
+   actually meant, THEN refine the architecture for flexibility/
+   robustness. Rationale: if the team perfects architecture first and the
+   customer's mental model differs once they see results, both the
+   architecture AND the already-built code need rework — more total time
+   lost than iterating from a rough prototype.
+   Practical implication for us: it's fine (expected, even) if the
+   customer's reaction at the week-4 demo leads to architecture tweaks —
+   this is normal, not a failure signal.
+   Suggested workflow: split work — part of the team builds a rough
+   working solution, part works on the "correct" structure/architecture,
+   then merge the two, synchronizing regularly.
+
+8. ADVICE: PROPOSE SOLUTIONS WITH ALTERNATIVES + RATIONALE
+   customer explicitly praised the approach of not just asking the customer
+   open questions, but proposing a solution with alternatives and
+   reasoning ("we considered X, Y, Z; we recommend X because..."). This
+   matches the "open questions for customer" document style we've been
+   using — continue with it (e.g. for the backtester structure draft the
+   customer suggested sending over for comments).
+
+9. CAREER / MOTIVATION CONTEXT (LOW PRIORITY, FYI)
+   customer mentioned that hands-on experience with trading-system architecture
+   is valuable if the team later wants to work in finance/banking (e.g.
+   T-Bank), since that sector values people with domain experience plus
+   demonstrated architectural reasoning (not just "vibe-coded" solutions).
+   Not actionable, just context/motivation.
+
+10. NEXT MEETING EXPECTATION
+    customer expects to see a working MVP ("something that runs") at the next
+    meeting, not just plans/diagrams.
+
+------------------------------------------------------------
+BOTTOM LINE
+------------------------------------------------------------
+No changes required to the current architecture. Recommended actions:
+  - Explicitly document the testing / simulation / real-trading mapping
+    onto Simulation Engine / Trading Bot / (out of scope).
+  - In the architecture doc, tie each pattern (Broker Adapter, Strategy
+    plugin) to the specific NFR it addresses (flexibility, etc.).
+  - Keep GitHub board statuses current; weekly report by Monday 8pm.
+  - Treat any architecture changes after the week-4 demo as normal,
+    expected iteration — not a failure.
+  - Consider a "strategy generator" visual UI as a stretch goal for a
+    later MVP, not core scope.
+
+
+==============================================================
+TRANSCRIPT (chronological, with timecodes)
+==============================================================
+
+[Recording 1 — Innopolis_University_13]
+
+00:00:02 - 00:00:31
+I don't think this part is very necessary. If we're all on 4 models, then
+maybe it's only connected to those 4 models. I'm guessing this picture
+isn't fully rotated because it was made from files.
+
+00:00:39 - 00:01:08
+So our idea is — the Broker Adapter is the first layer of our product,
+because it distributes different kinds of sources, and then shares the
+data with...
+
+00:01:08 - 00:01:22
+...the Data Loader. The Data Loader, we insert into the database, we just
+cache them. And then we run tests with strategies. The strategy is also
+loaded from the database.
+
+00:01:23 - 00:01:43
+If we're talking about architecture itself, usually we make different
+architectural views for different aspects.
+
+00:01:43 - 00:02:03
+What I mean is — we can have several "inputs" into the data, for example
+visualization views, i.e. the input of data that we have in the system.
+This is one view that helps you understand how data flows in your system.
+
+00:02:03 - 00:02:27
+Canonically, let's say — there's a static view, a dynamic view, and a
+deployment view. Usually we split it into these three views. In the
+static view, we show dependencies between modules — which functionality
+lives in which module, for example. A class diagram, for example. That's
+a good example of a static view.
+
+00:02:28 - 00:02:49
+There's also a dynamic view, where we show interaction between modules —
+what happens, in what order, and so on. In the deployment view, we show
+where things get deployed, how communication happens across the network,
+and so on. Three different views.
+
+00:02:49 - 00:03:12
+If we're talking about architecture — if you want to call it
+architecture — it would probably be better to draw this picture in
+separate layers. Right now everything is mixed together; this isn't just
+my opinion, it's somewhat shown here already.
+
+00:03:12 - 00:03:40
+In the next iteration you could do this split into specific parts of your
+architecture. Okay.
+
+00:03:41 - 00:04:07
+We should show this as a diagram, because it's very hard — hard to read
+all of it as one picture. I've already looked at these parts, I've
+already read them. We can't modify them [the existing diagrams/docs],
+
+00:04:08 - 00:04:15
+but I'll explain the main parameters I identified myself here.
+
+00:04:16 - 00:04:42
+Statuses, let's say, for testing — so we have a "test" that runs purely
+on historical data. We have no connection to the actual sources; we only
+take some historical data and work with it. Another layer is
+"simulation" — where we're actually connected to [the broker]
+
+00:04:42 - 00:05:07
+and we're not just analyzing — we actually do it: sell, buy, and so on.
+This is like being online, connected to the broker via API, and actually
+trying to do it — sell, sell, and so on — just in real time.
+
+00:05:08 - 00:05:38
+"So we wrote it the way you're describing now, but I thought you didn't
+understand how to write it." "So what do you prefer —" "...the coolest
+setup that works with tickers." "Not only with fresh data."
+
+00:05:38 - 00:06:08
+It works with real-time data because it's diverse — you can work with
+real data only with "flagmaxstates" [unclear term] when you're only
+working with historical data. So in principle you don't place any real
+market orders here — in the sandbox this is real order emulation,
+emulation of orders, because you don't want...
+
+00:06:08 - 00:06:34
+...it does what you tell it: it opens some position, closes it, and
+somehow reveals your profit. That's a very good question. I was thinking
+about what the difference is between
+
+00:06:35 - 00:07:03
+backtesting and "emulation" of it, compared to a backtesting service,
+with different time ranges, right? We can run it over months, and then a
+week after that — simulating "real time" — not randomly generated, but
+over a month, and then afterwards.
+
+00:07:04 - 00:07:34
+But I'm curious how this would work if you have several "lieutenants"
+[layers/tiers]. One of them is testing, another is simulation. Maybe the
+next tier would be about real deals. But here's what's important — you
+can actually do the simulation in a way where you can swap the token
+
+00:07:35 - 00:07:50
+and do the same thing you were already doing. Usually the methods for
+sandbox vs. real APIs differ only in...
+
+00:07:51 - 00:08:13
+...whether you're working with a sandbox account or a real account — you
+do the same thing, the API looks the same, just — okay, there is some
+difference. For example, you can't add money without "adding money,"
+right? Indeed, in the real API you can't just add funds,
+
+00:08:13 - 00:08:49
+and that's fine, but there's still a difference — but 90% of everything
+you'd use for this you can reuse [for the real version] if you go down
+that path. Okay, okay — let's go through it one by one. There's a central
+piece of equipment here, there's a central piece of equipment here.
+
+00:08:56 - 00:09:38
+[inaudible / silence]
+
+00:09:40 - 00:10:07
+You can treat this adapter not only as an adapter/transport layer but
+also as a "parser," because you'll be placing orders, creating positions
+with it. It's not just one communication channel — you'll be adding more
+than just data extraction. And this simulation module we'll be adding
+will also be connected to it.
+
+00:10:10 - 00:10:41
+I'd want to check — maybe for the simulation this isn't very important,
+maybe it's not an MVP requirement — but at the same time, maybe I'll use
+different platforms, I don't know — maybe conditions will change, and I'd
+like to easily switch platform. For example, with T-Bank Investments —
+they increased their commission,
+
+00:10:42 - 00:11:05
+I noticed that and realized it's not a very attractive option for me
+anymore. So I went to [another provider, "Zuberniya"/unclear], because
+they have lower fees. And I decided I'd use that one, but wrapped the
+same way. I mean it would be a new "implementation" of the same thing.
+
+00:11:06 - 00:11:33
+I won't provide info for investors, nothing else changes except this. I
+should provide the core part — I mean a typical format for how you handle
+data from different services. Usually, if you build communication with
+data, you also produce some data — right now you're doing this with
+SQLite, right? "Cache it, cache it," okay.
+
+00:11:34 - 00:11:58
+Maybe with growing data volume or network/hardware load this might not
+hold, because you control how much data you have. But you can change the
+database. And how easy it is to change the database depends on how many
+connections/touchpoints you have in the code. Do you remember the
+"coupling/cohesion" idea?
+
+00:12:01 - 00:12:24
+If we're talking about code — when we write code and want to increase
+cohesion, it means a module contains things that are very closely
+related to each other, and we try to minimize the amount of coupling
+between modules.
+
+00:12:24 - 00:12:51
+We try to group similar things into one cluster, and then minimize
+connections between clusters. That's the general idea — like "clean code"
+or similar. It's really about making things simple, because you'll have a
+lot of questions [changes to handle] later.
+
+00:12:51 - 00:13:19
+It's much easier to make a change in one place than to go hunting for
+changes scattered everywhere, because your architecture doesn't support
+localized changes. We can do this — we usually use [adapters for this] —
+also flexibility, yes. We use different things for that.
+
+00:13:20 - 00:13:45
+I don't think this [database swap scenario] applies much to this project,
+because you'll most likely not change the database.
+
+00:13:46 - 00:14:13
+That said — when we design architecture, we also think about the future.
+What could happen? Could the database need to change for this project?
+Because every one of these adapters also has a cost — you create an extra
+layer, extra "wrapping," and it "costs" in reports/maintenance.
+
+00:14:15 - 00:14:38
+It takes time to build that extra wrapper, so you'd need to add a full
+extra layer for it. So there's a tradeoff for when this is worth doing.
+But it's more natural if you have a consistent "interface component" for
+data, an interface component for the engine/program, or something
+similar.
+
+00:14:39 - 00:15:08
+"And here — is the data-connection log part of something else, or is it
+fully separate? It's pretty decoupled, so it just sends data from..." "I
+think it really depends on the use case, because the data-connection log
+is just a simple process."
+
+00:15:08 - 00:15:29
+"Could it be part of [some training/logging component]?" "Yeah." "You
+know, usually when you log everything — what can you do with it? You can
+record all the functional factors you have and make sure you're feeding
+them into some component. So you can build a [validation/health] valve
+out of it."
+
+00:15:31 - 00:16:03
+[inaudible]
+
+00:16:04 - 00:16:41
+And generally — what is architecture? Structure, structure, yes — it's
+how we define how our product will work in code, and how things are
+related structurally in terms of the codebase. But that's not entirely
+right either — I mean, it's the product you're working on.
+
+00:16:42 - 00:17:19
+[inaudible]
+
+00:17:20 - 00:18:03
+You have, for example, some availability requirements. Your service
+should be within 99.99% — "five nines" type targets. That's a very, very
+big number. Let me show you — there's a calculator for this. Here you can
+see —
+
+00:18:04 - 00:18:40
+"I don't know why I can't [load it]... it's like..." "Okay, basically you
+shouldn't have any downtime — zero seconds, or three seconds a year." "
+That's impossible — realistically you have some minimum for your
+service." "Yeah, sometimes." "I mean, for me, availability is fine if
+it's around — 90 [something]%." "Okay, but how would you actually achieve
+that 90-something?" "We can't just sit here and wait..." "Thanks, that's
+true."
+
+00:18:41 - 00:19:15
+And here's another question — how do you make sure that what you add to
+the code actually helps you hit that number? There are quality attributes
+— for example, maintainability — and there are known answers for how to
+achieve them. Some kind of "trade-off" patterns, architectural strategies?
+Not exactly, but yes — patterns, strategies, architectural tactics. For
+example, you have two programs —
+
+00:19:17 - 00:19:43
+a "maintainability" program and... what do you have? Metrics. I'm talking
+about status — this is, for example, the answer to the availability
+question. Because one of the reasons a service becomes unavailable is
+that it hits a certain capacity limit.
+
+00:19:43 - 00:20:13
+So you need to spin up another instance, and you place several instances
+behind some load-balancer/log layer, and traffic routes to them. "Which
+of these instances do you have right now?" "This one." "I'll send a
+request to this instance." That's one of the tactics.
+
+00:20:15 - 00:20:42
+What I mean is — when you design an architecture, at first you can just
+build it however you want without thinking about anything else, but then
+you can't guarantee that certain non-functional requirements will be met
+by your current architecture. Architecture is not a "photo" [a static
+picture].
+
+00:20:42 - 00:21:27
+Architecture isn't just about the diagrams/models. Architecture is the
+answer to the question "how do you achieve these [non-]functional
+requirements" — because there are architectural decisions behind every
+connection you draw. I mean, architecture isn't just "progress, we want
+X" — architecture is, in a sense, a guarantee that in the end you'll
+achieve what your customer actually wants.
+
+00:21:29 - 00:21:58
+Because if you do something too simplistically, you won't end up liking
+how it turns out. I mentioned the adapter to you earlier — the adapter
+itself can already be the answer to certain architectural questions,
+because we're talking about specific reasons —
+
+00:21:59 - 00:22:25
+materialization — sometimes it's about flexibility. Really, it's mostly
+about flexibility: if you want to reach a certain level of flexibility,
+you introduce some adapters, and that makes it much easier to make
+certain changes in the code later. And you measure that flexibility by
+the time it takes you to —
+
+00:22:26 - 00:22:59
+"I think that sounds good. And we won't talk about 'API,' we'll talk
+about 'platform.' So here's what I'd suggest — if you write down all the
+requirements in a list, together with the functional requirements — e.g.
+portability, interfaces, you know, all the things that show up in a
+software project, right? ISO [25010], 25 of them, right?" "But what's the
+right target value for you — you'll have to figure that out."
+
+00:23:01 - 00:23:54
+[inaudible]
+
+00:23:55 - 00:24:27
+"Because sometimes I don't look closely at how fast 'water' [data/load]
+gets pulled out, but that can also have effects — okay, maybe I'm pulling
+out products too fast, maybe we lose some 'chickens' [unclear metaphor].
+And at the same time, okay, you start pulling things out — maybe that's
+also, I don't know, a lot of 'chickens' or something, maybe you—"
+
+00:24:29 - 00:25:01
+"—interoperability, right? So what system should we integrate here? So,
+okay, maybe we should — by that we understand this part means
+communication with different APIs, right? It's maybe not super
+important." "Reliability, okay. But how do you test this?"
+
+00:25:02 - 00:25:26
+"I won't tell you exactly."
+
+00:25:26 - 00:25:47
+"Yeah."
+
+00:25:48 - 00:26:01
+[inaudible]
+
+
+[Recording 2 — Innopolis_University_14]
+
+00:00:00 - 00:00:21
+This is because, you know, a certain price level effectively only exists
+for a few milliseconds.
+
+00:00:22 - 00:00:49
+It doesn't mean you need to "win" every millisecond-level move, but
+sometimes you can miss a level and lose a good chunk of the output, or
+lose some money because your orders aren't placed —
+
+00:00:50 - 00:01:11
+— or they're not in the right time order, because your system already
+"understands" the data — let's say, if it's a sustained move, the system
+already understands you need to sell, otherwise you'll lose money. You
+know, sometimes when an instrument is very [volatile/"latency-sensitive"],
+
+00:01:11 - 00:01:42
+if it moves up or down, within a millisecond that could be a 5-10%
+difference. So you could place a position at a good moment to do it more
+precisely — depends on your strategy. So you might work not with [order
+book "scandal"] but with anonymous trades —
+
+00:01:42 - 00:02:16
+— the last trade that set the price. "Tickers, right?" "Yes." "The last
+one is the market price." "You mean the sell price?" "I mean the sell
+price." "That's only one part of the picture." "I mean another thing —
+when we have sellers, we have buyers, right?"
+
+00:02:17 - 00:02:57
+[gap / unclear, "Подражается?" — possibly "is it simulated?"]
+
+00:02:59 - 00:03:35
+"Okay, I think we'll move faster." "Traditional module — a module for
+adding/improving top products." "Actually, what's the difference between
+the simulation module and the trading module?" "The simulation module is
+just the first part." "This part and trading are just... this." "But this
+is testing, right?" "Yes." "So you're creating three instances, when right
+now we have two?" "Why?"
+
+00:03:36 - 00:04:05
+"Simulation? No — in this document they call simulation 'testing.'"
+"Oh really?" "Yes. So we don't have 'testing' [as a separate thing] —
+I'd split them." "I get the idea. So — it doesn't matter what you call
+it, what matters is how you implement/understand it. We'll have
+'testing' —"
+
+00:04:05 - 00:04:22
+"— to work with historical data, we need to have, then, a 'simulation'
+that works with real/current data, in real time, right?" "Yes — thanks to
+some of the strategies we got from the 'testers.' Something like that."
+"For me, the 'trading bot' is already—"
+
+00:04:23 - 00:04:49
+"That's not quite right. As I said, you can swap the token so it trades
+against the real API. You can stop after a few cases [of validation]. But
+okay, I get it. We just hadn't thought about this part working only with
+historical tokens, not just with the sandbox —"
+
+00:04:49 - 00:05:24
+"— so 'top strategies' are better because of T-Bank / T-Bank [unclear,
+maybe sandbox vs real]." "So these strategies have good performance." "Yes
+— it's just confirming that the strategy actually performs well on
+current/fresh data." "So sandbox vs. real should only differ at this
+part." "Okay." "Just a notification if something is off from what you
+described." "Yes, yes." "Okay."
+
+00:05:26 - 00:06:01
+"That's fine, that's good for me. I understand you have some frontend
+developers who'll be doing something — it'd be good to have a few
+'views'/screens. I've worked with similar things before — visualizing,
+building windows, or embedding into a web page —"
+
+00:06:02 - 00:06:35
+"— you can think about how it should look. I don't think I'd build
+strategies from a purely visual interface — but maybe, maybe, maybe, as
+an option — I could build, you know, a 'strategy constructor.' I'd add
+some checks and build strategies from them. It's not too hard to
+implement, because you already have a list of strategies you've
+implemented — and not strategies, but their building blocks. Signals."
+
+00:06:35 - 00:07:07
+"You have these actions, and you essentially connect them — defining the
+sequence: which signals should lead to which actions, with what
+probability or weight, what threshold between them. Maybe that's an
+option — maybe out of 10 parts, this could be like a 'strategy
+generator.'"
+
+00:07:08 - 00:07:37
+"Data flow is easier to visualize as a diagram." "Yeah, I agree — it's
+very hard to extract that information from text." "Okay — you have fewer
+people now, so it's not 8 [people]. Okay. When we go to the backlog, I'm
+actually only partially looking at it — what do you want? You can —"
+
+00:07:37 - 00:08:15
+"— milestones, sprints, all that. Yes, you can add a filter for this
+week's milestone. 'Day 2'? Yes — so this week we want to... report. Yes,
+report, do all that. When does your week start? On Monday at 8pm we
+should send the report."
+
+00:08:16 - 00:08:41
+"I don't know."
+
+00:08:41 - 00:09:02
+"I already have this done — received. It's 'in review' — someone just
+flags it and waits for me or Georgii to confirm it." "So you're not really
+doing anything right now?" "I don't know — I just forgot to update the
+status —"
+
+00:09:02 - 00:09:25
+"— for example, some tasks are already in progress but not marked as such.
+Maybe it'll be easier once you update these. Because looking at it now,
+it just looks like surveys/questions, nothing more."
+
+00:09:26 - 00:09:42
+"If we're talking about what you actually need to do right now — it's:
+work through the requirements, organize them into one place,
+
+00:09:43 - 00:10:12
+group them functionally — and then flesh out this 'milestone'/roadmap.
+With that, you can create a first draft of your architecture, some design
+of what you're building, you can create a codebase, and start
+implementing some modules based on it — think about how you'll implement
+the strategy module or the backtester — just kick off that process."
+
+00:10:13 - 00:10:44
+"Because once you have some working version, after a few iterations it'll
+reach a decent level. But until you have a first, say, MVP, we can't —
+I can't 'enact' [evaluate against] results, because there's nothing to
+evaluate. So it's important to build something to attach results to —"
+
+00:10:44 - 00:11:10
+"— so our meetings become a check on results, not just a discussion of
+plans. We already said that within a few weeks we'd have results — one
+week has already passed; maybe next week you could help me with—"
+
+00:11:10 - 00:11:40
+"Which part is the hardest?" "As you already said — most of the work is
+the architecture." "I'll be honest — you don't need to have the best
+architecture right now. You can build a working version, and then,
+depending on the gaps —"
+
+00:11:40 - 00:12:15
+"— improve it. Realistically you'll spend time on things that might not be
+necessary — time on changes you could avoid if you'd done everything
+'properly' from the start. But there's another side to it too: if you do
+architecture 'properly' first, you'll spend a lot of time on architecture,
+
+00:12:15 - 00:12:28
+and when you show the result to the customer, some parts might turn out
+different — you'll realize 'we understood this differently, so we
+suggested this solution' —
+
+00:12:28 - 00:12:56
+— and then you redo everything, including the architecture and the parts
+you'd already built, and spend even MORE time. So it's important — I mean
+— maybe start working on architecture once you already have a good
+prototype, because fast prototypes help you understand the system
+better,
+
+00:12:56 - 00:13:15
+and then you can polish it architecturally — make it more robust, more
+flexible, etc. I mean, you can start by working with just what works —"
+
+00:13:16 - 00:13:44
+"Yes —"
+
+00:13:45 - 00:14:17
+"— buy and sell, that's it. And maybe that's enough to start — just to
+understand how it works, what problems you'll run into later. You have
+different options for how to approach this. You can do everything
+'correctly' — architecture, design, etc. — but you'll have a big
+downside: the results you get, you might only see results in —"
+
+00:14:19 - 00:14:53
+"— 3-4 weeks, right? Some results, if we do everything 'properly.' But
+until then, it's probably important to understand the idea, the product
+as a whole, with some quick prototypes." "Also, as the customer, it's very
+important for you to see working products." "So — basically this is just
+the 'IPP' idea, but we didn't use it."
+
+00:14:54 - 00:15:24
+"Start with small things. When you start working with an API, for
+example, you can already find information — documentation, or even work
+with an LLM: 'please read this documentation, please advise me,' or some
+kind of tester, etc. I've tried this myself — it produces something, even
+something that works. So that could be a good starting point for you —"
+
+00:15:26 - 00:15:53
+"— to see how it works. And then you iterate and improve it. Right now
+we're working with a strategy that doesn't fit everyone — let's apply a
+module that separates this logic. Or you could split the work across
+teams —"
+
+00:15:55 - 00:16:25
+"— one part of the team works on the 'quick and dirty' solution, another
+part works on the 'proper' structure. And then you just connect the two,
+merging the ideas into one project. So there are different ways this can
+work. The only thing that matters is that it gets done — because I know
+this is also vacation season, time to rest —"
+
+00:16:25 - 00:16:57
+"— after getting a huge amount of [workload?] last year — I don't know,
+in the OS course, in stats — I think you've had some issues, yeah,
+'injuries.' So you need to rest, but at the same time I'm saying you also
+need to get something done. I mean, of course you need to deliver the
+project, right? I wouldn't —"
+
+00:16:58 - 00:17:18
+"— I wouldn't want to be a downer about this with you. I hope you get
+something out of this project — I think it's important, because it's
+good practice for you. A project like this can be good as a [reference?]
+or—"
+
+00:17:18 - 00:17:44
+"— and when you show that this wasn't just something 'vibe-coded,' but
+that there's real thought behind your architectural decisions, that you
+went deep on this kind of question — that already gives you an edge. Or,
+you know, if you go into finance later — say you go work at a bank, like
+T-Bank — they usually look for people who'll help grow their investments
+or similar, so having worked on this gives you something —"
+
+00:17:44 - 00:18:08
+"— it's good for you, because the financial sector is currently
+promising/relevant. So if you have good domain knowledge etc., that could
+be —"
+
+00:18:08 - 00:18:39
+"— good. Anything else we haven't covered today? I'd just like to discuss
+some of the models we talked about in more depth. I don't think we need
+to do that right now —"
+
+00:18:41 - 00:19:09
+"— is there an option where we go deeper on our models? For example, the
+backtester — I can propose a structure for the backtester as I see it.
+Can I just send it over to you, maybe for some comments?" "Yes, you can do
+that, or you can just implement it." "I can, sure — I can check how it
+works. What this customer really likes, generally, is when—"
+
+00:19:09 - 00:19:37
+"— the dev team designs/proposes things. Not just asking questions — even
+better, proposing something WITH alternatives and explaining why it's
+better than the alternatives. 'We tried this, this, and this — this is
+good because X, that's not as good because Y.' What do you think?" "Yes,
+you're right — that's one of the best options here."
+
+00:19:37 - 00:20:11
+"And it's much simpler to do it that way, right?" "Yes." "Okay — at the
+next meeting we'll show you an MVP, something that actually works." "Yes —
+also it's good that you've organized your work somehow, I mean you have a
+repo, some boards with tasks — good, as long as you keep them updated
+properly. Good if you put everything in there — I mean update your
+requirements —"
+
+00:20:11 - 00:20:30
+"— and put all of that into your backlog if you haven't already, but with
+the right level of detail and the right understanding of what's needed.
+You have a lot of people, I mean — just don't—"
+
+00:20:30 - 00:20:59
+"— to avoid chaos, you can split tasks: maybe some people work only on
+the project board, like analysts, to set up the right conditions for
+working with the board and verify it matches the actual work. Other
+people work on prototypes that can be shown next time —"
+
+00:21:00 - 00:21:34
+"— and some people work on the 'proper' architecture, to understand where
+things need to go. You'll probably need synchronization between the
+people working on the prototype and the people working on architecture,
+to adjust the architectural vision based on what you learn from the
+prototype. [Have I taken a lot of your time?] No? No?"
+
+00:21:34 - 00:22:04
+"Thanks for participating."
+
+00:22:06 - 00:22:46
+"Because some parts, like the OS course, might get forgotten, but in
+practice, as you know, this is much better — and thanks a lot for this. I
+hope it goes well. Okay — so let's get to work, I think we'll get a good
+result. Yeah, the project overall is really interesting — I'd want to do
+it myself, but I don't have time for that. I feel bad about [missing out
+on] a good project, but —"
+
+00:22:50 - 00:23:25
+"— and the time I would've needed, I just can't free up. I don't love
+that, but it is what it is. Still, yeah, okay — I think this might
+actually be better if YOU do it instead of me, just because I didn't have
+enough time to do everything properly. To do everything right. Because,
+well, I couldn't —"
+
+00:23:25 - 00:24:12
+"I didn't get anything done for today."
+
+00:24:13 - 00:24:15
+"."
