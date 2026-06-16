@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 340" width="680" height="340" font-family="Helvetica, Arial, sans-serif">
+  <style>
+    .t{font-size:14px;fill:#2c2c2a}
+    .th{font-size:14px;font-weight:500;fill:#2c2c2a}
+    .ts{font-size:12px;fill:#73726c}
+  </style>
+  <defs>
+    <marker id="ddarrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#E24B4A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="680" height="340" fill="#ffffff"/>
+  <line x1="80" y1="60" x2="80" y2="300" stroke="#888780" stroke-width="0.5" opacity="0.5"/>
+  <line x1="80" y1="300" x2="620" y2="300" stroke="#888780" stroke-width="0.5" opacity="0.5"/>
+  <text class="ts" x="80" y="50">Equity</text>
+  <text class="ts" x="620" y="322" text-anchor="end">Time</text>
+  <line x1="215" y1="140" x2="575" y2="140" stroke="#888780" stroke-width="0.5" stroke-dasharray="4 4" opacity="0.7"/>
+  <text class="ts" x="470" y="131" text-anchor="middle">High-water mark</text>
+  <polyline points="80,236 125,210 170,166 215,140 260,178 305,236 350,274 395,284 440,252 485,204 530,146 575,108 620,76" fill="none" stroke="#378ADD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="215" cy="140" r="4" fill="#378ADD"/>
+  <text class="th" x="215" y="126" text-anchor="middle">Peak = 130</text>
+  <circle cx="395" cy="284" r="4" fill="#E24B4A"/>
+  <text class="ts" x="408" y="289">Trough = 85</text>
+  <line x1="395" y1="142" x2="395" y2="282" stroke="#E24B4A" stroke-width="1.5" marker-start="url(#ddarrow)" marker-end="url(#ddarrow)"/>
+  <text class="th" x="385" y="216" text-anchor="end" fill="#A32D2D">&#8722;34.6%</text>
+</svg>
