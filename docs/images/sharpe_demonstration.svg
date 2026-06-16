@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 320" width="680" height="320" font-family="Helvetica, Arial, sans-serif">
+  <style>
+    .th{font-size:14px;font-weight:500;fill:#2c2c2a}
+    .ts{font-size:12px;fill:#73726c}
+  </style>
+  <rect x="0" y="0" width="680" height="320" fill="#ffffff"/>
+  <line x1="80" y1="50" x2="80" y2="270" stroke="#888780" stroke-width="0.5" opacity="0.5"/>
+  <line x1="80" y1="270" x2="620" y2="270" stroke="#888780" stroke-width="0.5" opacity="0.5"/>
+  <text class="ts" x="80" y="40">Equity</text>
+  <text class="ts" x="620" y="292" text-anchor="end">Time</text>
+  <line x1="80" y1="230" x2="620" y2="230" stroke="#888780" stroke-width="0.5" stroke-dasharray="3 4" opacity="0.5"/>
+  <text class="ts" x="84" y="244">Start 100</text>
+  <polyline points="80,230 125,224 170,219 215,212 260,207 305,200 350,193 395,186 440,178 485,170 530,160 575,150 620,140" fill="none" stroke="#1D9E75" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="80,230 125,180 170,250 215,150 260,240 305,165 350,255 395,140 440,230 485,158 530,238 575,148 620,140" fill="none" stroke="#D85A30" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="620" cy="140" r="3.5" fill="#2c2c2a"/>
+  <text class="th" x="612" y="132" text-anchor="end">Both end at 140</text>
+  <circle cx="100" cy="305" r="5" fill="#1D9E75"/>
+  <text class="ts" x="112" y="309">Smooth &#8212; Sharpe &#8776; 2.4</text>
+  <circle cx="340" cy="305" r="5" fill="#D85A30"/>
+  <text class="ts" x="352" y="309">Jagged &#8212; Sharpe &#8776; 0.4</text>
+</svg>
