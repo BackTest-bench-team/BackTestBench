@@ -8,9 +8,9 @@ The interface defines the contract that every concrete broker adapter must imple
 
 **Methods:**
 
-- **`get_candles(instrument: str, timeframe: str, start_date: datetime, end_date: datetime) -> List[Candle]`**  
+- **`get_candles(instrument: str, timeframe: str, from_dt: datetime, to_dt: datetime) -> List[Candle]`**  
   Retrieves historical candles for the instrument over the specified period.
-  - *Parameters*: instrument (ticker), timeframe (1min, 5min, hour, day, etc.), start and end dates.
+  - *Parameters*: instrument (ticker), timeframe (1min, 5min, hour, day, etc.), start (`from_dt`) and end (`to_dt`) dates.
   - *Returns*: a list of `Candle` models.
 
 - **`place_order(instrument: str, action: str, quantity: float, price: Optional[float] = None) -> OrderResult`**  
@@ -50,4 +50,4 @@ The API contracts between `BrokerAdapter` and the `Data Loader` module (responsi
 - **Pagination**: methods returning lists (especially `get_candles`) support pagination via `limit` and `offset` parameters or cursors.  
 - **Caching**: caching of candles is allowed at the Data Loader level to reduce broker API load. The contract specifies that the adapter is not responsible for caching, only for reading "raw" data.
 
-The agreement is considered complete after successful execution of a set of integration tests with a mock adapter and a test broker.
+The contract is considered finalized once a set of integration tests against a mock adapter and a test broker passes without errors.

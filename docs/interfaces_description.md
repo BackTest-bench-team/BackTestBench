@@ -173,6 +173,7 @@ Result of an order placement attempt via a `BrokerAdapter`.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
+| `order_id` | `Optional[str]` | `None` | Broker-assigned order identifier; `None` if the order was rejected before placement |
 | `status` | `OrderStatus` | — | `FILLED`, `REJECTED`, or `PENDING` |
 | `filled_price` | `Optional[float]` | `None` | Price at which the order was filled, if applicable |
 | `filled_quantity` | `Optional[float]` | `None` | Quantity actually filled, if applicable |
@@ -188,6 +189,8 @@ Unified interface to a market data source and/or broker. Implemented by concrete
 **Used by:** Data Loader (for historical data), Trading Bot (for order execution).
 
 **Why it exists:** when the broker changes, only the adapter implementation changes — Data Loader, Simulation Engine, and Trading Bot never need to change.
+
+**Async contract:** all methods are `async` — implementations must use `async/await`. Callers must `await` every call.
 
 ### `get_candles(instrument, from_dt, to_dt, timeframe) -> List[Candle]`
 
@@ -223,13 +226,27 @@ Place an order with the broker (or simulated sandbox).
 
 ---
 
-### `get_portfolio() -> dict`
+### `get_portfolio() -> Portfolio`
 
 Retrieve current portfolio state from the broker.
 
-**Returns:** `dict` describing holdings, cash balance, etc. Shape is broker-dependent — callers should not rely on specific keys across all adapters.
+**Returns:** `Portfolio` describing holdings and cash balance.
 
 **Called by:** Trading Bot, Simulation Engine (for virtual portfolio state).
+
+---
+
+## `Portfolio`
+
+Current portfolio state returned by `BrokerAdapter.get_portfolio()`.
+
+**Produced by:** `BrokerAdapter.get_portfolio()`.
+**Consumed by:** Trading Bot, Simulation Engine.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `cash` | `float` | — | Available cash balance (account currency) |
+| `positions` | `List[dict]` | `[]` | List of open positions. Each entry contains `instrument` (str), `quantity` (float), `avg_price` (float). Shape may vary per adapter; callers should not rely on extra keys |
 
 ---
 
