@@ -1,0 +1,48 @@
+{
+  "strategy_id": "rsi_strategy",
+  "instrument": "SBER",
+  "metrics": {
+    "total_pnl": 125000,
+    "sharpe_ratio": 1.42,
+    "max_drawdown": 0.12,
+    "win_rate": 0.63,
+    "deposit_baseline_pnl": 80000
+  },
+  "pipeline": [
+    {
+      "name": "Data Loader",
+      "status": "done"
+    },
+    {
+      "name": "Strategy Module",
+      "status": "done"
+    },
+    {
+      "name": "Simulation Engine",
+      "status": "done"
+    },
+    {
+      "name": "Analytics Module",
+      "status": "done"
+    }
+  ],
+  "equity_points": [
+    {
+      "date": "2025-01-01",
+      "value": 100000
+    },
+    {
+      "date": "2025-02-01",
+      "value": 105000
+    },
+    {
+      "date": "2025-03-01",
+      "value": 120000
+    },
+    {
+      "date": "2025-04-01",
+      "value": 125000
+    }
+  ],
+  "last_updated": "2025-08-01T12:00:00Z"
+}
