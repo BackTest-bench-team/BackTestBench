@@ -225,12 +225,12 @@ class TBankAdapter(BrokerAdapter):
             raise BrokerError(f"Failed to lookup instrument: {e}")
 
     def _convert_candle(self, historic_candle, instrument, timeframe):
-        """Convert HistoricCandle to internal Candle model."""
+        """Convert HistoricCandle to unified Candle model (timestamp as string)."""
         ts = historic_candle.time.ToDatetime()
+        # Convert datetime to ISO format string for unified model
+        timestamp_str = ts.strftime("%Y-%m-%dT%H:%M:%S")
         return Candle(
-            instrument=instrument,
-            timestamp=ts,
-            timeframe=timeframe,
+            timestamp=timestamp_str,
             open=parse_quotation(historic_candle.open),
             high=parse_quotation(historic_candle.high),
             low=parse_quotation(historic_candle.low),
