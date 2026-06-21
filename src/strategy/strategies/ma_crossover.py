@@ -22,15 +22,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from engine.models import Signal
-from engine.types import SignalType
+from src.engine.models import Signal
+from src.engine.types import SignalType
 
 from ..base import BaseStrategy
 from ..errors import ParameterValidationError
 from ..registry import register_strategy
 
 if TYPE_CHECKING:
-    from engine.context import ExecutionContext
+    from src.engine.context import ExecutionContext
 
 
 @register_strategy("ma_crossover")

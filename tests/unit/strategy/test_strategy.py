@@ -8,13 +8,13 @@ import math
 
 import pytest
 
-from engine.context import ExecutionContext
-from engine.models import Candle
-from engine.portfolio import Portfolio
-from engine.models import Signal
-from engine.types import SignalType
+from src.engine.context import ExecutionContext
+from src.engine.models import Candle
+from src.engine.portfolio import Portfolio
+from src.engine.models import Signal
+from src.engine.types import SignalType
 
-from strategy import (
+from src.strategy import (
     ConfigError,
     ParameterValidationError,
     UnknownStrategyError,

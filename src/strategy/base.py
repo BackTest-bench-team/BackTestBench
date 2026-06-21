@@ -12,8 +12,8 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # imported for typing only; no runtime dependency on the engine
-    from engine.context import ExecutionContext
-    from engine.models import Signal
+    from src.engine.context import ExecutionContext
+    from src.engine.models import Signal
 
 
 class BaseStrategy(ABC):

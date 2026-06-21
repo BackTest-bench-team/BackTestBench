@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import math
 
-from engine import ExecutionEngine
-from engine.models import Candle
+from src.engine import ExecutionEngine
+from src.engine.models import Candle
 
-from strategy import load_config, create_from_config, available_strategies
+from src.strategy import load_config, create_from_config, available_strategies
 
 
 def synthetic_candles(n: int = 200) -> list[Candle]:
