@@ -1,0 +1,68 @@
+services:
+  backtest-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: backtest-bench:latest
+    container_name: backtest-bench
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./examples:/app/examples
+    working_dir: /app
+    command: python examples/run_ma_crossover_demo.py
+
+  # Service for running tests
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: backtest-bench:latest
+    container_name: backtest-bench-test
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./config:/app/config
+    working_dir: /app
+    command: pytest tests -v
+    profiles:
+      - test
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: backtest-bench-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/app:/app/app
+      - ./frontend/components:/app/components
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+
+  # Development service with interactive shell
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: backtest-bench:latest
+    container_name: backtest-bench-dev
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - ./:/app
+    working_dir: /app
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+    profiles:
+      - dev
