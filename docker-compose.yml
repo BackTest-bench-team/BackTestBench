@@ -47,6 +47,24 @@ services:
     environment:
       - NODE_ENV=production
     restart: unless-stopped
+    profiles:
+      - frontend
+
+  frontend-dev:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: backtest-bench-frontend-dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+    restart: unless-stopped
+    profiles:
+      - dev
 
   # Development service with interactive shell
   dev:
