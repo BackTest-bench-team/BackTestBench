@@ -101,6 +101,34 @@ def test_execution_engine():
 
     # после продажи деньги вернулись
     assert portfolio.cash == 12000
+    assert result["equity_curve"] == [10000.0, 10000.0, 11000.0, 12000.0]
+    assert result["trade_log_report"].final_portfolio_value == 12000.0
 
 
     print("ENGINE TEST PASSED")
+
+
+class BuyAndHoldStrategy:
+    def __init__(self):
+        self.done = False
+
+    def on_candle(self, context):
+        if not self.done:
+            self.done = True
+            return Signal(type=SignalType.BUY)
+        return Signal(type=SignalType.HOLD)
+
+
+def test_engine_force_closes_open_position_on_last_candle():
+    candles = [
+        Candle("2025-01-01", 100, 100, 100, 100, 1),
+        Candle("2025-01-02", 120, 120, 120, 120, 1),
+    ]
+
+    result = ExecutionEngine().run(BuyAndHoldStrategy(), candles, initial_capital=1000.0)
+
+    assert len(result["trade_log"]) == 1
+    assert result["trade_log"][0].pnl == 200.0
+    assert result["final_portfolio"].cash == 1200.0
+    assert result["final_portfolio"].position_size == 0.0
+    assert result["equity_curve"] == [1000.0, 1000.0, 1200.0]

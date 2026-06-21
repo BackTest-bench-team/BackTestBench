@@ -247,3 +247,39 @@ No metric raises an exception or returns `NaN`; a failing consistency check rais
 3. **Per-trade P&L convention (with Core Engine).** Confirm the `(exit − entry) × qty − commission` long-only convention and where commissions are applied.
 4. **Sample vs population standard deviation (team-wide).** Affects every Sharpe value; must be fixed once for fair ranking. Proposed: sample (n − 1).
 5. **`periods_per_year` per venue/timeframe (team-wide).** Needs agreed defaults so Sharpe is comparable.
+
+---
+
+## MVP-1 implementation notes
+
+Implemented in `src/analytics/metrics.py`.
+
+Public API:
+
+- `calculate_total_pnl(trades)` — sums realized closed-trade P&L.
+- `calculate_win_rate(trades)` — counts trades where `pnl > 0`; break-even trades are not wins.
+- `calculate_max_drawdown(equity_curve)` — computes the largest running peak-to-trough decline as a positive fraction.
+- `calculate_sharpe_ratio(equity_curve, timeframe)` — computes annualized Sharpe from simple per-period equity returns with sample standard deviation.
+- `calculate_deposit_baseline_pnl(initial_capital, period_start, period_end)` — computes the 13% annual compound deposit baseline.
+- `calculate_metrics(...)` — returns a full `MetricsReport`.
+- `calculate_metrics_from_trade_log(trade_log, context)` — canonical Analytics entry point for `TradeLog + RunContext`.
+
+Simulation Engine changes for Analytics MVP-1:
+
+- `ExecutionEngine.run(...)` now returns `equity_curve` in addition to the existing `trade_log` and `final_portfolio` keys.
+- `ExecutionEngine.run(...)` also returns `trade_log_report`, a `TradeLog` dataclass with `trades`, `final_portfolio_value`, and `equity_curve`.
+- Any still-open long position is force-closed on the last candle close. This keeps the Analytics consistency rule true: `total_pnl == final_portfolio_value - initial_capital`.
+
+Edge-case behavior:
+
+- Empty trade list returns neutral values for trade-based metrics.
+- Fewer than two equity returns or zero return variance returns `sharpe_ratio = 0.0`.
+- Flat or monotonically rising equity returns `max_drawdown = 0.0`.
+- No metric returns `NaN`.
+- `DataIntegrityError` is raised if a supplied `final_portfolio_value` is inconsistent with realized P&L beyond tolerance.
+
+Tests are in `tests/unit/analytics/test_analytics.py` and can be run with:
+
+```bash
+python -m pytest tests/unit/analytics/test_analytics.py -q
+```
