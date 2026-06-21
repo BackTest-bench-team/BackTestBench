@@ -1,4 +1,16 @@
 services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.fullstack
+    container_name: backtest-bench-app
+    ports:
+      - "3000:3000"
+    environment:
+      - TINKOFF_TOKEN
+    restart: unless-stopped
+
+
   backtest-app:
     build:
       context: .
@@ -46,6 +58,20 @@ services:
       - ./frontend/components:/app/components
     environment:
       - NODE_ENV=production
+    restart: unless-stopped
+
+  frontend-dev:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: backtest-bench-frontend-dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
     restart: unless-stopped
 
   # Development service with interactive shell
