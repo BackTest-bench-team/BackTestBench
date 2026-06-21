@@ -1,6 +1,6 @@
-from engine.models import Trade
-from engine.portfolio import Portfolio
-from engine.types import SignalType
+from .models import Trade
+from .portfolio import Portfolio
+from .types import SignalType
 
 
 class OrderExecutor:

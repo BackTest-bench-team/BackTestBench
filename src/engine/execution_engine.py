@@ -1,9 +1,9 @@
 from typing import List
 
-from engine.models import Candle, Trade
-from engine.portfolio import Portfolio
-from engine.context import ExecutionContext
-from engine.order_executor import OrderExecutor
+from .models import Candle, Trade
+from .portfolio import Portfolio
+from .context import ExecutionContext
+from .order_executor import OrderExecutor
 
 
 class ExecutionEngine:

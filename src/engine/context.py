@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from typing import List
 
-from engine.models import Candle
-from engine.portfolio import Portfolio
+from .models import Candle
+from .portfolio import Portfolio
 
 
 @dataclass
