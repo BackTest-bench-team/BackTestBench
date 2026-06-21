@@ -10,7 +10,6 @@ services:
       - TINKOFF_TOKEN
     restart: unless-stopped
 
-
   backtest-app:
     build:
       context: .
@@ -27,7 +26,6 @@ services:
     working_dir: /app
     command: python examples/run_ma_crossover_demo.py
 
-  # Service for running tests
   test:
     build:
       context: .
@@ -46,53 +44,6 @@ services:
     profiles:
       - test
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: backtest-bench-frontend
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./frontend/app:/app/app
-      - ./frontend/components:/app/components
-    environment:
-      - NODE_ENV=production
-    restart: unless-stopped
-    profiles:
-      - frontend
-
-  frontend-dev:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.dev
-    container_name: backtest-bench-frontend-dev
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    environment:
-      - NODE_ENV=development
-    restart: unless-stopped
-    profiles:
-      - dev
-
-  frontend-dev:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.dev
-    container_name: backtest-bench-frontend-dev
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    environment:
-      - NODE_ENV=development
-    restart: unless-stopped
-
-  # Development service with interactive shell
   dev:
     build:
       context: .
