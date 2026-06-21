@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import math
 
-from engine import ExecutionEngine
-from engine.models import Candle
+from src.engine import ExecutionEngine
+from src.engine.models import Candle
 
-from strategy import parse_config, create_from_config
+from src.strategy import parse_config, create_from_config
 
 
 def _candles(n: int = 200) -> list[Candle]:
