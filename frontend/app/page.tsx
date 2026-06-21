@@ -1,283 +1,336 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-type Metrics = {
-  strategy_id: string;
-  instrument: string;
-  total_pnl: number;
-  sharpe_ratio: number;
-  max_drawdown: number;
-  win_rate: number;
-  deposit_baseline_pnl: number;
+type PipelineStep = {
+  name: string;
+  status: "pending" | "running" | "done" | "skipped" | "error";
 };
-
 
 type EquityPoint = {
   date: string;
   value: number;
 };
 
+type DashboardData = {
+  run_id: string;
+  strategy_id: string;
+  strategy_version: string;
+  instrument: string;
+  timeframe: string;
+  data_source: string;
+  status: string;
+  current_stage: string;
+  pipeline: PipelineStep[];
+  metrics: {
+    total_pnl: number | null;
+    sharpe_ratio: number | null;
+    max_drawdown: number | null;
+    win_rate: number | null;
+    deposit_baseline_pnl: number | null;
+  };
+  equity_points: EquityPoint[];
+  trade_count: number;
+  final_portfolio: {
+    cash: number | null;
+    position_size: number | null;
+    equity: number | null;
+  };
+  message: string;
+  error: string | null;
+  last_updated: string | null;
+};
 
-export default function Home() {
+const POLL_MS = 3000;
 
-  const [metrics, setMetrics] = useState<Metrics | null>(null);
-  const [equity, setEquity] = useState<EquityPoint[]>([]);
+function formatMoney(value: number | null | undefined) {
+  if (value === null || value === undefined) return "—";
+  return new Intl.NumberFormat("ru-RU", {
+    style: "currency",
+    currency: "RUB",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
 
-  const [status, setStatus] = useState(
-    "Waiting for pipeline"
+function formatPercent(value: number | null | undefined) {
+  if (value === null || value === undefined) return "—";
+  return new Intl.NumberFormat("ru-RU", {
+    style: "percent",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function formatNumber(value: number | null | undefined) {
+  if (value === null || value === undefined) return "—";
+  return new Intl.NumberFormat("ru-RU", {
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("ru-RU");
+}
+
+function MetricCard({
+  title,
+  value,
+  hint,
+}: {
+  title: string;
+  value: string;
+  hint: string;
+}) {
+  return (
+    <article className="metric-card">
+      <div className="metric-title">{title}</div>
+      <div className="metric-value">{value}</div>
+      <div className="metric-hint">{hint}</div>
+    </article>
   );
+}
 
-
-  async function loadData() {
-
-    try {
-
-      setStatus("Loading metrics...");
-
-
-      const metricsResponse =
-        await fetch("/api/metrics");
-
-
-      const metricsData =
-        await metricsResponse.json();
-
-
-      setMetrics(metricsData.metrics);
-
-
-      setEquity(metricsData.equity);
-
-
-      setStatus(
-        "Analytics loaded"
-      );
-
-
-    } catch(error) {
-
-      console.error(error);
-
-      setStatus(
-        "Pipeline error"
-      );
-    }
-
-  }
-
-
-
-  useEffect(() => {
-
-    loadData();
-
-    // обновление каждые 5 секунд
-    const timer =
-      setInterval(loadData,5000);
-
-
-    return () =>
-      clearInterval(timer);
-
-
-  },[]);
-
-
+function PipelineStatus({
+  currentStage,
+  message,
+  steps,
+}: {
+  currentStage: string;
+  message: string;
+  steps: PipelineStep[];
+}) {
+  const safeSteps = Array.isArray(steps) ? steps : [];
 
   return (
-
-    <main
-      style={{
-        padding:"40px",
-        fontFamily:"Arial"
-      }}
-    >
-
-      <h1>
-        BackTest Bench MVP
-      </h1>
-
-
-      <button
-        onClick={loadData}
-        style={{
-          padding:"10px 20px",
-          marginBottom:"20px"
-        }}
-      >
-
-        Run backtest
-
-      </button>
-
-
-
-      <h3>
-        Pipeline status:
-      </h3>
-
-
-      <p>
-        {status}
-      </p>
-
-
-
-
-      <h2>
-        Metrics
-      </h2>
-
-
-      {
-        metrics && (
-
-          <div
-            style={{
-              display:"grid",
-              gridTemplateColumns:
-              "repeat(3,200px)",
-              gap:"20px"
-            }}
-          >
-
-
-            <Card
-              title="P&L"
-              value={
-                metrics.total_pnl
-              }
-            />
-
-
-            <Card
-              title="Sharpe"
-              value={
-                metrics.sharpe_ratio
-              }
-            />
-
-
-            <Card
-              title="Max drawdown"
-              value={
-                metrics.max_drawdown * 100 + "%"
-              }
-            />
-
-
-            <Card
-              title="Win rate"
-              value={
-                metrics.win_rate * 100 + "%"
-              }
-            />
-
-
-            <Card
-              title="Deposit"
-              value={
-                metrics.deposit_baseline_pnl
-              }
-            />
-
-
-          </div>
-
-        )
-
-      }
-
-
-
-      <h2>
-        Portfolio equity
-      </h2>
-
-
-
-      <div
-        style={{
-          border:"1px solid gray",
-          padding:"20px",
-          width:"600px"
-        }}
-      >
-
-
-        {
-          equity.map(
-            (p,index)=>(
-
-              <div key={index}>
-
-                {p.date}
-                :
-                {" "}
-                {p.value}
-
-              </div>
-
-            )
-          )
-
-        }
-
-
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <h2 className="section-title">Pipeline status</h2>
+          <div className="panel-subtitle">Current stage: {currentStage}</div>
+        </div>
+        <div className="panel-note">{message}</div>
       </div>
 
-
-    </main>
-
+      {safeSteps.length === 0 ? (
+        <div className="chart-empty">Pipeline has not started yet.</div>
+      ) : (
+        <div className="pipeline-list">
+          {safeSteps.map((step) => (
+            <div key={step.name} className="pipeline-row">
+              <div className="pipeline-name">{step.name}</div>
+              <div className={`badge badge-${step.status}`}>{step.status}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
-
-
 }
 
+function EquityChart({ points }: { points: EquityPoint[] }) {
+  const chart = useMemo(() => {
+    if (!points || points.length < 2) {
+      return { pathD: "", min: 0, max: 0 };
+    }
 
+    const values = points.map((p) => p.value);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min || 1;
 
-function Card(
-{
- title,
- value
-}:{
- title:string,
- value:number|string
+    const width = 100;
+    const height = 100;
+
+    const pathD = points
+      .map((p, i) => {
+        const x = (i / (points.length - 1)) * width;
+        const y = height - ((p.value - min) / range) * height;
+        return `${i === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+      })
+      .join(" ");
+
+    return { pathD, min, max };
+  }, [points]);
+
+  if (!points || points.length < 2) {
+    return (
+      <section className="panel">
+        <h2 className="section-title">Portfolio chart</h2>
+        <div className="chart-empty">No equity data yet.</div>
+      </section>
+    );
+  }
+
+  const first = points[0];
+  const last = points[points.length - 1];
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <h2 className="section-title">Portfolio chart</h2>
+          <div className="panel-subtitle">
+            {first.date} → {last.date}
+          </div>
+        </div>
+        <div className="panel-note">
+          Min: {formatMoney(chart.min)} · Max: {formatMoney(chart.max)}
+        </div>
+      </div>
+
+      <svg viewBox="0 0 100 100" className="chart" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="areaFade" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopOpacity="0.25" />
+            <stop offset="100%" stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+
+        {[0, 25, 50, 75, 100].map((y) => (
+          <line key={y} x1="0" y1={y} x2="100" y2={y} className="chart-grid" />
+        ))}
+
+        <path
+          d={`${chart.pathD} L 100 100 L 0 100 Z`}
+          fill="url(#areaFade)"
+          className="chart-area"
+        />
+        <path d={chart.pathD} className="chart-line" />
+      </svg>
+    </section>
+  );
 }
 
-){
+export default function Page() {
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
+  const loadDashboard = async () => {
+    try {
+      const response = await fetch("/api/dashboard", { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const json = (await response.json()) as DashboardData;
+      setData(json);
+      setError(json.error ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-return (
+  useEffect(() => {
+    loadDashboard();
+    const timer = setInterval(loadDashboard, POLL_MS);
+    return () => clearInterval(timer);
+  }, []);
 
-<div
+  const runBacktest = async () => {
+    setStarting(true);
+    setError(null);
 
-style={{
+    try {
+      const res = await fetch("/api/run", { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await loadDashboard();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start pipeline");
+    } finally {
+      setStarting(false);
+    }
+  };
 
-border:"1px solid #ccc",
+  const metrics = data?.metrics;
 
-padding:"20px",
+  return (
+    <main className="app-shell">
+      <header className="panel topbar">
+        <div>
+          <div className="brand">BackTestBench</div>
+          <h1 className="title">MVP 1 Dashboard</h1>
 
-borderRadius:"8px"
+          <div className="subtitle">
+            Strategy: {data?.strategy_id || "—"} · Version: {data?.strategy_version || "—"}
+          </div>
+          <div className="subtitle">
+            Instrument: {data?.instrument || "—"} · Timeframe: {data?.timeframe || "—"}
+          </div>
+          <div className="subtitle">
+            Data source: {data?.data_source || "—"} · Run: {data?.run_id || "—"}
+          </div>
+          <div className="subtitle">
+            Current stage: {data?.current_stage || "—"}
+          </div>
+        </div>
 
-}}
+        <div className="actions">
+          <button className="button" onClick={runBacktest} disabled={starting}>
+            {starting ? "Starting..." : "Run backtest"}
+          </button>
 
->
+          <div className="status-line">
+            {data?.status === "error"
+              ? `Error: ${data.error || data.message}`
+              : data?.message || "Idle"}
+          </div>
+          <div className="status-line small">
+            Trades: {data?.trade_count ?? 0}
+          </div>
+          <div className="status-line small">
+            Last refresh: {formatDate(data?.last_updated)}
+          </div>
+        </div>
+      </header>
 
-<h3>
-{title}
-</h3>
+      {loading ? <section className="panel">Loading dashboard...</section> : null}
 
+      {error ? (
+        <section className="panel error-card">
+          Warning: {error}
+        </section>
+      ) : null}
 
-<h2>
-{value}
-</h2>
+      {data ? (
+        <PipelineStatus
+          currentStage={data.current_stage}
+          message={data.message}
+          steps={data.pipeline}
+        />
+      ) : null}
 
+      <section className="metrics-grid">
+        <MetricCard
+          title="Total P&L"
+          value={formatMoney(metrics?.total_pnl)}
+          hint="Realized performance"
+        />
+        <MetricCard
+          title="Sharpe ratio"
+          value={formatNumber(metrics?.sharpe_ratio)}
+          hint="Risk-adjusted return"
+        />
+        <MetricCard
+          title="Max drawdown"
+          value={formatPercent(metrics?.max_drawdown)}
+          hint="Peak-to-trough decline"
+        />
+        <MetricCard
+          title="Win rate"
+          value={formatPercent(metrics?.win_rate)}
+          hint="Profitable trades share"
+        />
+        <MetricCard
+          title="Deposit baseline"
+          value={formatMoney(metrics?.deposit_baseline_pnl)}
+          hint="13% annual baseline"
+        />
+      </section>
 
-</div>
-
-)
-
-
+      <EquityChart points={data?.equity_points ?? []} />
+    </main>
+  );
 }
