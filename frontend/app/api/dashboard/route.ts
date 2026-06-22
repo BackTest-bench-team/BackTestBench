@@ -87,9 +87,10 @@ function mergeDashboard(runtimeData: Partial<DashboardData> | null): DashboardDa
       ...emptyDashboard.final_portfolio,
       ...(runtimeData.final_portfolio ?? {}),
     },
-    pipeline: Array.isArray(runtimeData.pipeline) && runtimeData.pipeline.length > 0
-      ? runtimeData.pipeline
-      : emptyDashboard.pipeline,
+    pipeline:
+      Array.isArray(runtimeData.pipeline) && runtimeData.pipeline.length > 0
+        ? runtimeData.pipeline
+        : emptyDashboard.pipeline,
     equity_points: Array.isArray(runtimeData.equity_points)
       ? runtimeData.equity_points
       : emptyDashboard.equity_points,

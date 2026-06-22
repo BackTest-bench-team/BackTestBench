@@ -6,8 +6,16 @@ services:
     container_name: backtest-bench-app
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     environment:
-      - TINKOFF_TOKEN
+      PYTHON_BIN: python3
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONPATH: /app
+    volumes:
+      - .:/app
+      - frontend_node_modules:/app/frontend/node_modules
     restart: unless-stopped
 
   backtest-app:
@@ -16,15 +24,18 @@ services:
       dockerfile: Dockerfile
     image: backtest-bench:latest
     container_name: backtest-bench
+    env_file:
+      - .env
     environment:
-      - PYTHONUNBUFFERED=1
-      - PYTHONDONTWRITEBYTECODE=1
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONPATH: /app
     volumes:
-      - ./src:/app/src
-      - ./config:/app/config
-      - ./examples:/app/examples
+      - .:/app
     working_dir: /app
-    command: python examples/run_ma_crossover_demo.py
+    command: python main.py
+    profiles:
+      - backend
 
   test:
     build:
@@ -32,13 +43,14 @@ services:
       dockerfile: Dockerfile
     image: backtest-bench:latest
     container_name: backtest-bench-test
+    env_file:
+      - .env
     environment:
-      - PYTHONUNBUFFERED=1
-      - PYTHONDONTWRITEBYTECODE=1
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONPATH: /app
     volumes:
-      - ./src:/app/src
-      - ./tests:/app/tests
-      - ./config:/app/config
+      - .:/app
     working_dir: /app
     command: pytest tests -v
     profiles:
@@ -50,14 +62,20 @@ services:
       dockerfile: Dockerfile
     image: backtest-bench:latest
     container_name: backtest-bench-dev
+    env_file:
+      - .env
     environment:
-      - PYTHONUNBUFFERED=1
-      - PYTHONDONTWRITEBYTECODE=1
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONPATH: /app
     volumes:
-      - ./:/app
+      - .:/app
     working_dir: /app
     stdin_open: true
     tty: true
     command: /bin/bash
     profiles:
       - dev
+
+volumes:
+  frontend_node_modules:

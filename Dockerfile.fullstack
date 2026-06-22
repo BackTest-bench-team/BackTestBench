@@ -10,7 +10,8 @@ WORKDIR /app
 
 # Python deps
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --upgrade pip && \
+    python -m pip install --no-cache-dir -r requirements.txt
 
 # Frontend Node deps
 COPY frontend/package.json frontend/package-lock.json ./frontend/
@@ -22,9 +23,10 @@ COPY . .
 EXPOSE 3000
 
 ENV PYTHON_BIN=python3 \
+    PYTHONPATH=/app \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NODE_ENV=development
 
 WORKDIR /app/frontend
-CMD ["npx", "next", "dev", "--hostname", "0.0.0.0"]
+CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]

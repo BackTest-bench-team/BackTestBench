@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import sys
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -8,12 +9,15 @@ from typing import Any, Dict
 
 from dotenv import load_dotenv
 
+BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
 from src.analytics import calculate_metrics_from_trade_log
 from src.broker_adapter import TBankAdapter
 from src.engine import ExecutionEngine, RunContext
 from src.strategy.strategies.ma_crossover import MACrossover
 
-BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -24,6 +28,10 @@ load_dotenv(BASE_DIR / ".env", override=False)
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def make_run_id() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
 
 def default_dashboard() -> Dict[str, Any]:
@@ -136,7 +144,10 @@ def build_equity_points(equity_curve):
 
 
 async def run_pipeline() -> Dict[str, Any]:
+    run_id = os.getenv("RUN_ID") or make_run_id()
+
     dashboard = default_dashboard()
+    dashboard["run_id"] = run_id
     dashboard["status"] = "running"
     dashboard["current_stage"] = "Broker Adapter"
     dashboard["message"] = "Starting pipeline..."
@@ -176,8 +187,8 @@ async def run_pipeline() -> Dict[str, Any]:
 
     strategy = MACrossover(
         params={
-            "fast": 10,
-            "slow": 30,
+            "fast": 15,
+            "slow": 20,
             "order_size": 1.0,
         }
     )
@@ -213,7 +224,7 @@ async def run_pipeline() -> Dict[str, Any]:
     save_dashboard(dashboard)
 
     context = RunContext(
-        run_id="local",
+        run_id=run_id,
         strategy_id="ma_crossover",
         strategy_version="1",
         instrument="SBER",
