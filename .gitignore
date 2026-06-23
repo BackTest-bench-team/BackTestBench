@@ -38,3 +38,7 @@ out/
 
 # Docker
 docker-compose.override.yml
+
+openspec/
+.codex/
+.cursor/

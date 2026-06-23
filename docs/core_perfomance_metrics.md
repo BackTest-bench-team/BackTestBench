@@ -2,6 +2,9 @@
 
 This document specifies the **exact formulas and calculation rules** for the first set of performance metrics produced by the Analytics Module.
 
+Implementation status: **audited against `src/analytics/metrics.py` and tests on
+June 23, 2026**.
+
 ## Scope - "computed using only Candles"
 
 The first metric set is computed exclusively from **candle-derived data**:
@@ -26,14 +29,15 @@ The four metrics in the Definition of Done map directly onto `MetricsReport`:
 
 ## Inputs
 
-The Analytics Module needs the following per run. Items marked **(new)** are not yet on the current `TradeLog` contract - see _Open coordination points_.
+The Analytics Module needs the following per run. `equity_curve` is now part of
+`TradeLog`; the remaining run metadata is supplied through `RunContext`.
 
 |Input|Source|Used by|
 |---|---|---|
 |`trades: List[Trade]`|`TradeLog`|P&L, win rate, fallback equity curve|
 |`final_portfolio_value: float`|`TradeLog`|consistency check|
-|`initial_capital: float` **(new)**|run config / Simulation Engine|returns, drawdown, deposit baseline|
-|`equity_curve: List[float]` **(new)**|Simulation Engine|Sharpe, max drawdown|
+|`initial_capital: float`|`RunContext`|returns, drawdown, deposit baseline|
+|`equity_curve: List[float]`|`TradeLog`|Sharpe, max drawdown|
 |`timeframe: str`|strategy config / candle|annualization|
 |`period_start`, `period_end: datetime`|candle range (`from_dt`, `to_dt`)|deposit baseline, periods/year|
 
@@ -54,14 +58,17 @@ E_i = cash_i + held_quantity_i × candle_i.close
 
 This curve is the canonical basis for Sharpe and max drawdown.
 
-**Fallback (if the equity curve is not yet emitted by the engine):** reconstruct a coarse, realized-only curve stepping at each closed trade:
+**Fallback API:** `fallback_equity_curve()` can reconstruct a coarse, realized-only curve
+stepping at each closed trade when an external caller does not provide the engine curve:
 
 ```
 E_0      = initial_capital
 E_k      = initial_capital + Σ_{j ≤ k} trades[j].pnl
 ```
 
-The fallback ignores unrealized intra-trade fluctuations, so it under-reports drawdown and changes the Sharpe sampling frequency from per-candle to per-trade. It is acceptable for the very first MVP but the per-candle curve is the target.
+The fallback ignores unrealized intra-trade fluctuations, so it under-reports drawdown and
+changes the Sharpe sampling frequency from per-candle to per-trade. The integrated engine
+already emits the preferred per-candle curve.
 
 ---
 
@@ -73,7 +80,8 @@ The fallback ignores unrealized intra-trade fluctuations, so it under-reports dr
     trade.pnl = (exit_price − entry_price) × quantity − commission
     ```
 
-    `commission` defaults to `0.0` for MVP-1 and is configurable. This convention must be confirmed with the Core Engine developer.
+    The current engine does not model commission. It therefore behaves as if commission is
+    `0.0`; commission is not currently configurable.
 
 - A trade is a **win** when `pnl > 0`. Break-even (`pnl == 0`) is **not** a win.
 
@@ -135,7 +143,7 @@ max_drawdown  = max_i ( drawdown_i )
 - `initial_capital > 0` is assumed, so `peak_i > 0` and the division is safe. If a peak is ever `≤ 0` (only possible with leverage, out of MVP scope), that point is skipped.
 - Result is in `[0.0, 1.0]`, matching `MetricsReport.max_drawdown`
 
-![Max drawdown on an equity curve](images/max_drawdown_on_equity_curve.svg)
+![Max drawdown on an equity curve](images/drawdown_demonstration.svg)
 
 ---
 
@@ -169,17 +177,18 @@ sharpe_period = mean_x / std_x
 sharpe_ratio  = sharpe_period × sqrt(periods_per_year)
 ```
 
-![Sharpe ratio: same return, different risk](images/sharpe_smooth_vs_jagged_same_return.svg)
+![Sharpe ratio: same return, different risk](images/sharpe_demonstration.svg)
 
 ### Parameters and rules
 
-- **Risk-free rate `r_f`:** per-period rate derived from the annual deposit baseline (13%/year), converted to the candle timeframe:
+- **Risk-free rate `r_f`:** the current default is `0.0`. When callers pass `None`, the
+  implementation derives a per-period rate from the annual deposit baseline (13%/year):
 
     ```
     r_f = (1 + 0.13)^(1 / periods_per_year) − 1
     ```
 
-    For MVP-1 `r_f = 0.0` is an acceptable simplification (configurable).
+    This behavior is configurable through `MetricsConfig.risk_free_rate`.
 
 - **`periods_per_year`** depends on `timeframe` and the traded calendar. Defaults (configurable, MOEX-oriented):
 
@@ -232,21 +241,31 @@ No metric raises an exception or returns `NaN`; a failing consistency check rais
 |Parameter|Default|Description|
 |---|---|---|
 |`initial_capital`|run config|Starting capital `E_0`|
-|`commission`|`0.0`|Per-trade cost in the P&L convention|
+|`commission`|not implemented|Current engine applies no trading costs|
 |`annual_deposit_rate`|`0.13`|Baseline deposit / risk-free source|
-|`risk_free_rate`|derived from `annual_deposit_rate` (MVP: `0.0`)|Per-period `r_f` in Sharpe|
+|`risk_free_rate`|`0.0`; `None` derives from annual rate|Per-period `r_f` in Sharpe|
 |`periods_per_year`|per timeframe table|Sharpe annualization factor|
 |`trading_hours_per_day`|venue-dependent|Used to derive `periods_per_year`|
 
 ---
 
-## Open coordination points
+## Resolved and Remaining Coordination Points
 
-1. **Equity curve (with Core Engine - Samy).** Sharpe and max drawdown require a per-candle equity curve, which the current `TradeLog` does not carry. _Recommendation:_ add `equity_curve: List[float]` (aligned 1:1 with the candle series) to `TradeLog`. _Alternative:_ pass the curve to Analytics alongside the `TradeLog`. _Fallback for the first MVP:_ reconstruct the realized-only curve from trade P&L (documented above). I recommend adding the field - it is a small change and unlocks the two hardest metrics correctly.
-2. **`initial_capital` availability (with Core Engine).** Analytics needs `E_0` for returns, drawdown, and the deposit baseline. Either add it to the run payload or expose it on `TradeLog`.
-3. **Per-trade P&L convention (with Core Engine).** Confirm the `(exit − entry) × qty − commission` long-only convention and where commissions are applied.
-4. **Sample vs population standard deviation (team-wide).** Affects every Sharpe value; must be fixed once for fair ranking. Proposed: sample (n − 1).
-5. **`periods_per_year` per venue/timeframe (team-wide).** Needs agreed defaults so Sharpe is comparable.
+Resolved:
+
+1. `TradeLog` now contains `equity_curve`.
+2. `RunContext` supplies `initial_capital`, timeframe, period, strategy, and instrument.
+3. Sharpe uses sample standard deviation.
+4. Open long positions are force-closed on the final candle.
+
+Remaining:
+
+1. Add commissions/slippage before results are treated as realistic execution estimates.
+2. Align supported timeframes between strategy configuration and the T-Bank adapter.
+3. Decide whether the default Sharpe risk-free rate remains `0.0` or derives from the
+   deposit baseline.
+4. Persist run inputs and equity curves for durable reproducibility.
+5. Add percentage return and risk/reward metrics requested in the June 22 review.
 
 ---
 

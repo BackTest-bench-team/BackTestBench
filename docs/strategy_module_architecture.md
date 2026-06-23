@@ -1,101 +1,79 @@
-# Strategy Module — Architecture
+# Strategy Module Architecture
 
-## Overview
+Last audited against `main`: **June 23, 2026**.
 
-The Strategy Module is the component responsible for describing, registering, and
-running pluggable trading strategies. It conforms to the shared `interfaces.py`
-contract and never imports another module directly. The only surface the rest of
-the system sees is the `BaseStrategy` abstraction: the Simulation Engine holds a
-strategy instance and calls its `on_candle` method once per candle, without ever
-inspecting how the strategy works internally. Everything else described here —
-the registry, the configuration handling, and the plugin layout — is internal to
-the module and can change freely as long as the `BaseStrategy` contract is kept.
+## Current Scope
 
-```
-                 interfaces.py  (shared, canonical)
-                 ┌──────────────────────────────────┐
-                 │  ActionType · Signal · Candle     │
-                 │  BaseStrategy (ABC)               │
-                 └──────────────────────────────────┘
-                        ▲ implements             ▲ depends on
-                        │                        │
-   ┌────────────────────┴─────────┐    ┌─────────┴───────────┐
-   │        Strategy Module        │    │  Simulation Engine  │
-   │  registry · YAML · plugins    │    │    backtest loop    │
-   └───────────────────────────────┘    └─────────────────────┘
-       create_strategy(...) ──── strategy instance ───► on_candle(candle, portfolio)
-                                                         ◄────────── Signal ─────────
-```
+The Strategy Module provides:
 
-## Scope
+- a `BaseStrategy` contract;
+- a registry and factory;
+- YAML/dictionary configuration parsing;
+- strategy-specific parameter validation;
+- one built-in `ma_crossover` strategy;
+- unit and engine-integration tests.
 
-For MVP-1 the module provides one working built-in strategy, instantiated from a
-YAML configuration, producing signals the Simulation Engine can execute. It
-operates on a single instrument and is long-only. Multi-instrument support and
-the validation/scheduling flows are out of scope for MVP-1, but the design does
-not block them.
+The integrated dashboard still constructs `MACrossover` directly in `main.py`; it does not
+load `config/strategies/ma_crossover.yaml` or expose strategy selection in the UI.
 
-## The contract it implements
-
-Every strategy implements the unified method `on_candle(candle, portfolio)`,
-which receives the latest `Candle` and the current portfolio state and returns a
-single `Signal`. A `Signal` carries an `action` (`ActionType.BUY`,
-`ActionType.SELL`, or `ActionType.HOLD`), a `quantity` expressed as an absolute
-amount in instrument units, and an optional `reason` surfaced in the trade log
-for debugging.
+## Runtime Contract
 
 ```python
-class Signal:
-    action: ActionType        # BUY | SELL | HOLD
-    quantity: float = 0.0     # absolute size in instrument units
-    reason: str = ""          # optional, for trade-log readability
-
 class BaseStrategy(ABC):
-    def __init__(self, params: dict): ...
-    def on_candle(self, candle: Candle, portfolio: dict) -> Signal: ...
+    def __init__(self, params: dict):
+        self.params = params
+        self.validate_params()
+
+    def validate_params(self) -> None:
+        ...
+
+    @abstractmethod
+    def on_candle(self, context: ExecutionContext) -> Signal:
+        ...
 ```
 
-Because every strategy exposes the same `on_candle` method with the same shape,
-the Simulation Engine treats all strategies identically and never needs to know
-their internals.
+`ExecutionContext` contains:
 
-## Plugin model
+- `current_candle`;
+- all `historical_candles` before the current candle;
+- the engine-owned single-instrument `Portfolio`.
 
-Each strategy is an independent subclass of `BaseStrategy`, kept in its own file.
-A strategy holds whatever indicator state it needs — moving-average buffers,
-counters, previous values — as internal attributes set up when it is created. It
-is pure computation over the candles it is fed and the portfolio it is handed; it
-never touches the database, the broker, or any other module.
-
-## Registry and factory
-
-The module keeps a registry mapping a strategy name to its class. A strategy
-registers itself by name when its file is loaded, so adding one is purely
-additive and the rest of the module is never edited.
+The strategy must return exactly one `Signal` and must not mutate the context or portfolio.
 
 ```python
-@register_strategy("sma_crossover")
-class SmaCrossover(BaseStrategy):
-    ...
-
-create_strategy(name: str, params: dict) -> BaseStrategy
-available_strategies() -> list[str]
+Signal(type=SignalType.BUY | SignalType.SELL | SignalType.HOLD, size=1.0)
 ```
 
-The factory `create_strategy` turns a stored or loaded configuration into a live
-instance by looking up the requested name and constructing the matching strategy
-from its parameters. Requesting a name that was never registered fails with a
-clear error rather than silently doing nothing.
+There is no `reason` field in the current signal model.
+
+## Registry and Factory
+
+Strategies register through a class decorator:
+
+```python
+@register_strategy("ma_crossover")
+class MACrossover(BaseStrategy):
+    ...
+```
+
+Public functions:
+
+```python
+available_strategies() -> list[str]
+get_strategy_class(name) -> type[BaseStrategy]
+create_strategy(name, params=None) -> BaseStrategy
+create_from_config(config) -> BaseStrategy
+```
+
+An unknown name raises `UnknownStrategyError`. Duplicate registration under a different
+class raises `ValueError`.
 
 ## Configuration
 
-A strategy is described by a YAML configuration: which strategy to use, the
-instrument and timeframe it trades, a version label, and a block of
-strategy-specific parameters such as indicator periods, thresholds, and order
-size.
+Current schema:
 
 ```yaml
-name: sma_crossover
+name: ma_crossover
 instrument: SBER
 timeframe: 1m
 version: "1"
@@ -105,74 +83,79 @@ params:
   order_size: 1.0
 ```
 
-The module parses the YAML into the plain `params` dictionary and hands it to the
-strategy at construction. The envelope fields (`name`, `instrument`,
-`timeframe`, `version`) are used by the module and the engine; the `params` block
-is opaque to the core and validated by the individual strategy itself. A strategy
-validates its parameters when created and fails fast on bad input, so a
-misconfigured strategy is rejected before it ever reaches the simulation loop.
+`StrategyConfig` fields:
 
-## Lifecycle and reproducibility
+- `name`: required non-empty strategy ID;
+- `instrument`: optional string;
+- `timeframe`: optional, one of `1m`, `5m`, `15m`, `1h`, `4h`, `1d`;
+- `version`: string, default `"1"`;
+- `params`: dictionary, default `{}`.
 
-The Simulation Engine drives the lifecycle: it creates a strategy from its
-configuration, then feeds candles to `on_candle` one at a time in ascending time
-order.
+The parser validates the envelope. Each strategy validates its own parameter values.
 
-```python
-strategy = create_strategy(name, params)
-for candle in candles:
-    signal = strategy.on_candle(candle, portfolio)
-```
+## MA Crossover
 
-Reproducibility rests on three rules. A fresh strategy instance is created for
-each run, so there is no leftover state and no separate reset step is needed.
-`on_candle` is deterministic — no wall-clock reads, no unseeded randomness, no
-input or output — so the same configuration and candle sequence always produce
-the same signals. The `version` and `params` that produced a run are stored
-alongside its results, so any run can be reproduced later.
+`MACrossover` is a stateless long-only strategy calculated from candle closes.
 
-## Signal semantics
+Parameters:
 
-A strategy returns exactly one signal per candle and never returns nothing; to
-take no action it returns a `HOLD`. The `quantity` is an absolute amount in
-instrument units, normally derived from the strategy's own parameters. For MVP-1,
-which is long-only, a `BUY` opens or increases a long position, a `SELL` reduces
-or closes it, and a `HOLD` does nothing. The strategy reads the portfolio to
-inform its decisions — for example, only selling when it currently holds a
-position — but never modifies it, because the engine owns all portfolio state and
-execution. Until a strategy has seen enough candles to compute its indicators, it
-returns hold signals; this warmup period is handled inside the strategy and
-produces no trades.
+| Name | Default | Validation |
+|---|---:|---|
+| `fast` | `10` | integer, `>= 1`, strictly less than `slow` |
+| `slow` | `30` | integer, `>= 1` |
+| `order_size` | `1.0` | numeric, `> 0` |
 
-## Extensibility
+Behavior:
 
-Adding a new strategy means creating a new file, subclassing `BaseStrategy`,
-registering it under a name, validating its parameters on construction, and
-implementing `on_candle`. No change to the platform core is required at any step.
-New strategies do not touch the registry, the engine, or the shared contract, and
-the analytics side can grow its list of metrics independently of the strategies.
+- fewer than `slow + 1` closes: HOLD;
+- fast SMA crosses above slow SMA while flat: BUY;
+- fast SMA crosses below slow SMA while long: SELL;
+- otherwise: HOLD.
 
-## Contract tests
+The strategy reads `context.portfolio.position_size` to avoid repeated BUY while long and
+SELL while flat.
 
-A reusable test harness checks that any strategy obeys the contract the engine
-depends on. It feeds a synthetic candle series through a strategy and verifies
-that every call returns a valid `Signal`, that the strategy does not modify the
-portfolio it is given, that running the same candles through a freshly created
-instance twice yields an identical sequence of signals, that only hold signals
-are produced during warmup, and that the registry can create a registered
-strategy while an unknown name raises an error. A simple reference strategy exists
-so these checks have something concrete to run against and so the rest of the
-system has a worked example of the contract in use.
+## Execution Semantics
 
-## Open coordination points
+The current engine is more restrictive than the strategy signal:
 
-A few details depend on agreement with neighbouring parts of the system. The
-exact shape of the `portfolio` dictionary passed into `on_candle` needs to be
-fixed with whoever builds the Simulation Engine, since strategies read it to check
-their current position and available cash; a minimal shape exposing `cash` and
-per-instrument `positions` (with `quantity` and `avg_price`) is enough for MVP-1.
-Responsibility for enforcing hard risk limits should also be settled: the intended
-split is that a strategy expresses intent through its signal while the engine
-enforces limits such as maximum position size. Finally, position sizing in MVP-1
-is taken from the strategy's own parameters, with portfolio-aware sizing left as a
-later enhancement.
+- BUY is ignored if cash is non-positive or a position is already open;
+- an accepted BUY invests all available cash;
+- `Signal.size` does not currently affect executed quantity;
+- SELL closes the entire position;
+- HOLD does nothing;
+- any remaining long position is force-closed on the final candle.
+
+These rules are engine behavior, not strategy behavior.
+
+## Reproducibility
+
+The MA strategy:
+
+- has no wall-clock reads or I/O;
+- calculates from the supplied candle history;
+- produces the same signal for the same context;
+- does not mutate portfolio state.
+
+The integrated run does not yet persist full strategy parameters and input candles in a
+relational run record, so durable reproducibility is incomplete.
+
+## Adding a Strategy
+
+1. Add a module under `src/strategy/strategies/`.
+2. Subclass `BaseStrategy`.
+3. Register a unique ID with `@register_strategy`.
+4. Validate parameters in `validate_params`.
+5. Implement deterministic `on_candle(context)`.
+6. Import the module from `src/strategy/strategies/__init__.py` so registration occurs.
+7. Add contract and engine-integration tests.
+
+## Known Gaps
+
+- only one strategy is implemented;
+- the dashboard does not select strategies or parameters;
+- the example YAML is not used by `main.py`;
+- `order_size` is ignored by all-in execution;
+- signal explanations, stop-loss, take-profit, scaling, short positions, and
+  multi-instrument portfolios are not supported;
+- strategy/version/parameter persistence is planned, not implemented.

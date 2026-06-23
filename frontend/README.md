@@ -1,36 +1,92 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# BackTestBench Frontend
 
-## Getting Started
+The frontend is a Next.js 16 App Router dashboard for the current MVP. It displays the latest
+backtest state and can launch the predefined Python pipeline.
 
-First, run the development server:
+Audited against `main` on June 23, 2026.
+
+## Routes
+
+### Page
+
+- `/` — MVP dashboard with run metadata, pipeline stages, metrics, trade count, final
+  portfolio values, and portfolio chart.
+
+### Route handlers
+
+- `POST /api/run`
+  - requires `TINKOFF_TOKEN` from the repository `.env` file or process environment;
+  - writes an initial `running` state to `data/runtime-dashboard.json`;
+  - launches `python3 main.py` with a generated `RUN_ID`;
+  - returns `202` with the run ID, or `500` on startup failure.
+- `GET /api/dashboard`
+  - reads `../data/runtime-dashboard.json`;
+  - merges missing values with an idle default state;
+  - returns `200` even when the runtime file is unavailable.
+
+The route handlers are the implemented API for the dashboard. The FastAPI contract under
+`docs/api_description.md` is planned and `src/api` is currently empty.
+
+## Local Development
+
+From the repository root:
+
+```bash
+cp .env.example .env
+# set TINKOFF_TOKEN in .env
+npm --prefix frontend ci
+npm --prefix frontend run dev
+```
+
+Open <http://localhost:3000>.
+
+The frontend locates the repository root by searching for `main.py` or `.env`. Keep the
+standard monorepo layout when running it.
+
+## Scripts
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run lint
+npm run build
+npm run start
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`next start` is not the container entry point. `Dockerfile.fullstack` uses `npm run dev`
+because the current image is intended for the course MVP and PR smoke checks.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Data Contract
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The dashboard state includes:
 
-## Learn More
+- run ID, strategy/version, instrument, timeframe, and data source;
+- `idle`, `running`, `completed`, or `error` status;
+- current stage and per-stage statuses;
+- total P&L, Sharpe ratio, max drawdown, win rate, and deposit baseline;
+- equity points, trade count, and final portfolio values;
+- message, error, and last-update timestamp.
 
-To learn more about Next.js, take a look at the following resources:
+The JSON file contains only the latest run. There is no durable run history.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Known Limitations
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- The run request has no input body; SBER, timeframe, date window, capital, and strategy
+  parameters are currently set in `main.py`.
+- The chart uses sequence indexes rather than market timestamps.
+- Buy/sell markers are not displayed.
+- Narrow viewports have horizontal overflow in parts of the dashboard.
+- `npm run lint` currently fails at `app/page.tsx:227` because the initial
+  `loadDashboard()` call synchronously triggers state updates from an effect
+  (`react-hooks/set-state-in-effect`).
+- The production build reports workspace-root and dynamic filesystem tracing warnings because
+  the monorepo contains multiple lockfiles and route handlers perform filesystem access.
 
-## Deploy on Vercel
+## Verification
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npm ci
+npm run lint
+npm run build
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Current status: build passes; lint exposes the known effect issue above.

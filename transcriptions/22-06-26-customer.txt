@@ -1,0 +1,450 @@
+BackTestBench — Third Customer Meeting Transcript (cleaned)
+Date: 22-06-2026
+
+------------------------------------------------------------
+SUMMARY — Key takeaways
+------------------------------------------------------------
+
+1. CURRENT MVP DEMONSTRATED
+   The team showed a working end-to-end pipeline with one button that
+   launches a backtest and displays the result of one strategy. The current
+   implementation uses T-Bank market data and the SBER instrument. Most
+   inputs are still hardcoded.
+
+2. CURRENT STRATEGY
+   The demonstrated strategy is a basic moving-average crossover. It uses a
+   fast and a slow moving average, currently configured approximately as
+   15 and 30 periods. A signal is generated when the averages cross or their
+   relative position changes.
+
+3. WIN RATE IS NOT SUFFICIENT
+   The customer noted that a low win rate does not automatically mean that a
+   strategy is bad. A strategy with a 20% win rate may still be profitable if
+   profitable trades are much larger than losing trades. The system therefore
+   needs risk/reward and percentage-based performance metrics, not only win
+   rate and absolute P&L in rubles.
+
+4. P&L MUST BE SHOWN IN CONTEXT
+   An absolute result such as "-600 RUB" is not useful without the initial
+   portfolio value or invested capital. The UI should show:
+     - initial capital;
+     - final capital;
+     - absolute P&L;
+     - percentage return;
+     - preferably risk/reward and drawdown-related metrics.
+
+5. STRATEGY PARAMETERS MUST BE CONFIGURABLE
+   Fast and slow moving-average periods are currently changed in code. The
+   next iteration should allow users to configure parameters without editing
+   Python. The same applies to order size, instrument, candle interval, and
+   date range.
+
+6. MULTIPLE PARAMETER COMBINATIONS
+   The system should run the same strategy with different parameter sets and
+   compare the results. For MA crossover this means testing combinations of
+   fast and slow windows, then ranking the outcomes.
+
+7. ADDITIONAL STRATEGIES / INDICATORS
+   The customer suggested extending the basic MA strategy with filters such
+   as RSI or MACD. For example, a trade may be opened only when the moving
+   averages indicate a trend and RSI confirms an overbought/oversold
+   condition. Combining indicators should be supported as a new strategy,
+   not necessarily embedded into the existing one.
+
+8. TRADE VISUALIZATION
+   The current portfolio chart is difficult to interpret. The customer wants
+   a price/equity chart with explicit buy and sell markers so it is possible
+   to understand where a strategy entered and exited positions and why its
+   result changed after parameter adjustments.
+
+9. ORDER AND POSITION SEMANTICS NEED CLARIFICATION
+   The team discussed BUY, SELL, and HOLD signals and what should happen when
+   repeated signals arrive while a position is already open. The engine may
+   eventually need to support several related actions, such as entering a
+   position and defining stop-loss/take-profit behavior. For MVP, this can
+   remain simple, but signal and position rules must be explicit.
+
+10. DATA LOADING LIMITS
+    T-Bank imposes practical limits on the amount of candle data returned by
+    one request, especially for small timeframes. The loader should split a
+    large time range into several requests, combine the results, and cache
+    them. An alternative is downloading historical data once and reusing it
+    for many backtests.
+
+11. DATA DOWNLOAD AND BACKTESTING ARE SEPARATE COSTS
+    Historical data should be downloaded and cached independently from
+    strategy calculations. Once cached, the same candles can be reused across
+    many strategies, instruments, and parameter combinations without making
+    repeated broker API requests.
+
+12. COMPUTATIONAL COMPLEXITY WILL GROW QUICKLY
+    Total work grows with the number of instruments, strategies, and parameter
+    combinations. Adding parameters can increase the search space
+    significantly. Long-running recalculation is acceptable, but it should be
+    automated and designed as a batch process.
+
+13. PERIODIC RECALCULATION AND TOP-N
+    The intended future workflow remains:
+      - periodically download fresh historical data;
+      - run all selected strategies and parameter combinations;
+      - calculate comparable metrics;
+      - rank the results;
+      - store and display the top strategies.
+    A recalculation interval of roughly two weeks was discussed as an example.
+
+14. NEXT ITERATION PRIORITIES
+    The customer recommended prioritizing flexibility over trading-bot work:
+      - configurable parameters;
+      - multiple strategies or indicator combinations;
+      - multiple instruments if feasible;
+      - percentage-based P&L;
+      - visible entry/exit points;
+      - comparison and ranking of backtest runs.
+    Multi-broker support and live trading bots are lower priority for now.
+
+------------------------------------------------------------
+ACTION ITEMS
+------------------------------------------------------------
+
+- Parameterize fast/slow MA windows instead of changing them in code.
+- Expose strategy, parameters, instrument, interval, and date range through
+  configuration or the frontend.
+- Show initial capital and percentage P&L alongside absolute P&L.
+- Improve charts and add buy/sell markers.
+- Persist a trade log for every backtest.
+- Support repeated runs over parameter combinations.
+- Add at least one additional strategy or an MA + RSI/MACD variant.
+- Add ranked comparison of backtest results (Top-N).
+- Split large candle ranges into multiple API requests and cache the data.
+- Keep data acquisition separate from strategy execution.
+
+------------------------------------------------------------
+OPEN QUESTIONS
+------------------------------------------------------------
+
+- What exact behavior should repeated BUY/SELL signals have while a position
+  is already open?
+- Should stop-loss and take-profit be represented as strategy signals, engine
+  rules, or broker orders?
+- Which metrics should determine Top-N ranking: return, Sharpe ratio,
+  drawdown, risk/reward, or a weighted combination?
+- Which additional strategy should be implemented first: MA + RSI, MACD, or
+  another simple baseline?
+- How large should the initial parameter grid be to keep recalculation time
+  reasonable?
+- Should the fourth-week scope include several instruments, or remain on SBER
+  while strategy configurability is completed?
+
+------------------------------------------------------------
+BOTTOM LINE
+------------------------------------------------------------
+
+The MVP pipeline works, but it currently demonstrates only one hardcoded
+experiment. The next milestone should turn it into a usable backtesting tool:
+the user selects a strategy, instrument, and parameters; the system runs and
+compares experiments; results are expressed in percentages and visualized
+with trade entry/exit points; and the best configurations can be ranked.
+
+
+==============================================================
+CLEANED TRANSCRIPT
+==============================================================
+
+[The team demonstrates the current application.]
+
+Team:
+At the moment, we have one button that launches the entire pipeline and
+displays the result of a single strategy. The data is updated infrequently,
+approximately once a day. This field shows the run number.
+
+Customer:
+Is the application connected to a real API?
+
+Team:
+Yes. The Data Service loads market data from the T-Bank API.
+
+Customer:
+What does SBER mean? Is it a data source or an instrument?
+
+Team:
+It is the instrument: Sberbank stock. T-Bank is the data source.
+
+Customer:
+What is the MA crossover strategy?
+
+Team:
+It is a basic strategy based on two moving averages: a fast average and a
+slow average. When their relative position changes, the strategy produces an
+entry or exit signal.
+
+Customer:
+So the test currently runs on SBER. The chart already suggests that a more
+advanced strategy, such as one with a higher-timeframe filter, could produce
+a different result.
+
+The win rate is currently about 20%, but a low win rate is not necessarily a
+problem by itself. The risk/reward ratio matters. A strategy may have many
+small losing trades and a few large profitable ones. If a winning trade
+covers several stopped-out trades, the strategy can remain profitable even
+with a win rate below 50%.
+
+Therefore, win rate alone is not enough to decide whether a strategy works.
+We need additional metrics.
+
+Customer:
+The MA crossover should have parameters. I should be able to change the
+moving-average periods and see how they affect the result.
+
+Team:
+The current periods are approximately 15 and 30.
+
+Customer:
+Does the strategy use RSI?
+
+Team:
+No. It currently uses only the moving-average crossover.
+
+Customer:
+RSI is the Relative Strength Index. It helps determine whether an asset is
+overbought or oversold. It can be combined with the moving-average signal so
+that a trade is opened only when the trend direction and RSI condition
+confirm each other.
+
+For example, the relative positions of the fast and slow moving averages
+indicate an upward or downward trend, while RSI acts as an additional filter.
+This is one possible new strategy. Many such combinations are possible.
+
+Higher timeframes should also be considered. We currently use a one-hour
+timeframe. For volatile instruments, it may miss a significant part of a
+price move. This needs to be tested experimentally.
+
+Customer:
+How is a new strategy added now? What does a strategy look like in the code?
+
+Team:
+It is a Python class. There is a common BaseStrategy class from which a
+specific implementation inherits. The Backtest Engine receives a strategy
+instance and executes it.
+
+Customer:
+How flexible is this? What would I need to do if I wanted to change the entry
+signal?
+
+Team:
+You would need to create or modify a specific strategy implementation. The
+fast and slow parameters of the MA crossover are currently defined in code.
+Later, they can be passed through the frontend.
+
+Customer:
+What if I only want to change the parameters, for example to test 15 and 20?
+
+Team:
+The values are currently changed in main.py, which acts as the orchestrator
+and creates the class instances. The backtest must then be restarted.
+
+[The team changes the parameters and runs the backtest again.]
+
+Customer:
+How much data is used for this calculation?
+
+Team:
+The exact amount is not currently displayed. The adapter loads the configured
+set of candles.
+
+Customer:
+The chart is difficult to read because it lacks clear labels and values. What
+does the Portfolio Chart show?
+
+Team:
+It shows the portfolio value over time.
+
+Customer:
+The initial value, final value, and scale must be shown explicitly. It is
+currently unclear what happened to the portfolio.
+
+What other parameters can I change?
+
+Team:
+The order size. Most other parameters are still hardcoded.
+
+Customer:
+Where is the instrument configured? If I wanted to test the strategy on oil
+instead of SBER, could I do that?
+
+Team:
+Not through the interface yet. The instrument is defined in code.
+
+Customer:
+So both the instrument and the strategy parameters currently have to be
+changed inside the project. That is acceptable for the MVP, but the next task
+is to add flexibility.
+
+We also need to consider that different timeframes and data sources limit the
+number of candles returned in one request. If a user selects a small
+timeframe and a large date range, one request may not contain all the data.
+
+Team:
+The current range fits within the limit for hourly candles. For 30 days of
+one-minute candles, the limit may already be exceeded.
+
+Customer:
+In that case, the range should be divided into several requests and the
+results combined. Another option is to download the historical data once into
+a file or cache and then perform calculations locally.
+
+Customer:
+The interface currently shows P&L in rubles. Can the result be shown as a
+percentage?
+
+Team:
+Only the absolute value is currently displayed.
+
+Customer:
+If I see a loss of 600 rubles but do not know how much was invested, the
+number tells me nothing. A portfolio of 1,000 rubles and a portfolio of
+1,000,000 rubles produce completely different interpretations.
+
+The initial capital and percentage P&L must be shown. A result such as -0.5%
+can be compared across different runs. The absolute amount can remain, but it
+needs context.
+
+Customer:
+What does the strategy currently return?
+
+Team:
+The signal contains the order side and size. The on_candle method processes
+each new candle. The possible signals are BUY, SELL, and HOLD.
+
+Customer:
+What does HOLD mean?
+
+Team:
+If a position is already open and no new action is required, the strategy
+does not create an order and keeps the current position.
+
+Customer:
+The behavior of repeated signals needs to be defined. If a position is
+already open and the strategy produces another BUY signal, should we increase
+the position or ignore the signal?
+
+In a real strategy, one decision may also lead to several actions: buying an
+asset and defining stop-loss and take-profit behavior. A signal may need to
+describe several related actions.
+
+On the other hand, brokers, including T-Bank Investments, sometimes recommend
+implementing position-control logic in the system instead of relying entirely
+on stop orders. In that case, the system must regularly check the price and
+decide when to exit.
+
+The model can remain simple at this stage, but the rules for entries, exits,
+and repeated signals must be unambiguous.
+
+Customer:
+As the next step, I would like to see more than one simple strategy. We can
+first experiment with the current MA crossover parameters and find the best
+fast/slow combinations.
+
+The order size is currently less important than the signal parameters. We
+need to run several combinations and compare their results.
+
+After that, other indicators can be added. For example:
+
+- MA crossover with an RSI filter;
+- MACD;
+- a combination of several indicators in one strategy.
+
+The purpose is to determine whether additional filters reduce the number of
+poor entries.
+
+Customer:
+The chart should mark individual trades: where the strategy bought and where
+it sold. This would allow the user to understand its behavior.
+
+The user should be able to change the parameters and immediately see how the
+entry and exit points and final P&L changed. This is much more informative
+than a single overall portfolio chart.
+
+Team:
+We can save a trade log and display it as an overlay on the chart.
+
+Customer:
+Yes. A trade log should be available for every strategy. The user selects a
+specific run and sees its trades.
+
+Customer:
+To summarize, the next iteration should add flexibility:
+
+- new parameters;
+- new strategies or indicator combinations;
+- comparison of strategies and parameter sets;
+- percentage-based P&L;
+- buy and sell points on the chart;
+- selection of different instruments, if feasible.
+
+The same strategy could be run on different instruments, with the Top 10
+results displayed. Alternatively, the user could select an instrument and
+compare strategies, or select a strategy and compare instruments.
+
+Team:
+At this stage, we can remain with one broker. Supporting several brokers is
+complicated by tokens, registration, and API differences.
+
+Customer:
+That is acceptable. Multi-broker support is not a priority now. It is much
+more important to compare configurations and understand which strategy looks
+better on historical data.
+
+Customer:
+It is also too early to prioritize the trading bot over backtesting. The
+backtester is a tool for selecting configurations for further validation. We
+currently have only one instrument, one strategy, and one parameter set. That
+is not enough to decide whether the strategy is good.
+
+Hardcoding every combination manually is inconvenient. The system should run
+a series of experiments automatically.
+
+Customer:
+The backlog contains the Top-N Ranking Module and Validation Metrics Support.
+These items directly relate to the comparison we are discussing.
+Multi-broker support is useful, but it can wait.
+
+Team:
+Loading data for small timeframes may take a noticeable amount of time.
+
+Customer:
+That is acceptable because historical data does not need to be downloaded
+before every test. It can be loaded once, stored, and reused.
+
+It is important to separate two processes:
+
+1. Data loading.
+2. Strategy calculation.
+
+If we download six months of one-minute candles, for example, we can then run
+any number of strategies and parameter combinations on that data without
+making new API requests.
+
+Calculation time will depend on the number of instruments, strategies, and
+parameter sets. Adding parameters quickly increases the number of
+combinations. Such a batch process may take minutes or hours, which is
+acceptable.
+
+Customer:
+In the future, data loading and recalculation should run automatically. For
+example, once every two weeks the system could load new data, run the selected
+strategies, save the metrics, and update the Top-N ranking.
+
+Later, these results could be used to select strategies for validation by a
+trading bot in the sandbox. First, however, we need a proper comparison cycle
+in the backtester.
+
+Team:
+For each result, we can save the metrics and trade list, sort the results, and
+display a ranking.
+
+Customer:
+Yes. The user should be able to select a ranking entry and open its detailed
+result: metrics, chart, entry and exit points, strategy parameters, and
+instrument.
+
+This should be the main focus for the next week.

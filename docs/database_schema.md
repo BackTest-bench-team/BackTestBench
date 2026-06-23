@@ -1,5 +1,10 @@
 # Database Schema (MVP1)
 
+> **Status as of June 23, 2026:** target schema, not implemented. `src/db/models.py`
+> and `src/db/session.py` are empty, and the integrated pipeline stores only the latest
+> dashboard state in `data/runtime-dashboard.json`. No SQLite or PostgreSQL tables,
+> migrations, SQLAlchemy models, or database writes are currently active.
+
 The project requires storage of historical data, strategy configurations, and backtesting results. Below is a relational schema (SQLite/PostgreSQL) with entities and relationships for the first development phase (MVP1).
 
 > **Note on SQL types:** attribute definitions use PostgreSQL syntax (`SERIAL`, `DECIMAL`, `TEXT`). For SQLite use `INTEGER PRIMARY KEY` instead of `SERIAL PK` and `REAL` instead of `DECIMAL` — SQLite maps these transparently via type affinity.
@@ -73,3 +78,19 @@ The project requires storage of historical data, strategy configurations, and ba
 │ deposit_baseline_pnl│
 └────────────────────┘
 ```
+
+## 1.3 Implementation Gap
+
+Before this schema becomes operational, the project needs:
+
+1. a selected database engine and connection configuration;
+2. concrete models and session management in `src/db`;
+3. schema migrations;
+4. persistence from `main.py` or the future API service;
+5. run IDs that consistently match the in-memory `RunContext`;
+6. storage for the current `equity_curve`;
+7. tests for transactions, foreign keys, numeric precision, and failed-run rollback.
+
+The analytics document also describes future `equity_points` and `top_n` tables. They are
+not present in the original MVP1 table list above and should be included in the first
+implemented migration if that target design is retained.
