@@ -13,20 +13,23 @@ COPY requirements.txt ./
 RUN python -m pip install --upgrade pip && \
     python -m pip install --no-cache-dir -r requirements.txt
 
-# Frontend Node deps
+# Frontend deps
 COPY frontend/package.json frontend/package-lock.json ./frontend/
 RUN cd frontend && npm ci
 
-# Copy everything
+# Copy source
 COPY . .
-
-EXPOSE 3000
 
 ENV PYTHON_BIN=python3 \
     PYTHONPATH=/app \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    NODE_ENV=development
+    NODE_ENV=production
 
+# Build Next.js app once during image build
 WORKDIR /app/frontend
-CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]
+RUN npm run build
+
+EXPOSE 3000
+
+CMD ["npm", "run", "start", "--", "--hostname", "0.0.0.0"]
