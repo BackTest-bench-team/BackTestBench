@@ -17,6 +17,8 @@ from src.analytics import calculate_metrics_from_trade_log
 from src.broker_adapter import TBankAdapter
 from src.engine import ExecutionEngine, RunContext
 from src.strategy.strategies.ma_crossover import MACrossover
+from src.db.session import engine, Base
+from src.data_loader import DataLoader
 
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
@@ -143,6 +145,12 @@ def build_equity_points(equity_curve):
     return points
 
 
+def init_db():
+    """Creates tables in DB if not exists."""
+    Base.metadata.create_all(bind=engine)
+    print(f"Database ready: {engine.url}")
+
+
 async def run_pipeline() -> Dict[str, Any]:
     run_id = os.getenv("RUN_ID") or make_run_id()
 
@@ -178,6 +186,20 @@ async def run_pipeline() -> Dict[str, Any]:
 
     if not candles:
         raise RuntimeError("Broker returned 0 candles")
+
+    dashboard["message"] = "Saving candles to database..."
+    save_dashboard(dashboard)
+
+    loader = DataLoader()
+    try:
+        stored = loader.store_candles(
+            instrument="SBER",
+            timeframe="1h",
+            candles=candles,
+        )
+        print(f"Stored {stored} candles in database")
+    finally:
+        loader.close()
 
     dashboard["current_stage"] = "Strategy Module"
     dashboard["message"] = "Creating strategy..."
@@ -254,6 +276,8 @@ async def run_pipeline() -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
+    init_db()
+
     try:
         result = asyncio.run(run_pipeline())
         print(result)
