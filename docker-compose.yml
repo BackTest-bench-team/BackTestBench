@@ -13,9 +13,7 @@ services:
       PYTHONUNBUFFERED: "1"
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONPATH: /app
-    volumes:
-      - .:/app
-      - frontend_node_modules:/app/frontend/node_modules
+      NODE_ENV: production
     restart: unless-stopped
 
   backtest-app:
