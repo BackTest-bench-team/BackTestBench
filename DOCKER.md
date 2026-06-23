@@ -1,197 +1,160 @@
-# Docker Setup Guide for BackTestBench
+# Docker Guide
 
-This project is fully configured for Docker deployment with development, testing, and production modes.
+This guide matches `docker-compose.yml`, `Dockerfile`, and `Dockerfile.fullstack` as of
+June 23, 2026.
 
-## Quick Start
+## Prerequisites
 
-### Build the Docker Image
-
-```bash
-docker build -t backtest-bench:latest .
-```
-
-### Run the Demo
+Create `.env` from the example and set a valid T-Bank token:
 
 ```bash
-docker run --rm backtest-bench:latest
+cp .env.example .env
 ```
 
-This will execute the MA crossover strategy demo and show the results.
+```dotenv
+TINKOFF_TOKEN=your_token_here
+```
 
-## Using Docker Compose
+Compose services use `env_file: .env`; the file must exist. Never commit it.
 
-### Run the Main Application
+## Integrated Dashboard
+
+The default `app` service combines Python 3.12, Node.js 20, and the Next.js development
+server:
 
 ```bash
-docker-compose up backtest-app
+docker compose up --build
 ```
 
-This runs the MA crossover demo strategy.
+Open <http://localhost:3000>.
 
-### Run Tests
+The repository is mounted at `/app`, and a named volume preserves
+`/app/frontend/node_modules`. The frontend's `POST /api/run` route starts `/app/main.py`,
+which updates `/app/data/runtime-dashboard.json`.
+
+Stop the stack:
 
 ```bash
-docker-compose run --rm test
+docker compose down
 ```
 
-This executes the full pytest suite (21 tests).
+## Compose Services
 
-### Interactive Development Shell
+| Service | Default/profile | Purpose |
+|---|---|---|
+| `app` | default | Integrated Next.js dashboard and Python pipeline launcher |
+| `backtest-app` | `backend` | Runs `python main.py` directly |
+| `test` | `test` | Runs `pytest tests -v` |
+| `dev` | `dev` | Interactive Python 3.12 shell |
+
+Commands:
 
 ```bash
-docker-compose --profile dev run --rm dev
+docker compose --profile backend up --build backtest-app
+docker compose --profile test run --rm test
+docker compose --profile dev run --rm dev
 ```
 
-This launches an interactive bash shell with the application code mounted.
+## Images
 
-## File Structure
+### `Dockerfile.fullstack`
 
-- **Dockerfile** — Multi-stage build optimizing for size and build time
-  - Builder stage: installs dependencies
-  - Runtime stage: minimal image with only production requirements
-  
-- **docker-compose.yml** — Orchestration configuration with three services:
-  - `backtest-app` — Main application service
-  - `test` — Test runner service (profile: test)
-  - `dev` — Interactive development environment (profile: dev)
+- base: `python:3.12-slim`;
+- installs Node.js 20;
+- installs Python dependencies from `requirements.txt`;
+- installs frontend dependencies with `npm ci`;
+- starts Next.js on `0.0.0.0:3000`.
 
-- **.dockerignore** — Excludes unnecessary files from Docker context
+### `Dockerfile`
 
-- **requirements.txt** — Python package dependencies
-  - PyYAML — YAML configuration parsing
-  - pytest — Testing framework
-  - python-dotenv — Environment variable management
+- base: `python:3.12-slim`;
+- installs backend dependencies;
+- starts `python main.py`;
+- is reused by the backend, test, and dev services.
 
-- **pyproject.toml** — Project metadata and build configuration
-  - Python 3.10+ requirement
-  - Development dependencies (pytest-cov, black, ruff, mypy)
-  - Tool configurations
+The package metadata supports Python 3.10+, while the container runtime is currently pinned
+to Python 3.12.
 
-## Environment Variables
+## Verification
 
-Configure via `.env` file (see `.env.example`):
+Validate Compose without starting containers:
 
 ```bash
-PYTHONUNBUFFERED=1  # Real-time log output
-PYTHONDONTWRITEBYTECODE=1  # No .pyc files
+docker compose config
 ```
 
-## Volume Mounts
-
-Services have volumes mounted for development:
-
-- `./src` — Application source code
-- `./config` — Strategy configurations
-- `./tests` — Test suite
-- `./examples` — Demo scripts
-
-Changes to these directories are reflected in running containers.
-
-## Multi-Stage Build Benefits
-
-The Dockerfile uses multi-stage builds to minimize final image size:
-
-1. **Builder Stage** — Installs all dependencies (larger)
-2. **Runtime Stage** — Only copies compiled wheels and app code (minimal)
-
-This results in a lean, production-ready image.
-
-## Common Commands
+Build and smoke-run the integrated service:
 
 ```bash
-# Build image
-docker build -t backtest-bench:latest .
-
-# Run demo
-docker run --rm backtest-bench:latest
-
-# Run tests with Docker Compose
-docker-compose run --rm test
-
-# Interactive shell
-docker-compose --profile dev run --rm dev
-
-# Check image size
-docker images | grep backtest-bench
-
-# View image layers
-docker history backtest-bench:latest
-
-# Clean up
-docker-compose down --volumes
-docker rmi backtest-bench:latest
+docker compose up -d --build
+docker compose ps
+docker compose logs app
+docker compose down
 ```
 
-## Development Workflow
-
-1. Make code changes in your local editor
-2. Run tests in container: `docker-compose run --rm test`
-3. Test interactively: `docker-compose --profile dev run --rm dev`
-4. Run demo: `docker run --rm backtest-bench:latest`
-
-## Production Deployment
-
-The image is ready for production:
+Run backend tests:
 
 ```bash
-# Build with tag
-docker build -t backtest-bench:1.0.0 .
-
-# Push to registry
-docker tag backtest-bench:1.0.0 your-registry/backtest-bench:1.0.0
-docker push your-registry/backtest-bench:1.0.0
-
-# Run in production
-docker run --rm \
-  -v /path/to/config:/app/config \
-  -v /path/to/reports:/app/reports \
-  your-registry/backtest-bench:1.0.0
+docker compose --profile test run --rm test
 ```
 
-## Testing
+As of June 23, 2026, the backend test suite contains 30 tests.
 
-All 21 tests pass in Docker:
+## CI
 
-```bash
-docker-compose run --rm test
+`.github/workflows/ci.yml` runs on pull requests to `main` using a self-hosted runner. It:
 
-# Output:
-# ============================== 21 passed in 0.05s ==============================
-```
+1. checks out the PR;
+2. stops previous Compose services;
+3. builds and starts the default Compose stack;
+4. waits 10 seconds and fails if a service exited.
+
+The workflow passes `TINKOFF_TOKEN` from GitHub Secrets to the Compose command. Cleanup on
+PR close removes containers/images by legacy names; this should be reviewed because Compose
+currently uses the fixed container name `backtest-bench-app`.
 
 ## Troubleshooting
 
-### Image Build Fails
+### `.env` not found
 
-```bash
-# Check build with verbose output
-docker build --progress=plain -t backtest-bench:latest .
+Create it with `cp .env.example .env`.
 
-# Clean up and rebuild
-docker system prune -a
-docker build -t backtest-bench:latest .
+### Missing token
+
+Set `TINKOFF_TOKEN` in `.env`. The pipeline cannot fetch T-Bank candles without it.
+
+### Port 3000 is busy
+
+Stop the conflicting process or change the host-side mapping in a local
+`docker-compose.override.yml`:
+
+```yaml
+services:
+  app:
+    ports:
+      - "3001:3000"
 ```
 
-### Container Won't Start
+### Reinstall frontend dependencies
+
+Remove the named volume and rebuild:
 
 ```bash
-# Check logs
-docker run -it backtest-bench:latest /bin/bash
-
-# Verify dependencies
-docker run --rm backtest-bench:latest pip list
+docker compose down -v
+docker compose build --no-cache app
 ```
 
-### Permission Issues with Volumes
+### Inspect the pipeline state
 
 ```bash
-# Run with user ID
-docker run --rm --user $(id -u):$(id -g) backtest-bench:latest
+docker compose exec app cat /app/data/runtime-dashboard.json
+docker compose logs app
 ```
 
-## Notes
+## Current Limitations
 
-- Python 3.10 is required (specified in Dockerfile and pyproject.toml)
-- Tests require pytest (included in requirements.txt)
-- YAML configurations are loaded via PyYAML
-- All code runs with Python optimizations disabled for debugging
+- The full-stack image runs the Next.js development server, not a production server.
+- The application is a single-container MVP, not the multi-container API/database/scheduler
+  deployment described in the Week 2 target architecture.
+- The default Compose service depends on a real T-Bank token.
+- Runtime state is file-backed and mounted from the host repository.

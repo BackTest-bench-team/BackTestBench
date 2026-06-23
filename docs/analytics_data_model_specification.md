@@ -1,153 +1,131 @@
+# Analytics Data Model
 
-This document defines the data structures the Analytics Module consumes and produces, and how they are persisted. It complements `interfaces_description.md` (shared types) and `metrics_specification.md` (formulas, issue #35)
+Last audited against `main`: **June 23, 2026**.
 
-## Independence principle
+## Implementation Status
 
-The Analytics Module depends **only on the shared data contract**, never on Simulation Engine internals. It receives a plain `TradeLog` (plus a small `RunContext`), computes a `MetricsReport`, and writes rows to the database. It never imports engine code and never inspects how trades were produced. This is what lets the analytics layer be developed, tested, and replaced in isolation - a synthetic `TradeLog` is enough to exercise every metric
+Implemented:
 
-**Ownership split** (who writes what):
+- in-memory `TradeLog`, `RunContext`, and `MetricsReport`;
+- per-candle equity curve;
+- metric calculation from `TradeLog + RunContext`;
+- in-memory Top-N filtering/sorting helper;
+- serialization of the latest metrics into `data/runtime-dashboard.json`.
 
-- Simulation Engine writes `backtest_runs`, `trades`, `equity_points`
-- Analytics Module writes `metrics`, `top_n`
-- Frontend and Trading Bot are read-only consumers
+Not implemented:
 
-## Data flow
+- relational persistence of runs, trades, equity points, metrics, or Top-N;
+- atomic database replacement of Top-N;
+- frontend run history;
+- scheduler or trading-bot consumers.
 
-```mermaid
-flowchart LR
-    SE[Simulation Engine] -->|TradeLog + RunContext| AM[Analytics Module]
-    AM -->|MetricsReport| DB[(Database)]
-    AM -->|List of TopNEntry| DB
-    DB -->|MetricsReport| FE[Frontend]
-    DB -->|top_n| TB[Trading Bot]
+## Dependency Boundary
+
+Analytics imports dataclasses directly from `src.engine.models`:
+
+```python
+from src.engine.models import MetricsReport, RunContext, Trade, TradeLog
 ```
 
----
+It does not inspect execution-engine internals, but it is not independent of the engine
+package at the Python import level.
 
-## 1. Trade log input format
+## Inputs
 
-What the Analytics Module receives from the Simulation Engine. `Trade` and `TradeLog` already exist in `interfaces.py`; `equity_curve` is a proposed addition
+### `Trade`
 
-### `Trade` (existing)
-
-|Field|Type|Description|
+| Field | Type | Notes |
 |---|---|---|
-|`instrument`|`str`|Instrument the trade was executed on|
-|`entry_price`|`float`|Price at which the position was opened|
-|`exit_price`|`float`|Price at which the position was closed|
-|`quantity`|`float`|Size of the position|
-|`pnl`|`float`|Profit or loss for this trade (account currency)|
-|`opened_at`|`datetime`|When the position was opened (UTC)|
-|`closed_at`|`datetime`|When the position was closed (UTC)|
+| `timestamp` | `str` | close/event timestamp |
+| `entry_price` | `float` | long entry |
+| `exit_price` | `Optional[float]` | populated for completed trades |
+| `quantity` | `float` | executed all-in quantity |
+| `pnl` | `float` | realized P&L |
+| `opened_at` | `Optional[str]` | entry timestamp |
+| `closed_at` | `Optional[str]` | exit timestamp |
 
 ### `TradeLog`
 
-|Field|Type|Description|
+| Field | Type | Notes |
 |---|---|---|
-|`strategy_id`|`str`|Strategy that produced these trades|
-|`instrument`|`str`|Instrument the run was executed on|
-|`trades`|`List[Trade]`|Ordered list of completed trades|
-|`final_portfolio_value`|`float`|Portfolio value at end of run|
-|`equity_curve`|`List[float]` **(new)**|Mark-to-market portfolio value per candle, `E_0..E_T`. Basis for Sharpe and max drawdown|
+| `strategy_id` | `str` | strategy registry ID |
+| `instrument` | `str` | run-level instrument |
+| `trades` | `list[Trade]` | completed trades |
+| `final_portfolio_value` | `float` | final equity |
+| `equity_curve` | `list[float]` | initial capital plus one point per candle |
 
-### `RunContext` (new) - run identity / config
+### `RunContext`
 
-Run metadata that is not trade data but is needed by Analytics. Conceptually it is the `backtest_runs` row; passed alongside the `TradeLog`.
+| Field | Type |
+|---|---|
+| `run_id` | `str` |
+| `strategy_id` | `str` |
+| `strategy_version` | `str` |
+| `instrument` | `str` |
+| `timeframe` | `str` |
+| `period_start` | `datetime | str` |
+| `period_end` | `datetime | str` |
+| `initial_capital` | `float` |
 
-|Field|Type|Description|
-|---|---|---|
-|`run_id`|`str`|Unique run identifier (UUID)|
-|`strategy_id`|`str`|Strategy identifier|
-|`strategy_version`|`str`|Strategy version label (reproducibility)|
-|`instrument`|`str`|Instrument|
-|`timeframe`|`str`|Candle interval, e.g. `"1d"` (Sharpe annualization)|
-|`period_start`|`datetime`|Backtest range start (UTC), `from_dt`|
-|`period_end`|`datetime`|Backtest range end (UTC), `to_dt`|
-|`initial_capital`|`float`|Starting capital `E_0` (returns, drawdown, deposit baseline)|
+## Output
 
----
+### `MetricsReport`
 
-## 2. Metrics schema (output)
+| Field | Unit/range |
+|---|---|
+| `strategy_id` | identifier |
+| `instrument` | identifier |
+| `total_pnl` | account currency |
+| `sharpe_ratio` | annualized, unbounded |
+| `max_drawdown` | positive fraction |
+| `win_rate` | fraction `[0, 1]` |
+| `deposit_baseline_pnl` | account currency |
 
-`MetricsReport` is produced by the Analytics Module from a `TradeLog`. Fields match `interfaces.py` exactly; formulas are in `metrics_specification.md`.
+The dashboard formats currency as RUB, but the dataclass itself does not encode a currency.
 
-|Field|Type|Range / unit|Description|
-|---|---|---|---|
-|`strategy_id`|`str`|—|Strategy these metrics belong to|
-|`instrument`|`str`|—|Instrument the metrics were computed for|
-|`total_pnl`|`float`|account currency|Sum of P&L across all trades|
-|`sharpe_ratio`|`float`|unbounded|Annualized risk-adjusted return|
-|`max_drawdown`|`float`|`[0, 1]`|Largest peak-to-trough decline (positive fraction)|
-|`win_rate`|`float`|`[0, 1]`|Fraction of profitable trades|
-|`deposit_baseline_pnl`|`float`|account currency|P&L of the 13% deposit over the same period|
+## Top-N Helper
 
-On persistence, `run_id` and `computed_at` are added (see `metrics` table).
+`build_top_n()`:
 
----
+1. filters reports where `total_pnl > deposit_baseline_pnl`;
+2. sorts by `total_pnl` descending;
+3. takes the requested `n`;
+4. returns `TopNEntry` values.
 
-## 3. Top-N output format
-
-The ranking step keeps strategies whose `total_pnl > deposit_baseline_pnl`, sorts them by `total_pnl` descending, and assigns ranks. The result is a list of `TopNEntry`, persisted to the `top_n` table and read by the Trading Bot.
-
-### `TopNEntry` (new)
-
-|Field|Type|Description|
-|---|---|---|
-|`rank`|`int`|1-based position in the ranking (1 = best)|
-|`strategy_id`|`str`|Strategy identifier|
-|`instrument`|`str`|Instrument|
-|`run_id`|`str`|Run that produced the ranked metrics|
-|`total_pnl`|`float`|P&L used as the sort key|
-|`computed_at`|`datetime`|When this ranking was produced|
-
-The whole `top_n` table is **replaced atomically** on each recalculation. On a failed recalculation it is left untouched, and the Trading Bot keeps using the last successful ranking (fault-tolerance rule from the product description)
-
----
-
-## 4. Database fields
-
-
-```mermaid
-erDiagram
-    backtest_runs ||--o{ trades : contains
-    backtest_runs ||--o{ equity_points : contains
-    backtest_runs ||--|| metrics : produces
-    backtest_runs ||--o{ top_n : "referenced by"
-    backtest_runs {
-        text run_id PK
-        text strategy_id
-        text strategy_version
-        text instrument
-        text timeframe
-        real initial_capital
-        text status
-    }
-    trades {
-        int id PK
-        text run_id FK
-        real entry_price
-        real exit_price
-        real quantity
-        real pnl
-    }
-    equity_points {
-        text run_id FK
-        int seq
-        real equity
-    }
-    metrics {
-        text run_id PK
-        real total_pnl
-        real sharpe_ratio
-        real max_drawdown
-        real win_rate
-        real deposit_baseline_pnl
-    }
-    top_n {
-        int rank
-        text strategy_id
-        text run_id FK
-        real total_pnl
-    }
+```python
+@dataclass(frozen=True)
+class TopNEntry:
+    rank: int
+    strategy_id: str
+    instrument: str
+    run_id: str
+    total_pnl: float
+    computed_at: datetime
 ```
 
+The helper is covered by unit tests but is not called by `main.py` or displayed by the
+frontend.
+
+## Current Persistence
+
+`main.py` writes the latest dashboard snapshot:
+
+```text
+data/runtime-dashboard.json
+```
+
+Writes use a temporary file followed by `os.replace`. This is atomic at file level, but it
+stores one latest state only and is not the target relational model.
+
+## Target Persistence
+
+The planned schema includes:
+
+- `backtest_runs`;
+- `trades`;
+- `equity_points`;
+- `metrics`;
+- `top_n`.
+
+See [database_schema.md](database_schema.md). `src/db` is currently empty, so the target
+schema must not be treated as implemented.
