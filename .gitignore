@@ -25,6 +25,7 @@ htmlcov/
 
 # Logs
 *.log
+/data
 
 # Node / Next.js frontend
 node_modules/
