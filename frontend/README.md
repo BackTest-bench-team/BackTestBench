@@ -1,92 +1,139 @@
 # BackTestBench Frontend
 
-The frontend is a Next.js 16 App Router dashboard for the current MVP. It displays the latest
-backtest state and can launch the predefined Python pipeline.
+Next.js 16 dashboard for running and viewing backtests. The UI reads results from a JSON file
+written by the Python runner (`main.py` at the repository root). It does not run backtests
+itself.
 
-Audited against `main` on June 23, 2026.
+## How the pieces connect
 
-## Routes
+```
+Browser  →  Next.js API routes  →  spawn Python (main.py)  →  backtest + save JSON
+                ↑
+         poll GET /api/dashboard  ←  data/runtime-dashboard.json
+```
 
-### Page
+1. The user opens `/` or changes strategy parameters.
+2. The frontend calls `POST /api/bootstrap` (first load) or `POST /api/run-strategy` (param change).
+3. Next.js starts `main.py` as a background process.
+4. Python loads candles (database first, T-Bank API if needed), runs the engine, and writes
+   `data/runtime-dashboard.json`.
+5. The page polls `GET /api/dashboard` until the strategy status is `completed` or `error`.
 
-- `/` — MVP dashboard with run metadata, pipeline stages, metrics, trade count, final
-  portfolio values, and portfolio chart.
+## Folder layout
 
-### Route handlers
+```
+frontend/
+├── app/
+│   ├── layout.tsx          # Root HTML shell; imports global CSS
+│   ├── page.tsx            # Dashboard UI (charts, params, polling)
+│   ├── globals.css         # All styles (no separate CSS modules in MVP)
+│   └── api/
+│       ├── dashboard/route.ts    # GET — read runtime-dashboard.json
+│       ├── bootstrap/route.ts    # POST — run all strategies (main.py bootstrap)
+│       └── run-strategy/route.ts # POST — rerun one strategy (main.py run …)
+├── lib/
+│   └── spawn-python.ts     # Finds repo root, loads .env, spawns main.py
+├── package.json
+└── README.md                 # This file
+```
 
-- `POST /api/run`
-  - requires `TINKOFF_TOKEN` from the repository `.env` file or process environment;
-  - writes an initial `running` state to `data/runtime-dashboard.json`;
-  - launches `python3 main.py` with a generated `RUN_ID`;
-  - returns `202` with the run ID, or `500` on startup failure.
-- `GET /api/dashboard`
-  - reads `../data/runtime-dashboard.json`;
-  - merges missing values with an idle default state;
-  - returns `200` even when the runtime file is unavailable.
+### Key files outside `frontend/`
 
-The route handlers are the implemented API for the dashboard. The FastAPI contract under
-`docs/api_description.md` is planned and `src/api` is currently empty.
+| Path | Role |
+|------|------|
+| `main.py` | CLI entry point: `bootstrap`, `run <strategy_id> '<params_json>'` |
+| `config/dashboard.json` | Saved instrument, timeframe, capital, strategy list and default params |
+| `data/runtime-dashboard.json` | Live dashboard state (gitignored; written by Python) |
+| `data/backtest.db` | SQLite candle cache used by `src/data_loader` (gitignored) |
+| `.env` | `TINKOFF_TOKEN` for the first candle fetch; optional `DATABASE_URL` |
 
-## Local Development
+## Local development
 
 From the repository root:
 
 ```bash
 cp .env.example .env
 # set TINKOFF_TOKEN in .env
+
+pip install -r requirements.txt
 npm --prefix frontend ci
 npm --prefix frontend run dev
 ```
 
-Open <http://localhost:3000>.
+Open http://localhost:3000.
 
-The frontend locates the repository root by searching for `main.py` or `.env`. Keep the
-standard monorepo layout when running it.
+The frontend resolves the repo root by walking up from `frontend/` until it finds `main.py`.
+Keep the standard monorepo layout.
 
-## Scripts
+### Run Python manually (without the UI)
 
 ```bash
-npm run dev
-npm run lint
-npm run build
-npm run start
+python main.py bootstrap
+python main.py run ma_crossover '{"fast":15,"slow":20,"order_size":1}'
 ```
 
-`next start` is not the container entry point. `Dockerfile.fullstack` uses `npm run dev`
-because the current image is intended for the course MVP and PR smoke checks.
+## API routes
 
-## Data Contract
+| Method | Path | Action |
+|--------|------|--------|
+| `GET` | `/api/dashboard` | Returns merged dashboard JSON (idle defaults if file missing) |
+| `POST` | `/api/bootstrap` | Starts `python main.py bootstrap` (202 Accepted) |
+| `POST` | `/api/run-strategy` | Body: `{ "strategy_id": "…", "params": { … } }` → `main.py run …` |
 
-The dashboard state includes:
+All run endpoints return immediately; the UI polls until results appear.
 
-- run ID, strategy/version, instrument, timeframe, and data source;
-- `idle`, `running`, `completed`, or `error` status;
-- current stage and per-stage statuses;
-- total P&L, Sharpe ratio, max drawdown, win rate, and deposit baseline;
-- equity points, trade count, and final portfolio values;
-- message, error, and last-update timestamp.
+## Dashboard JSON shape (simplified)
 
-The JSON file contains only the latest run. There is no durable run history.
+```json
+{
+  "instrument": "SBER",
+  "timeframe": "1h",
+  "data_source": "database",
+  "initial_capital": 100000,
+  "strategies": [
+    {
+      "strategy_id": "ma_crossover",
+      "status": "completed",
+      "params": { "fast": 15, "slow": 20, "order_size": 1 },
+      "metrics": { "total_pnl": 0, "sharpe_ratio": 0, … },
+      "chart_points": [{ "date": "…", "strategy_index": 100, "benchmark_index": 100, … }],
+      "trade_log": [{ "timestamp": "…", "action": "BUY", "price": 0 }]
+    }
+  ],
+  "last_updated": "2026-06-28T12:00:00+00:00"
+}
+```
 
-## Known Limitations
+`data_source` is `"database"` when candles came from `DataLoader`, or `"T-Bank"` when freshly
+fetched from the broker.
 
-- The run request has no input body; SBER, timeframe, date window, capital, and strategy
-  parameters are currently set in `main.py`.
-- The chart uses sequence indexes rather than market timestamps.
-- Buy/sell markers are not displayed.
-- Narrow viewports have horizontal overflow in parts of the dashboard.
-- `npm run lint` currently fails at `app/page.tsx:227` because the initial
-  `loadDashboard()` call synchronously triggers state updates from an effect
-  (`react-hooks/set-state-in-effect`).
-- The production build reports workspace-root and dynamic filesystem tracing warnings because
-  the monorepo contains multiple lockfiles and route handlers perform filesystem access.
+## Styling
+
+All visual styles live in `app/globals.css`. There are no component-level CSS modules in the
+current MVP. Charts use [Recharts](https://recharts.org/) inside `page.tsx`.
+
+## npm scripts
+
+```bash
+npm run dev      # development server (port 3000)
+npm run build    # production build
+npm run start    # serve production build
+npm run lint     # ESLint
+```
+
+## Known limitations
+
+- Instrument, timeframe, and date window are configured in `config/dashboard.json`, not in the UI.
+- Each strategy rerun is a separate Python subprocess.
+- Only the latest dashboard state is kept; there is no run history UI.
 
 ## Verification
 
 ```bash
-npm ci
-npm run lint
-npm run build
-```
+# Python
+python -m pytest tests/integration/test_get_candles.py -v
 
-Current status: build passes; lint exposes the known effect issue above.
+# Frontend
+npm --prefix frontend ci
+npm --prefix frontend run build
+```

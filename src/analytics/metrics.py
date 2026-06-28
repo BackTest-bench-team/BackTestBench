@@ -140,7 +140,11 @@ def calculate_deposit_baseline_pnl(
     *,
     annual_deposit_rate: float = DEFAULT_ANNUAL_DEPOSIT_RATE,
 ) -> float:
-    """Return compound bank-deposit baseline P&L for the same period."""
+    """Return bank-deposit profit over the backtest window at ``annual_deposit_rate``.
+
+    Uses compound interest from ``period_start`` to ``period_end`` (same window as P&L).
+    Example: 100_000 RUB for ~1 year at 13% → about 13_000 RUB profit (final ≈ 113_000).
+    """
 
     if period_start is None or period_end is None:
         return 0.0
@@ -151,7 +155,7 @@ def calculate_deposit_baseline_pnl(
     if seconds <= 0:
         return 0.0
 
-    years = seconds / (365.0 * 24.0 * 60.0 * 60.0)
+    years = seconds / (365.25 * 24.0 * 60.0 * 60.0)
     return float(initial_capital * ((1.0 + annual_deposit_rate) ** years - 1.0))
 
 
@@ -261,5 +265,10 @@ def periods_per_year_for_timeframe(
 def _to_datetime(value: datetime | str) -> datetime:
     if isinstance(value, datetime):
         return value
-    # Accept both plain ISO strings and common UTC ``Z`` suffix.
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return datetime.strptime(text, "%Y-%m-%dT%H:%M:%S")

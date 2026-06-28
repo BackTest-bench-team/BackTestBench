@@ -1,0 +1,36 @@
+{
+  "instrument": "SBER",
+  "timeframe": "1h",
+  "initial_capital": 100000,
+  "lookback_days": 30,
+  "strategies": [
+    {
+      "id": "ma_crossover",
+      "params": {
+        "fast": 14,
+        "slow": 20,
+        "order_size": 1
+      }
+    },
+    {
+      "id": "ma_rsi",
+      "params": {
+        "fast": 11,
+        "slow": 30,
+        "rsi_period": 14,
+        "rsi_buy_min": 50,
+        "rsi_overbought": 71,
+        "order_size": 1
+      }
+    },
+    {
+      "id": "rsi_threshold",
+      "params": {
+        "period": 11,
+        "oversold": 30,
+        "overbought": 70.5,
+        "order_size": 1
+      }
+    }
+  ]
+}
