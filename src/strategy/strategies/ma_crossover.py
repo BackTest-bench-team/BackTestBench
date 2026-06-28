@@ -28,6 +28,7 @@ from src.engine.types import SignalType
 from ..base import BaseStrategy
 from ..errors import ParameterValidationError
 from ..registry import register_strategy
+from ..schema import ParameterSpec
 
 if TYPE_CHECKING:
     from src.engine.context import ExecutionContext
@@ -35,6 +36,13 @@ if TYPE_CHECKING:
 
 @register_strategy("ma_crossover")
 class MACrossover(BaseStrategy):
+    TITLE = "MA Crossover"
+    PARAMS = [
+        ParameterSpec("fast", "int", 10, minimum=1, description="Fast SMA window (candles)"),
+        ParameterSpec("slow", "int", 30, minimum=2, description="Slow SMA window (must be > fast)"),
+        ParameterSpec("order_size", "float", 1.0, minimum=0, description="Order quantity (Signal.size)"),
+    ]
+
     def validate_params(self) -> None:
         self.fast = self._positive_int("fast", 10)
         self.slow = self._positive_int("slow", 30)
