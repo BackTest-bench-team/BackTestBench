@@ -1,0 +1,12 @@
+# MA crossover with an RSI filter (customer request, 22-06 meeting).
+name: ma_rsi
+instrument: SBER
+timeframe: 1h
+version: "1"
+params:
+  fast: 10
+  slow: 30
+  rsi_period: 14
+  rsi_buy_min: 50        # only BUY when RSI confirms momentum
+  rsi_overbought: 70     # exit when overextended
+  order_size: 1.0
