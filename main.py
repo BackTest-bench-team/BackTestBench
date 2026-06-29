@@ -23,6 +23,7 @@ from src.db import init_db
 from src.engine import ExecutionEngine, RunContext
 from src.engine.models import Candle, Trade
 from src.strategy import create_strategy, describe_strategy
+from src.strategy.schema import ORDER_SIZE_MAX
 
 DATA_DIR = BASE_DIR / "data"
 CONFIG_FILE = BASE_DIR / "config" / "dashboard.json"
@@ -46,7 +47,53 @@ def save_config(config: dict[str, Any]) -> None:
         json.dump(config, f, indent=2, ensure_ascii=False)
 
 
+def normalize_order_size(params: dict[str, Any]) -> dict[str, Any]:
+    """Clamp order_size into the allowed range (1 … ORDER_SIZE_MAX)."""
+    if "order_size" not in params:
+        return params
+    out = dict(params)
+    size = float(out["order_size"])
+    if size > ORDER_SIZE_MAX or size < 1:
+        out["order_size"] = 1.0
+    return out
+
+
+def sanitize_config() -> None:
+    """Fix saved strategy params in config/dashboard.json."""
+    config = load_config()
+    changed = False
+    for item in config.get("strategies", []):
+        fixed = normalize_order_size(item.get("params", {}))
+        if fixed != item.get("params"):
+            item["params"] = fixed
+            changed = True
+    if changed:
+        save_config(config)
+
+
+def repair_runtime_dashboard() -> None:
+    """Unstick dashboard entries left in running state with invalid order_size."""
+    if not DASHBOARD_FILE.exists():
+        return
+    dashboard = load_dashboard()
+    changed = False
+    for entry in dashboard.get("strategies", []):
+        raw_params = entry.get("params") or {}
+        had_bad_size = float(raw_params.get("order_size", 1)) > ORDER_SIZE_MAX
+        fixed = normalize_order_size(raw_params)
+        if fixed != raw_params:
+            entry["params"] = fixed
+            changed = True
+        if had_bad_size and entry.get("status") == "running":
+            entry["status"] = "error"
+            entry["error"] = f"order_size must be <= {ORDER_SIZE_MAX}; value reset to 1."
+            changed = True
+    if changed:
+        save_dashboard(dashboard)
+
+
 def update_config_params(strategy_id: str, params: dict[str, Any]) -> None:
+    params = normalize_order_size(params)
     config = load_config()
     for item in config["strategies"]:
         if item["id"] == strategy_id:
@@ -382,6 +429,7 @@ async def bootstrap_all() -> None:
 
 
 async def run_single(strategy_id: str, params: dict[str, Any]) -> None:
+    params = normalize_order_size(params)
     update_config_params(strategy_id, params)
     config = load_config()
     dashboard = load_dashboard()
@@ -425,6 +473,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    sanitize_config()
+    repair_runtime_dashboard()
     args = parse_args()
 
     if args.command == "bootstrap":

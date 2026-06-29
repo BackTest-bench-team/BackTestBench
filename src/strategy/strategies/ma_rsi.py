@@ -34,7 +34,7 @@ from src.engine.types import SignalType
 from ..base import BaseStrategy
 from ..errors import ParameterValidationError
 from ..registry import register_strategy
-from ..schema import ParameterSpec
+from ..schema import ParameterSpec, order_size_spec, parse_order_size
 
 if TYPE_CHECKING:
     from src.engine.context import ExecutionContext
@@ -71,7 +71,7 @@ class MARSI(BaseStrategy):
                       description="Minimum RSI required to confirm a BUY"),
         ParameterSpec("rsi_overbought", "float", 70.0, minimum=0, maximum=100,
                       description="RSI level that triggers an exit"),
-        ParameterSpec("order_size", "float", 1.0, minimum=0, description="Order quantity"),
+        order_size_spec(),
     ]
 
     def validate_params(self) -> None:
@@ -91,7 +91,7 @@ class MARSI(BaseStrategy):
                 f"'rsi_buy_min' ({self.rsi_buy_min}) must be < 'rsi_overbought' "
                 f"({self.rsi_overbought})"
             )
-        self.order_size = self._pos_num("order_size", 1.0)
+        self.order_size = parse_order_size(self.params)
 
     def _pos_int(self, key: str, default: int) -> int:
         v = self.params.get(key, default)
