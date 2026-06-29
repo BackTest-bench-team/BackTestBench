@@ -42,7 +42,11 @@ def get_strategy_class(name: str) -> type[BaseStrategy]:
 
 
 def create_strategy(name: str, params: dict | None = None) -> BaseStrategy:
-    return get_strategy_class(name)(params or {})
+    from .schema import validate_params_against_specs
+
+    params = params or {}
+    validate_params_against_specs(name, params)
+    return get_strategy_class(name)(params)
 
 
 def create_from_config(config: StrategyConfig) -> BaseStrategy:

@@ -30,7 +30,7 @@ from src.engine.types import SignalType
 from ..base import BaseStrategy
 from ..errors import ParameterValidationError
 from ..registry import register_strategy
-from ..schema import ParameterSpec
+from ..schema import ParameterSpec, order_size_spec, parse_order_size
 
 if TYPE_CHECKING:
     from src.engine.context import ExecutionContext
@@ -43,7 +43,7 @@ class RSIThreshold(BaseStrategy):
         ParameterSpec("period", "int", 14, minimum=2, description="RSI lookback window (candles)"),
         ParameterSpec("oversold", "float", 30.0, minimum=0, maximum=100, description="Buy when RSI is at or below this"),
         ParameterSpec("overbought", "float", 70.0, minimum=0, maximum=100, description="Sell when RSI is at or above this"),
-        ParameterSpec("order_size", "float", 1.0, minimum=0, description="Order quantity (Signal.size)"),
+        order_size_spec(),
     ]
 
     def validate_params(self) -> None:
@@ -56,7 +56,7 @@ class RSIThreshold(BaseStrategy):
             raise ParameterValidationError(
                 f"'oversold' ({self.oversold}) must be < 'overbought' ({self.overbought})"
             )
-        self.order_size = self._positive_number("order_size", 1.0)
+        self.order_size = parse_order_size(self.params)
 
     def _positive_int(self, key: str, default: int) -> int:
         value = self.params.get(key, default)

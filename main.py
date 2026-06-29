@@ -1,11 +1,11 @@
+import argparse
 import asyncio
 import json
 import os
 import sys
-from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -13,16 +13,23 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+import src.strategy.strategies  # noqa: F401 — register built-in strategies
+
 from src.analytics import calculate_metrics_from_trade_log
 from src.broker_adapter import TBankAdapter
+from src.data_loader import DataLoader, candle_model_to_engine
+from src.data_loader.loader import utc_naive
+from src.db import init_db
 from src.engine import ExecutionEngine, RunContext
-from src.strategy.strategies.ma_crossover import MACrossover
+from src.engine.models import Candle, Trade
+from src.strategy import create_strategy, describe_strategy
+from src.strategy.schema import ORDER_SIZE_MAX
 
 DATA_DIR = BASE_DIR / "data"
-DATA_DIR.mkdir(exist_ok=True)
-
+CONFIG_FILE = BASE_DIR / "config" / "dashboard.json"
 DASHBOARD_FILE = DATA_DIR / "runtime-dashboard.json"
 
+DATA_DIR.mkdir(exist_ok=True)
 load_dotenv(BASE_DIR / ".env", override=False)
 
 
@@ -30,242 +37,461 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def make_run_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+def load_config() -> dict[str, Any]:
+    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
-def default_dashboard() -> Dict[str, Any]:
+def save_config(config: dict[str, Any]) -> None:
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+
+def normalize_order_size(params: dict[str, Any]) -> dict[str, Any]:
+    """Clamp order_size into the allowed range (1 … ORDER_SIZE_MAX)."""
+    if "order_size" not in params:
+        return params
+    out = dict(params)
+    size = float(out["order_size"])
+    if size > ORDER_SIZE_MAX or size < 1:
+        out["order_size"] = 1.0
+    return out
+
+
+def sanitize_config() -> None:
+    """Fix saved strategy params in config/dashboard.json."""
+    config = load_config()
+    changed = False
+    for item in config.get("strategies", []):
+        fixed = normalize_order_size(item.get("params", {}))
+        if fixed != item.get("params"):
+            item["params"] = fixed
+            changed = True
+    if changed:
+        save_config(config)
+
+
+def repair_runtime_dashboard() -> None:
+    """Unstick dashboard entries left in running state with invalid order_size."""
+    if not DASHBOARD_FILE.exists():
+        return
+    dashboard = load_dashboard()
+    changed = False
+    for entry in dashboard.get("strategies", []):
+        raw_params = entry.get("params") or {}
+        had_bad_size = float(raw_params.get("order_size", 1)) > ORDER_SIZE_MAX
+        fixed = normalize_order_size(raw_params)
+        if fixed != raw_params:
+            entry["params"] = fixed
+            changed = True
+        if had_bad_size and entry.get("status") == "running":
+            entry["status"] = "error"
+            entry["error"] = f"order_size must be <= {ORDER_SIZE_MAX}; value reset to 1."
+            changed = True
+    if changed:
+        save_dashboard(dashboard)
+
+
+def update_config_params(strategy_id: str, params: dict[str, Any]) -> None:
+    params = normalize_order_size(params)
+    config = load_config()
+    for item in config["strategies"]:
+        if item["id"] == strategy_id:
+            item["params"] = params
+            break
+    save_config(config)
+
+
+def load_dashboard() -> dict[str, Any]:
+    if not DASHBOARD_FILE.exists():
+        return default_dashboard()
+    try:
+        with open(DASHBOARD_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else default_dashboard()
+    except Exception:
+        return default_dashboard()
+
+
+def save_dashboard(data: dict[str, Any]) -> None:
+    data["last_updated"] = now_iso()
+    tmp = DASHBOARD_FILE.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, DASHBOARD_FILE)
+
+
+def empty_metrics() -> dict[str, None]:
     return {
-        "run_id": "local",
-        "strategy_id": "ma_crossover",
+        "total_pnl": None,
+        "sharpe_ratio": None,
+        "max_drawdown": None,
+        "win_rate": None,
+        "deposit_baseline_pnl": None,
+        "deposit_baseline_final": None,
+    }
+
+
+def empty_portfolio() -> dict[str, None]:
+    return {"cash": None, "position_size": None, "equity": None}
+
+
+def strategy_skeleton(strategy_id: str, params: dict[str, Any], status: str = "running") -> dict[str, Any]:
+    meta = describe_strategy(strategy_id)
+    return {
+        "strategy_id": strategy_id,
         "strategy_version": "1",
-        "instrument": "SBER",
-        "timeframe": "1h",
-        "data_source": "T-Bank",
-        "status": "idle",
-        "current_stage": "Idle",
-        "pipeline": [
-            {"name": "Broker Adapter", "status": "pending"},
-            {"name": "Strategy Module", "status": "pending"},
-            {"name": "Simulation Engine", "status": "pending"},
-            {"name": "Analytics Module", "status": "pending"},
-        ],
-        "metrics": {
-            "total_pnl": None,
-            "sharpe_ratio": None,
-            "max_drawdown": None,
-            "win_rate": None,
-            "deposit_baseline_pnl": None,
-        },
-        "equity_points": [],
-        "trade_count": 0,
-        "final_portfolio": {
-            "cash": None,
-            "position_size": None,
-            "equity": None,
-        },
-        "message": "No completed run yet",
+        "title": meta.get("title", strategy_id),
+        "status": status,
+        "params": params,
+        "parameter_specs": meta.get("parameters", []),
+        "initial_capital": load_config().get("initial_capital", 100_000.0),
+        "metrics": empty_metrics(),
+        "chart_points": [],
+        "trade_log": [],
+        "final_portfolio": empty_portfolio(),
         "error": None,
+    }
+
+
+def default_dashboard() -> dict[str, Any]:
+    config = load_config()
+    return {
+        "instrument": config.get("instrument", "SBER"),
+        "timeframe": config.get("timeframe", "1h"),
+        "data_source": "T-Bank",
+        "initial_capital": config.get("initial_capital", 100_000.0),
+        "strategies": [
+            strategy_skeleton(item["id"], dict(item["params"]), status="idle")
+            for item in config.get("strategies", [])
+        ],
         "last_updated": None,
     }
 
 
-def load_dashboard() -> Dict[str, Any]:
-    if not DASHBOARD_FILE.exists():
-        return default_dashboard()
-
-    try:
-        with open(DASHBOARD_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            return default_dashboard()
-    except Exception:
-        return default_dashboard()
-
-    merged = default_dashboard()
-    merged.update({k: v for k, v in data.items() if k not in {"metrics", "final_portfolio"}})
-
-    metrics = deepcopy(merged["metrics"])
-    if isinstance(data.get("metrics"), dict):
-        metrics.update(data["metrics"])
-    merged["metrics"] = metrics
-
-    final_portfolio = deepcopy(merged["final_portfolio"])
-    if isinstance(data.get("final_portfolio"), dict):
-        final_portfolio.update(data["final_portfolio"])
-    merged["final_portfolio"] = final_portfolio
-
-    if isinstance(data.get("pipeline"), list):
-        merged["pipeline"] = data["pipeline"]
-
-    if isinstance(data.get("equity_points"), list):
-        merged["equity_points"] = data["equity_points"]
-
-    return merged
+def find_strategy_entry(dashboard: dict[str, Any], strategy_id: str) -> dict[str, Any] | None:
+    for entry in dashboard.get("strategies", []):
+        if entry.get("strategy_id") == strategy_id:
+            return entry
+    return None
 
 
-def save_dashboard(data: Dict[str, Any]) -> None:
-    current = load_dashboard()
-    merged = deepcopy(current)
-
-    for key, value in data.items():
-        if key == "metrics" and isinstance(value, dict):
-            merged["metrics"].update(value)
-        elif key == "final_portfolio" and isinstance(value, dict):
-            merged["final_portfolio"].update(value)
-        else:
-            merged[key] = value
-
-    merged["last_updated"] = now_iso()
-
-    tmp_path = DASHBOARD_FILE.with_suffix(".tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(merged, f, indent=2, ensure_ascii=False)
-    os.replace(tmp_path, DASHBOARD_FILE)
+def get_candle_date_range(config: dict[str, Any]) -> tuple[datetime, datetime]:
+    to_dt = datetime.now(timezone.utc)
+    from_dt = to_dt - timedelta(days=int(config.get("lookback_days", 30)))
+    return from_dt, to_dt
 
 
-def set_step_status(dashboard: Dict[str, Any], step_name: str, status: str) -> None:
-    for step in dashboard["pipeline"]:
-        if step["name"] == step_name:
-            step["status"] = status
-            return
+def timeframe_to_timedelta(timeframe: str) -> timedelta:
+    mapping = {
+        "1m": timedelta(minutes=1),
+        "5m": timedelta(minutes=5),
+        "15m": timedelta(minutes=15),
+        "1h": timedelta(hours=1),
+        "4h": timedelta(hours=4),
+        "1d": timedelta(days=1),
+    }
+    return mapping.get(timeframe, timedelta(hours=1))
 
 
-def build_equity_points(equity_curve):
-    points = []
-    for i, value in enumerate(equity_curve):
-        points.append(
-            {
-                "date": str(i),
-                "value": float(value),
-            }
-        )
-    return points
+def db_candles_usable(rows: list, from_dt: datetime, to_dt: datetime, timeframe: str) -> bool:
+    """True when DB already has enough candles for this lookback window."""
+    if len(rows) < 10:
+        return False
+    span_seconds = (utc_naive(to_dt) - utc_naive(from_dt)).total_seconds()
+    bar_seconds = timeframe_to_timedelta(timeframe).total_seconds()
+    expected = max(span_seconds / bar_seconds, 1)
+    return len(rows) >= expected * 0.5
 
 
-async def run_pipeline() -> Dict[str, Any]:
-    run_id = os.getenv("RUN_ID") or make_run_id()
-
-    dashboard = default_dashboard()
-    dashboard["run_id"] = run_id
-    dashboard["status"] = "running"
-    dashboard["current_stage"] = "Broker Adapter"
-    dashboard["message"] = "Starting pipeline..."
-    dashboard["error"] = None
-    set_step_status(dashboard, "Broker Adapter", "running")
-    save_dashboard(dashboard)
-
+async def fetch_candles_from_api(
+    config: dict[str, Any],
+    from_dt: datetime,
+    to_dt: datetime,
+) -> list[Candle]:
     token = os.getenv("TINKOFF_TOKEN")
     if not token:
         raise RuntimeError("TINKOFF_TOKEN missing")
 
-    to_dt = datetime.now(timezone.utc)
-    from_dt = to_dt - timedelta(days=30)
-
-    adapter = TBankAdapter(
-        token=token,
-        use_sandbox=False,
-        verify_ssl=False,
-    )
-
+    adapter = TBankAdapter(token=token, use_sandbox=False, verify_ssl=False)
     async with adapter:
         candles = await adapter.get_candles(
-            instrument="SBER",
-            timeframe="1h",
+            instrument=config["instrument"],
+            timeframe=config["timeframe"],
             from_dt=from_dt,
             to_dt=to_dt,
         )
 
     if not candles:
-        raise RuntimeError("Broker returned 0 candles")
+        raise RuntimeError("No candles returned from broker")
 
-    dashboard["current_stage"] = "Strategy Module"
-    dashboard["message"] = "Creating strategy..."
-    set_step_status(dashboard, "Broker Adapter", "done")
-    set_step_status(dashboard, "Strategy Module", "running")
-    save_dashboard(dashboard)
+    return candles
 
-    strategy = MACrossover(
-        params={
-            "fast": 15,
-            "slow": 20,
-            "order_size": 1.0,
+
+async def get_candles(config: dict[str, Any]) -> tuple[list[Candle], str]:
+    """Load candles: read from DB when fresh, otherwise fetch from T-Bank and store."""
+    init_db()
+    from_dt, to_dt = get_candle_date_range(config)
+    instrument = config["instrument"]
+    timeframe = config["timeframe"]
+
+    loader = DataLoader(use_cache=True)
+    try:
+        rows = loader.load_candles(instrument, timeframe, from_dt, to_dt)
+        if db_candles_usable(rows, from_dt, to_dt, timeframe):
+            return [candle_model_to_engine(row) for row in rows], "database"
+
+        api_candles = await fetch_candles_from_api(config, from_dt, to_dt)
+        loader.store_candles(instrument, timeframe, api_candles)
+        rows = loader.load_candles(instrument, timeframe, from_dt, to_dt)
+        return [candle_model_to_engine(row) for row in rows] if rows else api_candles, "T-Bank"
+    finally:
+        loader.close()
+
+
+def build_chart_series(
+    candles: list[Candle],
+    equity_curve: list[float],
+    initial_capital: float,
+) -> list[dict[str, Any]]:
+    if not candles or len(equity_curve) < 2:
+        return []
+
+    first_close = float(candles[0].close)
+    if first_close <= 0:
+        return []
+
+    buy_hold_shares = initial_capital / first_close
+    points: list[dict[str, Any]] = []
+
+    for i, candle in enumerate(candles):
+        equity_idx = i + 1
+        if equity_idx >= len(equity_curve):
+            break
+        close = float(candle.close)
+        equity = float(equity_curve[equity_idx])
+        benchmark_equity = buy_hold_shares * close
+        points.append(
+            {
+                "date": candle.timestamp,
+                "strategy_index": equity / initial_capital * 100.0,
+                "benchmark_index": benchmark_equity / initial_capital * 100.0,
+                "equity": equity,
+                "close": close,
+            }
+        )
+    return points
+
+
+def build_trade_log(trades: list[Trade]) -> list[dict[str, Any]]:
+    log: list[dict[str, Any]] = []
+    for trade in trades:
+        if trade.opened_at:
+            log.append(
+                {
+                    "timestamp": trade.opened_at,
+                    "action": "BUY",
+                    "price": float(trade.entry_price),
+                }
+            )
+        if trade.closed_at:
+            log.append(
+                {
+                    "timestamp": trade.closed_at,
+                    "action": "SELL",
+                    "price": float(trade.exit_price or trade.entry_price),
+                }
+            )
+    return log
+
+
+def run_strategy_backtest(
+    strategy_id: str,
+    params: dict[str, Any],
+    candles: list[Candle],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    initial_capital = float(config.get("initial_capital", 100_000.0))
+    strategy = create_strategy(strategy_id, params)
+    engine = ExecutionEngine()
+    engine_result = engine.run(
+        strategy=strategy,
+        candles=candles,
+        initial_capital=initial_capital,
+    )
+    context = RunContext(
+        run_id=now_iso(),
+        strategy_id=strategy_id,
+        strategy_version="1",
+        instrument=config["instrument"],
+        timeframe=config["timeframe"],
+        period_start=candles[0].timestamp,
+        period_end=candles[-1].timestamp,
+        initial_capital=initial_capital,
+    )
+    metrics = calculate_metrics_from_trade_log(engine_result["trade_log_report"], context)
+    final = engine_result["final_portfolio"]
+    meta = describe_strategy(strategy_id)
+    deposit_pnl = float(metrics.deposit_baseline_pnl)
+
+    return {
+        "strategy_id": strategy_id,
+        "strategy_version": "1",
+        "title": meta.get("title", strategy_id),
+        "status": "completed",
+        "params": params,
+        "parameter_specs": meta.get("parameters", []),
+        "initial_capital": initial_capital,
+        "metrics": {
+            "total_pnl": float(metrics.total_pnl),
+            "sharpe_ratio": float(metrics.sharpe_ratio),
+            "max_drawdown": float(metrics.max_drawdown),
+            "win_rate": float(metrics.win_rate),
+            "deposit_baseline_pnl": deposit_pnl,
+            "deposit_baseline_final": initial_capital + deposit_pnl,
+        },
+        "chart_points": build_chart_series(candles, engine_result["equity_curve"], initial_capital),
+        "trade_log": build_trade_log(engine_result["trade_log"]),
+        "final_portfolio": {
+            "cash": float(final.cash),
+            "position_size": float(final.position_size),
+            "equity": float(final.equity),
+        },
+        "error": None,
+    }
+
+
+def set_strategy_running(dashboard: dict[str, Any], strategy_id: str, params: dict[str, Any]) -> None:
+    entry = find_strategy_entry(dashboard, strategy_id)
+    if entry is None:
+        dashboard.setdefault("strategies", []).append(strategy_skeleton(strategy_id, params, "running"))
+        return
+
+    entry.update(
+        {
+            "status": "running",
+            "params": params,
+            "metrics": empty_metrics(),
+            "chart_points": [],
+            "trade_log": [],
+            "final_portfolio": empty_portfolio(),
+            "error": None,
         }
     )
 
-    dashboard["current_stage"] = "Simulation Engine"
-    dashboard["message"] = "Running backtest..."
-    set_step_status(dashboard, "Strategy Module", "done")
-    set_step_status(dashboard, "Simulation Engine", "running")
-    save_dashboard(dashboard)
 
-    engine = ExecutionEngine()
-    result = engine.run(
-        strategy=strategy,
-        candles=candles,
-        initial_capital=100000.0,
-    )
+def upsert_strategy_result(dashboard: dict[str, Any], result: dict[str, Any]) -> None:
+    entry = find_strategy_entry(dashboard, result["strategy_id"])
+    if entry is None:
+        dashboard.setdefault("strategies", []).append(result)
+        return
 
-    trade_log = result["trade_log_report"]
-    equity_curve = result["equity_curve"]
-    final_portfolio = result["final_portfolio"]
+    entry.clear()
+    entry.update(result)
 
-    dashboard["trade_count"] = len(trade_log.trades)
-    dashboard["equity_points"] = build_equity_points(equity_curve)
-    dashboard["final_portfolio"] = {
-        "cash": float(final_portfolio.cash),
-        "position_size": float(final_portfolio.position_size),
-        "equity": float(final_portfolio.equity),
+
+async def bootstrap_all() -> None:
+    config = load_config()
+    dashboard = {
+        "instrument": config["instrument"],
+        "timeframe": config["timeframe"],
+        "data_source": "T-Bank",
+        "initial_capital": config.get("initial_capital", 100_000.0),
+        "strategies": [
+            strategy_skeleton(item["id"], dict(item["params"]), status="running")
+            for item in config["strategies"]
+        ],
     }
-    dashboard["current_stage"] = "Analytics Module"
-    dashboard["message"] = "Calculating metrics..."
-    set_step_status(dashboard, "Simulation Engine", "done")
-    set_step_status(dashboard, "Analytics Module", "running")
     save_dashboard(dashboard)
 
-    context = RunContext(
-        run_id=run_id,
-        strategy_id="ma_crossover",
-        strategy_version="1",
-        instrument="SBER",
-        timeframe="1h",
-        period_start=candles[0].timestamp,
-        period_end=candles[-1].timestamp,
-        initial_capital=100000.0,
+    try:
+        candles, data_source = await get_candles(config)
+        dashboard["data_source"] = data_source
+    except Exception as exc:
+        for entry in dashboard["strategies"]:
+            entry.update({"status": "error", "error": str(exc)})
+        save_dashboard(dashboard)
+        raise
+
+    for item in config["strategies"]:
+        strategy_id = item["id"]
+        params = dict(item["params"])
+        set_strategy_running(dashboard, strategy_id, params)
+        save_dashboard(dashboard)
+        try:
+            result = run_strategy_backtest(strategy_id, params, candles, config)
+            upsert_strategy_result(dashboard, result)
+        except Exception as exc:
+            entry = find_strategy_entry(dashboard, strategy_id)
+            if entry:
+                entry.update({"status": "error", "error": str(exc)})
+        save_dashboard(dashboard)
+
+
+async def run_single(strategy_id: str, params: dict[str, Any]) -> None:
+    params = normalize_order_size(params)
+    update_config_params(strategy_id, params)
+    config = load_config()
+    dashboard = load_dashboard()
+
+    if not dashboard.get("strategies"):
+        dashboard = default_dashboard()
+
+    dashboard.update(
+        {
+            "instrument": config["instrument"],
+            "timeframe": config["timeframe"],
+            "initial_capital": config.get("initial_capital", 100_000.0),
+        }
     )
-
-    metrics = calculate_metrics_from_trade_log(trade_log, context)
-
-    dashboard["metrics"] = {
-        "total_pnl": float(metrics.total_pnl),
-        "sharpe_ratio": float(metrics.sharpe_ratio),
-        "max_drawdown": float(metrics.max_drawdown),
-        "win_rate": float(metrics.win_rate),
-        "deposit_baseline_pnl": float(metrics.deposit_baseline_pnl),
-    }
-    dashboard["status"] = "completed"
-    dashboard["current_stage"] = "Finished"
-    dashboard["message"] = "Backtest completed successfully"
-    dashboard["error"] = None
-    set_step_status(dashboard, "Analytics Module", "done")
-
+    set_strategy_running(dashboard, strategy_id, params)
     save_dashboard(dashboard)
-    return dashboard
+
+    try:
+        candles, data_source = await get_candles(config)
+        dashboard["data_source"] = data_source
+        result = run_strategy_backtest(strategy_id, params, candles, config)
+        upsert_strategy_result(dashboard, result)
+    except Exception as exc:
+        entry = find_strategy_entry(dashboard, strategy_id)
+        if entry:
+            entry.update({"status": "error", "error": str(exc)})
+    save_dashboard(dashboard)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="BackTestBench dashboard runner")
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("bootstrap", help="Run all configured strategies")
+
+    run_parser = sub.add_parser("run", help="Run a single strategy")
+    run_parser.add_argument("strategy_id")
+    run_parser.add_argument("params_json")
+
+    return parser.parse_args()
+
+
+def main() -> None:
+    sanitize_config()
+    repair_runtime_dashboard()
+    args = parse_args()
+
+    if args.command == "bootstrap":
+        asyncio.run(bootstrap_all())
+        return
+
+    if args.command == "run":
+        params = json.loads(args.params_json)
+        asyncio.run(run_single(args.strategy_id, params))
+        return
+
+    asyncio.run(bootstrap_all())
 
 
 if __name__ == "__main__":
     try:
-        result = asyncio.run(run_pipeline())
-        print(result)
-    except Exception as e:
-        failed = load_dashboard()
-        failed["status"] = "error"
-        failed["current_stage"] = "Failed"
-        failed["message"] = "Pipeline failed"
-        failed["error"] = str(e)
-        if isinstance(failed.get("pipeline"), list):
-            for step in failed["pipeline"]:
-                if step["status"] == "running":
-                    step["status"] = "error"
-        save_dashboard(failed)
-        print("PIPELINE FAILED:", e)
+        main()
+    except Exception as exc:
+        print(exc)
+        sys.exit(1)

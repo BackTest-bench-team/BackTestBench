@@ -24,7 +24,14 @@ from .loader import (
     load_plugin_file,
     load_plugins_from_dir,
 )
-from .schema import ParameterSpec, describe_all, describe_strategy, parameter_specs
+from .schema import (
+    ORDER_SIZE_MAX,
+    ParameterSpec,
+    describe_all,
+    describe_strategy,
+    order_size_spec,
+    parameter_specs,
+)
 from .store import (
     delete_saved_config,
     list_saved_configs,
@@ -38,7 +45,8 @@ __all__ = [
     "register_strategy", "create_strategy", "create_from_config",
     "get_strategy_class", "available_strategies", "is_registered", "clear_registry",
     "discover_builtin_strategies", "load_plugin_file", "load_plugins_from_dir",
-    "ParameterSpec", "describe_strategy", "describe_all", "parameter_specs",
+    "ParameterSpec", "ORDER_SIZE_MAX", "order_size_spec",
+    "describe_strategy", "describe_all", "parameter_specs",
     "save_strategy_config", "load_saved_config", "list_saved_configs", "delete_saved_config",
     "StrategyError", "UnknownStrategyError", "ConfigError", "ParameterValidationError",
 ]

@@ -133,6 +133,12 @@ def test_negative_order_size_rejected():
         create_strategy("ma_crossover", {"fast": 5, "slow": 20, "order_size": -1})
 
 
+def test_order_size_above_max_rejected():
+    with pytest.raises(ParameterValidationError) as exc:
+        create_strategy("ma_crossover", {"fast": 5, "slow": 20, "order_size": 10})
+    assert "order_size" in str(exc.value)
+
+
 def test_non_integer_window_rejected():
     with pytest.raises(ParameterValidationError):
         create_strategy("ma_crossover", {"fast": 5.5, "slow": 20})

@@ -28,7 +28,7 @@ from src.engine.types import SignalType
 from ..base import BaseStrategy
 from ..errors import ParameterValidationError
 from ..registry import register_strategy
-from ..schema import ParameterSpec
+from ..schema import ParameterSpec, order_size_spec, parse_order_size
 
 if TYPE_CHECKING:
     from src.engine.context import ExecutionContext
@@ -40,13 +40,13 @@ class MACrossover(BaseStrategy):
     PARAMS = [
         ParameterSpec("fast", "int", 10, minimum=1, description="Fast SMA window (candles)"),
         ParameterSpec("slow", "int", 30, minimum=2, description="Slow SMA window (must be > fast)"),
-        ParameterSpec("order_size", "float", 1.0, minimum=0, description="Order quantity (Signal.size)"),
+        order_size_spec(),
     ]
 
     def validate_params(self) -> None:
         self.fast = self._positive_int("fast", 10)
         self.slow = self._positive_int("slow", 30)
-        self.order_size = self._positive_number("order_size", 1.0)
+        self.order_size = parse_order_size(self.params)
         if self.fast >= self.slow:
             raise ParameterValidationError(
                 f"'fast' ({self.fast}) must be strictly less than 'slow' ({self.slow})"
