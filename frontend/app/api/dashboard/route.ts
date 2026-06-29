@@ -11,6 +11,7 @@ const emptyDashboard = {
   data_source: "T-Bank",
   initial_capital: 100_000,
   strategies: [] as unknown[],
+  ranking: { computed_at: null as string | null, entries: [] as unknown[] },
   last_updated: null as string | null,
 };
 

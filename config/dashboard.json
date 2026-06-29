@@ -15,8 +15,8 @@
     {
       "id": "ma_rsi",
       "params": {
-        "fast": 11,
-        "slow": 30,
+        "fast": 21,
+        "slow": 29,
         "rsi_period": 14,
         "rsi_buy_min": 50,
         "rsi_overbought": 71,

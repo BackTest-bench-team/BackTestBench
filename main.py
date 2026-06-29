@@ -15,7 +15,8 @@ if str(BASE_DIR) not in sys.path:
 
 import src.strategy.strategies  # noqa: F401 — register built-in strategies
 
-from src.analytics import calculate_metrics_from_trade_log
+from src.analytics import RankingConfig, TopNEntry, build_top_n, calculate_metrics_from_trade_log
+from src.engine.models import MetricsReport
 from src.broker_adapter import TBankAdapter
 from src.data_loader import DataLoader, candle_model_to_engine
 from src.data_loader.loader import utc_naive
@@ -108,7 +109,16 @@ def load_dashboard() -> dict[str, Any]:
     try:
         with open(DASHBOARD_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else default_dashboard()
+        if not isinstance(data, dict):
+            return default_dashboard()
+        if "ranking" not in data:
+            data["ranking"] = empty_ranking()
+        if not data["ranking"].get("entries") and any(
+            entry.get("status") == "completed" for entry in data.get("strategies", [])
+        ):
+            update_dashboard_ranking(data)
+            save_dashboard(data)
+        return data
     except Exception:
         return default_dashboard()
 
@@ -154,6 +164,10 @@ def strategy_skeleton(strategy_id: str, params: dict[str, Any], status: str = "r
     }
 
 
+def empty_ranking() -> dict[str, Any]:
+    return {"computed_at": None, "entries": []}
+
+
 def default_dashboard() -> dict[str, Any]:
     config = load_config()
     return {
@@ -165,6 +179,7 @@ def default_dashboard() -> dict[str, Any]:
             strategy_skeleton(item["id"], dict(item["params"]), status="idle")
             for item in config.get("strategies", [])
         ],
+        "ranking": empty_ranking(),
         "last_updated": None,
     }
 
@@ -390,6 +405,81 @@ def upsert_strategy_result(dashboard: dict[str, Any], result: dict[str, Any]) ->
     entry.update(result)
 
 
+def metrics_report_from_entry(entry: dict[str, Any], instrument: str) -> MetricsReport | None:
+    if entry.get("status") != "completed":
+        return None
+    metrics = entry.get("metrics") or {}
+    required = ("total_pnl", "sharpe_ratio", "max_drawdown", "win_rate", "deposit_baseline_pnl")
+    if any(metrics.get(key) is None for key in required):
+        return None
+    try:
+        return MetricsReport(
+            strategy_id=str(entry["strategy_id"]),
+            instrument=instrument,
+            total_pnl=float(metrics["total_pnl"]),
+            sharpe_ratio=float(metrics["sharpe_ratio"]),
+            max_drawdown=float(metrics["max_drawdown"]),
+            win_rate=float(metrics["win_rate"]),
+            deposit_baseline_pnl=float(metrics["deposit_baseline_pnl"]),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def ranking_entry_to_dict(entry: TopNEntry, previous_rank: int | None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "rank": entry.rank,
+        "strategy_id": entry.strategy_id,
+        "instrument": entry.instrument,
+        "run_id": entry.run_id,
+        "total_pnl": entry.total_pnl,
+        "computed_at": entry.computed_at.isoformat(),
+        "sharpe_ratio": entry.sharpe_ratio,
+        "max_drawdown": entry.max_drawdown,
+        "win_rate": entry.win_rate,
+        "deposit_baseline_pnl": entry.deposit_baseline_pnl,
+    }
+    if previous_rank is not None and previous_rank != entry.rank:
+        payload["previous_rank"] = previous_rank
+        payload["rank_delta"] = previous_rank - entry.rank
+    return payload
+
+
+def update_dashboard_ranking(dashboard: dict[str, Any]) -> None:
+    """Recompute strategy ranking from completed backtest metrics."""
+    instrument = str(dashboard.get("instrument", "SBER"))
+    strategies = dashboard.get("strategies") or []
+    previous = {
+        item["strategy_id"]: item["rank"]
+        for item in (dashboard.get("ranking") or {}).get("entries") or []
+        if item.get("strategy_id") is not None and item.get("rank") is not None
+    }
+
+    reports: list[MetricsReport | None] = []
+    for entry in strategies:
+        reports.append(metrics_report_from_entry(entry, instrument))
+
+    top_n = build_top_n(
+        reports,
+        n=max(len(strategies), 1),
+        config=RankingConfig(n=max(len(strategies), 1), require_above_baseline=False),
+    )
+    computed_at = now_iso()
+    entries = [
+        ranking_entry_to_dict(item, previous.get(item.strategy_id))
+        for item in top_n
+    ]
+    dashboard["ranking"] = {"computed_at": computed_at, "entries": entries}
+
+
+async def refresh_ranking() -> None:
+    dashboard = load_dashboard()
+    if not dashboard.get("strategies"):
+        dashboard = default_dashboard()
+    update_dashboard_ranking(dashboard)
+    save_dashboard(dashboard)
+
+
 async def bootstrap_all() -> None:
     config = load_config()
     dashboard = {
@@ -401,6 +491,7 @@ async def bootstrap_all() -> None:
             strategy_skeleton(item["id"], dict(item["params"]), status="running")
             for item in config["strategies"]
         ],
+        "ranking": empty_ranking(),
     }
     save_dashboard(dashboard)
 
@@ -426,6 +517,9 @@ async def bootstrap_all() -> None:
             if entry:
                 entry.update({"status": "error", "error": str(exc)})
         save_dashboard(dashboard)
+
+    update_dashboard_ranking(dashboard)
+    save_dashboard(dashboard)
 
 
 async def run_single(strategy_id: str, params: dict[str, Any]) -> None:
@@ -456,6 +550,7 @@ async def run_single(strategy_id: str, params: dict[str, Any]) -> None:
         entry = find_strategy_entry(dashboard, strategy_id)
         if entry:
             entry.update({"status": "error", "error": str(exc)})
+    update_dashboard_ranking(dashboard)
     save_dashboard(dashboard)
 
 
@@ -464,6 +559,7 @@ def parse_args() -> argparse.Namespace:
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("bootstrap", help="Run all configured strategies")
+    sub.add_parser("refresh-ranking", help="Recompute strategy ranking from saved metrics")
 
     run_parser = sub.add_parser("run", help="Run a single strategy")
     run_parser.add_argument("strategy_id")
@@ -479,6 +575,10 @@ def main() -> None:
 
     if args.command == "bootstrap":
         asyncio.run(bootstrap_all())
+        return
+
+    if args.command == "refresh-ranking":
+        asyncio.run(refresh_ranking())
         return
 
     if args.command == "run":

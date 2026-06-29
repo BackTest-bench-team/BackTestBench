@@ -67,12 +67,33 @@ type StrategyResult = {
   error?: string | null;
 };
 
+type RankingEntry = {
+  rank: number;
+  strategy_id: string;
+  instrument: string;
+  run_id?: string;
+  total_pnl: number;
+  computed_at?: string;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  win_rate: number;
+  deposit_baseline_pnl: number;
+  previous_rank?: number;
+  rank_delta?: number;
+};
+
+type DashboardRanking = {
+  computed_at: string | null;
+  entries: RankingEntry[];
+};
+
 type DashboardData = {
   instrument: string;
   timeframe: string;
   data_source: string;
   initial_capital: number;
   strategies: StrategyResult[];
+  ranking?: DashboardRanking;
   last_updated: string | null;
 };
 
@@ -81,11 +102,13 @@ const POLL_RUNNING_MS = 350;
 const BASELINE = 100;
 
 const CHART = {
-  strategy: "#2dd4bf",
-  benchmark: "#a8a29e",
-  brush: "#d97706",
-  buy: "#4ade80",
-  sell: "#f87171",
+  strategy: "#475ee6",
+  benchmark: "#6b7c93",
+  brush: "#475ee6",
+  buy: "#2f9e44",
+  sell: "#c92a2a",
+  grid: "#c8d3e4",
+  axis: "#5c6b82",
 };
 
 function formatMoney(v: number | null | undefined) {
@@ -152,6 +175,214 @@ function needsBootstrap(strategies: StrategyResult[]) {
   if (!strategies.length) return true;
   return strategies.every(
     (s) => s.status === "idle" && (s.chart_points?.length ?? 0) === 0
+  );
+}
+
+function needsRankingRefresh(strategies: StrategyResult[], ranking?: DashboardRanking) {
+  if (!strategies.length) return false;
+  const hasCompleted = strategies.some((s) => s.status === "completed");
+  const hasRanking = (ranking?.entries?.length ?? 0) > 0;
+  return hasCompleted && !hasRanking;
+}
+
+function strategyCardId(strategyId: string) {
+  return `strategy-${strategyId}`;
+}
+
+function matchStrategyQuery(strategy: StrategyResult, query: string) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return false;
+  const title = strategy.title?.toLowerCase() ?? "";
+  const id = strategy.strategy_id.toLowerCase();
+  return title.includes(normalized) || id.includes(normalized);
+}
+
+function findStrategyByQuery(strategies: StrategyResult[], query: string) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return null;
+  return (
+    strategies.find((strategy) => strategy.title?.toLowerCase() === normalized) ??
+    strategies.find((strategy) => strategy.strategy_id.toLowerCase() === normalized) ??
+    strategies.find((strategy) => matchStrategyQuery(strategy, normalized)) ??
+    null
+  );
+}
+
+function filterStrategySuggestions(strategies: StrategyResult[], query: string, limit = 6) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return [];
+  return strategies.filter((strategy) => matchStrategyQuery(strategy, normalized)).slice(0, limit);
+}
+
+function StrategySearch({
+  strategies,
+  onNavigate,
+}: {
+  strategies: StrategyResult[];
+  onNavigate: (strategyId: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const suggestions = useMemo(
+    () => filterStrategySuggestions(strategies, query),
+    [strategies, query]
+  );
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query]);
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, []);
+
+  function navigateTo(strategyId: string) {
+    setError(null);
+    setOpen(false);
+    onNavigate(strategyId);
+  }
+
+  function submitSearch() {
+    const match = findStrategyByQuery(strategies, query);
+    if (!match) {
+      setError("Strategy not found");
+      return;
+    }
+    setQuery(match.title ?? match.strategy_id);
+    navigateTo(match.strategy_id);
+  }
+
+  return (
+    <div className="strategy-search" ref={containerRef}>
+      <span className="strategy-search-label">Find strategy</span>
+      <form
+        className="strategy-search-row"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (open && suggestions[activeIndex]) {
+            const picked = suggestions[activeIndex];
+            setQuery(picked.title ?? picked.strategy_id);
+            navigateTo(picked.strategy_id);
+            return;
+          }
+          submitSearch();
+        }}
+      >
+        <input
+          className="strategy-search-input"
+          type="search"
+          value={query}
+          placeholder="Name or ID, e.g. MA Crossover"
+          aria-label="Find strategy"
+          aria-autocomplete="list"
+          aria-expanded={open && suggestions.length > 0}
+          onFocus={() => setOpen(true)}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setError(null);
+            setOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (!open || !suggestions.length) return;
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              setActiveIndex((index) => (index + 1) % suggestions.length);
+            }
+            if (event.key === "ArrowUp") {
+              event.preventDefault();
+              setActiveIndex((index) => (index - 1 + suggestions.length) % suggestions.length);
+            }
+            if (event.key === "Escape") {
+              setOpen(false);
+            }
+          }}
+        />
+        <button className="strategy-search-btn" type="submit" disabled={!query.trim()}>
+          Go to
+        </button>
+      </form>
+      {error && <span className="strategy-search-hint is-error">{error}</span>}
+      {!error && !open && (
+        <span className="strategy-search-hint">Enter a name or ID and press Enter</span>
+      )}
+      {open && suggestions.length > 0 && (
+        <ul className="strategy-search-suggestions" role="listbox">
+          {suggestions.map((strategy, index) => (
+            <li key={strategy.strategy_id} role="option" aria-selected={index === activeIndex}>
+              <button
+                type="button"
+                className={`strategy-search-suggestion${index === activeIndex ? " is-active" : ""}`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setQuery(strategy.title ?? strategy.strategy_id);
+                  navigateTo(strategy.strategy_id);
+                }}
+              >
+                <span className="suggestion-title">{strategy.title ?? strategy.strategy_id}</span>
+                <span className="suggestion-id">{strategy.strategy_id}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function rankByStrategyId(ranking?: DashboardRanking): Map<string, RankingEntry> {
+  const map = new Map<string, RankingEntry>();
+  for (const entry of ranking?.entries ?? []) {
+    map.set(entry.strategy_id, entry);
+  }
+  return map;
+}
+
+function sortStrategiesByRank(
+  strategies: StrategyResult[],
+  ranking?: DashboardRanking
+): StrategyResult[] {
+  const ranks = rankByStrategyId(ranking);
+  return [...strategies].sort((a, b) => {
+    const rankA = ranks.get(a.strategy_id)?.rank;
+    const rankB = ranks.get(b.strategy_id)?.rank;
+    if (rankA == null && rankB == null) return 0;
+    if (rankA == null) return 1;
+    if (rankB == null) return -1;
+    return rankA - rankB;
+  });
+}
+
+function RankBadge({ entry }: { entry?: RankingEntry }) {
+  if (!entry) return null;
+
+  const movedUp = (entry.rank_delta ?? 0) > 0;
+  const movedDown = (entry.rank_delta ?? 0) < 0;
+  const delta = Math.abs(entry.rank_delta ?? 0);
+
+  return (
+    <div className="rank-badge" aria-label={`Rank ${entry.rank}`}>
+      <span className="rank-number">#{entry.rank}</span>
+      {movedUp && (
+        <span className="rank-move rank-up" title={`Up ${delta} place${delta === 1 ? "" : "s"}`}>
+          ↑{delta > 1 ? delta : ""}
+        </span>
+      )}
+      {movedDown && (
+        <span className="rank-move rank-down" title={`Down ${delta} place${delta === 1 ? "" : "s"}`}>
+          ↓{delta > 1 ? delta : ""}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -310,7 +541,7 @@ function TradeMarker(props: { cx?: number; cy?: number; payload?: ChartRow }) {
   const { cx, cy, payload } = props;
   if (cx == null || cy == null || !payload?.action) return null;
   const fill = payload.action === "BUY" ? CHART.buy : CHART.sell;
-  return <circle cx={cx} cy={cy} r={3.5} fill={fill} stroke="#0c0a09" strokeWidth={1} />;
+  return <circle cx={cx} cy={cy} r={3.5} fill={fill} stroke="#ffffff" strokeWidth={1.5} />;
 }
 
 function PerformanceChart({ points, trades = [] }: { points: ChartPoint[]; trades: TradePoint[] }) {
@@ -367,10 +598,24 @@ function PerformanceChart({ points, trades = [] }: { points: ChartPoint[]; trade
       <div className="chart-box">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 12, right: 8, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="date" tickFormatter={formatAxisDate} minTickGap={32} />
-            <YAxis domain={["auto", "auto"]} tickFormatter={(v) => Number(v).toFixed(0)} width={44} />
-            <ReferenceLine y={BASELINE} stroke="rgba(168, 162, 158, 0.35)" strokeDasharray="4 4" />
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART.grid} />
+            <XAxis
+              dataKey="date"
+              tickFormatter={formatAxisDate}
+              minTickGap={32}
+              tick={{ fill: CHART.axis, fontSize: 11 }}
+              axisLine={{ stroke: CHART.grid }}
+              tickLine={{ stroke: CHART.grid }}
+            />
+            <YAxis
+              domain={["auto", "auto"]}
+              tickFormatter={(v) => Number(v).toFixed(0)}
+              width={44}
+              tick={{ fill: CHART.axis, fontSize: 11 }}
+              axisLine={{ stroke: CHART.grid }}
+              tickLine={{ stroke: CHART.grid }}
+            />
+            <ReferenceLine y={BASELINE} stroke="#aebcd0" strokeDasharray="4 4" />
             <Tooltip content={<ChartTooltip />} />
             <Line
               type="monotone"
@@ -395,7 +640,7 @@ function PerformanceChart({ points, trades = [] }: { points: ChartPoint[]; trade
               dataKey="date"
               height={22}
               stroke={CHART.brush}
-              fill="rgba(217, 119, 6, 0.12)"
+              fill="rgba(71, 94, 230, 0.1)"
               tickFormatter={formatAxisDate}
               travellerWidth={10}
               startIndex={brushIndices.startIndex}
@@ -421,10 +666,14 @@ function PerformanceChart({ points, trades = [] }: { points: ChartPoint[]; trade
 function StrategyCard({
   strategy,
   pendingParams,
+  rankEntry,
+  highlighted,
   onParamsCommit,
 }: {
   strategy: StrategyResult;
   pendingParams?: Record<string, number>;
+  rankEntry?: RankingEntry;
+  highlighted?: boolean;
   onParamsCommit: (strategyId: string, params: Record<string, number>) => void;
 }) {
   const displayParams = pendingParams ?? strategy.params;
@@ -434,11 +683,17 @@ function StrategyCard({
   const isError = strategy.status === "error";
 
   return (
-    <article className={`strategy-card ${isBusy ? "is-running" : ""}`}>
+    <article
+      id={strategyCardId(strategy.strategy_id)}
+      className={`strategy-card ${isBusy ? "is-running" : ""}${highlighted ? " is-highlighted" : ""}`}
+    >
       <header className="strategy-header">
-        <div>
-          <p className="strategy-kicker">{strategy.title ?? strategy.strategy_id}</p>
-          <h2 className="strategy-title">{strategy.strategy_id}</h2>
+        <div className="strategy-header-main">
+          <RankBadge entry={rankEntry} />
+          <div>
+            <p className="strategy-kicker">{strategy.title ?? strategy.strategy_id}</p>
+            <h2 className="strategy-title">{strategy.strategy_id}</h2>
+          </div>
         </div>
         <div className="strategy-status">
           {isBusy && <span className="status-pill status-running">Running</span>}
@@ -512,6 +767,9 @@ export default function Page() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [pendingRuns, setPendingRuns] = useState<Record<string, Record<string, number>>>({});
   const bootstrapRequested = useRef(false);
+  const rankingRefreshRequested = useRef(false);
+  const highlightTimerRef = useRef<number | null>(null);
+  const [highlightedStrategyId, setHighlightedStrategyId] = useState<string | null>(null);
 
   const loadDashboard = useCallback(async () => {
     const res = await fetch("/api/dashboard", { cache: "no-store" });
@@ -561,6 +819,14 @@ export default function Page() {
     fetch("/api/bootstrap", { method: "POST" });
   }, [data]);
 
+  useEffect(() => {
+    if (!data || rankingRefreshRequested.current) return;
+    if (needsBootstrap(data.strategies)) return;
+    if (!needsRankingRefresh(data.strategies, data.ranking)) return;
+    rankingRefreshRequested.current = true;
+    fetch("/api/refresh-ranking", { method: "POST" });
+  }, [data]);
+
   const anyBusy = useMemo(() => {
     if (!data) return false;
     return data.strategies.some(
@@ -576,24 +842,63 @@ export default function Page() {
     return () => clearInterval(timer);
   }, [loadDashboard, anyBusy]);
 
+  const rankedStrategies = useMemo(
+    () => (data ? sortStrategiesByRank(data.strategies, data.ranking) : []),
+    [data]
+  );
+
+  const rankMap = useMemo(() => rankByStrategyId(data?.ranking), [data?.ranking]);
+
+  const scrollToStrategy = useCallback((strategyId: string) => {
+    const element = document.getElementById(strategyCardId(strategyId));
+    if (!element) return;
+    element.scrollIntoView({ behavior: "smooth", block: "start" });
+    setHighlightedStrategyId(strategyId);
+    if (highlightTimerRef.current != null) {
+      window.clearTimeout(highlightTimerRef.current);
+    }
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedStrategyId((current) => (current === strategyId ? null : current));
+      highlightTimerRef.current = null;
+    }, 2400);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current != null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
+
   return (
     <div className="page-bg">
       <main className="app-shell">
         <header className="hero">
-          <p className="eyebrow">BackTestBench</p>
-          <div className="hero-meta">
-            <div className="meta-chip">{data?.instrument ?? "SBER"}</div>
-            <div className="meta-chip">{data?.timeframe ?? "1h"}</div>
-            <div className="meta-chip">{data?.data_source ?? "T-Bank"}</div>
-            {anyBusy && <div className="meta-chip meta-live">Updating</div>}
+          <div className="hero-top">
+            <div className="hero-brand">
+              <p className="eyebrow">Trading Analytics</p>
+              <h1 className="hero-title">BackTestBench</h1>
+            </div>
+            <div className="hero-meta">
+              <div className="meta-chip">Instrument: {data?.instrument ?? "SBER"}</div>
+              <div className="meta-chip">TF: {data?.timeframe ?? "1h"}</div>
+              <div className="meta-chip">Source: {data?.data_source ?? "T-Bank"}</div>
+              {anyBusy && <div className="meta-chip meta-live">Updating</div>}
+            </div>
+          </div>
+          <div className="hero-toolbar">
+            <StrategySearch strategies={rankedStrategies} onNavigate={scrollToStrategy} />
           </div>
         </header>
 
         <section className="strategy-list">
-          {data?.strategies?.map((strategy) => (
+          {rankedStrategies.map((strategy) => (
             <StrategyCard
               key={strategy.strategy_id}
               strategy={strategy}
+              rankEntry={rankMap.get(strategy.strategy_id)}
+              highlighted={highlightedStrategyId === strategy.strategy_id}
               pendingParams={pendingRuns[strategy.strategy_id]}
               onParamsCommit={runStrategy}
             />
