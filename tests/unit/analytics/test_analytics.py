@@ -6,15 +6,20 @@ import math
 import pytest
 
 from src.analytics import (
+    AnalyticsResultStore,
     DataIntegrityError,
     MetricsConfig,
+    RankingConfig,
     build_top_n,
+    build_ranking_review,
     calculate_max_drawdown,
     calculate_metrics,
     calculate_metrics_from_trade_log,
     calculate_sharpe_ratio,
     calculate_total_pnl,
+    calculate_validation_metrics_from_trade_log,
     calculate_win_rate,
+    validation_reports_for_ranking_review,
 )
 from src.engine.models import RunContext, Trade, TradeLog, MetricsReport
 
@@ -127,3 +132,127 @@ def test_top_n_filters_baseline_and_sorts():
 
     assert [entry.strategy_id for entry in top] == ["s3", "s1"]
     assert [entry.rank for entry in top] == [1, 2]
+
+
+def test_top_n_defines_tie_breakers_and_keeps_exact_ties_stable():
+    reports = [
+        MetricsReport("s2", "SBER", total_pnl=100.0, sharpe_ratio=1.0, max_drawdown=0.10, win_rate=0.5, deposit_baseline_pnl=0.0),
+        MetricsReport("s1", "SBER", total_pnl=100.0, sharpe_ratio=1.0, max_drawdown=0.08, win_rate=0.5, deposit_baseline_pnl=0.0),
+        MetricsReport("s4", "SBER", total_pnl=80.0, sharpe_ratio=3.0, max_drawdown=0.01, win_rate=0.9, deposit_baseline_pnl=0.0),
+        MetricsReport("same", "A", total_pnl=70.0, sharpe_ratio=1.0, max_drawdown=0.10, win_rate=0.5, deposit_baseline_pnl=0.0),
+        MetricsReport("same", "A", total_pnl=70.0, sharpe_ratio=1.0, max_drawdown=0.10, win_rate=0.5, deposit_baseline_pnl=0.0),
+    ]
+
+    top = build_top_n(reports, n=5)
+
+    assert [entry.strategy_id for entry in top[:3]] == ["s1", "s2", "s4"]
+    assert top[3].strategy_id == "same"
+    assert top[4].strategy_id == "same"
+
+
+def test_top_n_handles_empty_and_partial_input():
+    reports = [
+        None,
+        MetricsReport("bad", "SBER", total_pnl=float("nan"), sharpe_ratio=1.0, max_drawdown=0.1, win_rate=0.5, deposit_baseline_pnl=0.0),
+        MetricsReport("below", "SBER", total_pnl=10.0, sharpe_ratio=1.0, max_drawdown=0.1, win_rate=0.5, deposit_baseline_pnl=20.0),
+        MetricsReport("ok", "SBER", total_pnl=30.0, sharpe_ratio=1.0, max_drawdown=0.1, win_rate=0.5, deposit_baseline_pnl=20.0),
+    ]
+
+    assert build_top_n([], n=10) == []
+    assert build_top_n(reports, n=0) == []
+
+    top = build_top_n(reports, n=10, run_ids={("ok", "SBER"): "run-ok"})
+
+    assert len(top) == 1
+    assert top[0].strategy_id == "ok"
+    assert top[0].run_id == "run-ok"
+    assert top[0].sharpe_ratio == 1.0
+
+
+def test_top_n_can_include_below_baseline_when_configured_for_review():
+    reports = [
+        MetricsReport("s1", "SBER", total_pnl=10.0, sharpe_ratio=1.0, max_drawdown=0.1, win_rate=0.5, deposit_baseline_pnl=50.0),
+    ]
+
+    top = build_top_n(reports, config=RankingConfig(n=5, require_above_baseline=False))
+
+    assert len(top) == 1
+    assert top[0].strategy_id == "s1"
+
+
+def test_validation_metrics_reuse_same_formulas_and_are_stored_separately():
+    context = RunContext(
+        run_id="validation-1",
+        strategy_id="ma_crossover",
+        strategy_version="1",
+        instrument="SBER",
+        timeframe="1d",
+        period_start=datetime(2025, 1, 1),
+        period_end=datetime(2025, 1, 10),
+        initial_capital=1000.0,
+    )
+    log = TradeLog(
+        strategy_id="ma_crossover",
+        instrument="SBER",
+        trades=[trade(100.0), trade(-25.0)],
+        final_portfolio_value=1075.0,
+        equity_curve=[1000.0, 1100.0, 1075.0],
+    )
+
+    validation = calculate_validation_metrics_from_trade_log(
+        log,
+        context,
+        source_backtest_run_id="backtest-1",
+    )
+    expected = calculate_metrics_from_trade_log(log, context)
+
+    assert validation.validation_run_id == "validation-1"
+    assert validation.source_backtest_run_id == "backtest-1"
+    assert validation.metrics == expected
+
+    store = AnalyticsResultStore()
+    store.save_backtest_metrics("backtest-1", expected)
+    store.save_validation_metrics(validation)
+
+    assert store.list_backtest_metrics() == [expected]
+    assert store.list_validation_metrics() == [validation]
+
+
+def test_validation_results_are_available_for_ranking_review():
+    backtest_report = MetricsReport(
+        "ma_crossover",
+        "SBER",
+        total_pnl=120.0,
+        sharpe_ratio=1.4,
+        max_drawdown=0.08,
+        win_rate=0.6,
+        deposit_baseline_pnl=50.0,
+    )
+    top = build_top_n([backtest_report], run_ids={("ma_crossover", "SBER"): "backtest-1"})
+
+    context = RunContext(
+        run_id="validation-1",
+        strategy_id="ma_crossover",
+        strategy_version="1",
+        instrument="SBER",
+        timeframe="1d",
+        period_start=datetime(2025, 2, 1),
+        period_end=datetime(2025, 2, 10),
+        initial_capital=1000.0,
+    )
+    log = TradeLog(
+        strategy_id="ma_crossover",
+        instrument="SBER",
+        trades=[trade(30.0)],
+        final_portfolio_value=1030.0,
+        equity_curve=[1000.0, 1005.0, 1030.0],
+    )
+    validation = calculate_validation_metrics_from_trade_log(log, context)
+
+    latest = validation_reports_for_ranking_review([validation])
+    review = build_ranking_review(top, latest)
+
+    assert len(review) == 1
+    assert review[0].top_n.strategy_id == "ma_crossover"
+    assert review[0].validation_run_id == "validation-1"
+    assert review[0].validation_metrics.total_pnl == 30.0

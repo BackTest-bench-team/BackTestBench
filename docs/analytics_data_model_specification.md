@@ -9,13 +9,17 @@ Implemented:
 - in-memory `TradeLog`, `RunContext`, and `MetricsReport`;
 - per-candle equity curve;
 - metric calculation from `TradeLog + RunContext`;
-- in-memory Top-N filtering/sorting helper;
+- in-memory Top-N filtering/sorting helper with documented tie-breakers and partial-input handling;
+- validation metrics support that reuses the same formulas as backtests;
+- separate in-memory buckets for backtest metrics and validation metrics;
+- ranking review entries that can show Top-N backtest rows together with latest validation metrics;
 - serialization of the latest metrics into `data/runtime-dashboard.json`.
 
 Not implemented:
 
 - relational persistence of runs, trades, equity points, metrics, or Top-N;
 - atomic database replacement of Top-N;
+- durable validation metrics persistence;
 - frontend run history;
 - scheduler or trading-bot consumers.
 
@@ -87,10 +91,23 @@ The dashboard formats currency as RUB, but the dataclass itself does not encode 
 
 `build_top_n()`:
 
-1. filters reports where `total_pnl > deposit_baseline_pnl`;
-2. sorts by `total_pnl` descending;
-3. takes the requested `n`;
-4. returns `TopNEntry` values.
+1. ignores `None` reports and reports with non-finite metric values;
+2. filters reports where `total_pnl > deposit_baseline_pnl` by default;
+3. sorts by the ranking criterion below;
+4. takes the requested `n`;
+5. returns `TopNEntry` values.
+
+The default ranking criterion is:
+
+1. higher `total_pnl` first;
+2. if P&L ties, lower `max_drawdown` first;
+3. then higher `sharpe_ratio`;
+4. then higher `win_rate`;
+5. then deterministic `strategy_id` / `instrument` ordering;
+6. exact duplicate ranking keys keep the original input order.
+
+For ranking-review screens where below-baseline strategies still need to be inspected,
+callers may pass `RankingConfig(require_above_baseline=False)`.
 
 ```python
 @dataclass(frozen=True)
@@ -101,10 +118,41 @@ class TopNEntry:
     run_id: str
     total_pnl: float
     computed_at: datetime
+    sharpe_ratio: float
+    max_drawdown: float
+    win_rate: float
+    deposit_baseline_pnl: float
 ```
 
-The helper is covered by unit tests but is not called by `main.py` or displayed by the
-frontend.
+`build_ranking_review()` can attach the latest validation metrics for the same
+`(strategy_id, instrument)` pair to each Top-N entry. The helper is covered by unit tests
+but is not called by `main.py` or displayed by the frontend.
+
+## Validation Metrics
+
+Validation trade logs are processed by `calculate_validation_metrics_from_trade_log()`.
+The function accepts the same `TradeLog + RunContext` shape as backtest analytics and
+reuses `calculate_metrics_from_trade_log()` internally. This keeps total P&L, Sharpe ratio,
+max drawdown, win rate, and deposit baseline consistent between historical backtests and
+second-stage validation runs.
+
+Validation output is wrapped separately:
+
+```python
+@dataclass(frozen=True)
+class ValidationMetricsReport:
+    validation_run_id: str
+    strategy_id: str
+    instrument: str
+    metrics: MetricsReport
+    source_backtest_run_id: str = ""
+    computed_at: datetime = datetime.now(UTC)
+```
+
+`AnalyticsResultStore` is an in-memory bridge used until durable persistence exists. It has
+separate methods and buckets for `save_backtest_metrics()` and `save_validation_metrics()`,
+so validation results do not overwrite historical backtest metrics. It can also return the
+latest validation report per strategy/instrument for ranking review.
 
 ## Current Persistence
 

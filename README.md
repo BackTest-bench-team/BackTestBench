@@ -18,9 +18,11 @@ Implemented:
 - long-only, all-in simulated execution and forced close on the final candle;
 - TradeLog, equity curve, final portfolio state, and analytics;
 - total P&L, Sharpe ratio, max drawdown, win rate, and 13% deposit baseline;
+- in-memory Top-N ranking helper with stable tie-breakers;
+- validation metrics support for second-stage evaluation, stored separately from backtest metrics;
 - Next.js dashboard with pipeline status, metrics, chart, and **Run backtest** button;
 - Docker Compose and a self-hosted PR smoke-build workflow;
-- 30 backend unit/integration tests.
+- 58 backend unit/integration tests.
 
 Not implemented in the integrated MVP:
 
@@ -30,7 +32,7 @@ Not implemented in the integrated MVP:
 - Data Loader caching/validation in `src/data_loader`;
 - CSV adapter behavior;
 - T-Bank order placement and portfolio retrieval;
-- scheduler, notifications, trading bot, or automated Top-N workflow;
+- scheduler, notifications, trading bot, durable Top-N persistence, or automated Top-N workflow;
 - multiple-strategy/parameter comparison in the UI.
 
 See [Documentation status](docs/README.md) for the distinction between current
@@ -160,7 +162,7 @@ main.py                     Current pipeline orchestrator
 src/engine/                 Simulation, portfolio, signals, trades, run models
 src/strategy/               Strategy registry, config parser, MA Crossover
 src/broker_adapter/         T-Bank adapter and broker-facing models
-src/analytics/              Metrics and in-memory Top-N helper
+src/analytics/              Metrics, in-memory Top-N helper, validation metrics support
 src/api/                    Placeholder for planned FastAPI service
 src/db/                     Placeholder for planned persistence
 src/data_loader/            Placeholder for planned cache/validation layer
