@@ -223,6 +223,63 @@ deposit_baseline_pnl  = initial_capital × ( (1 + 0.13)^years − 1 )
 
 ---
 
+## Top-N ranking logic
+
+Top-N ranking is implemented in `src/analytics/ranking.py` and consumes already computed
+`MetricsReport` objects. By default, a strategy is eligible only when:
+
+```
+total_pnl > deposit_baseline_pnl
+```
+
+Eligible rows are sorted by a stable, documented criterion:
+
+1. higher `total_pnl` first;
+2. if P&L ties, lower `max_drawdown` first;
+3. then higher `sharpe_ratio`;
+4. then higher `win_rate`;
+5. then deterministic `strategy_id` and `instrument` ordering;
+6. exact duplicate ranking keys keep their original input order.
+
+Empty input, `None` reports, non-finite metrics, `n <= 0`, and missing run IDs are handled
+without raising. The default output is `List[TopNEntry]`. Each entry includes rank, strategy,
+instrument, run ID, total P&L, Sharpe ratio, max drawdown, win rate, deposit baseline, and
+the calculation timestamp.
+
+For ranking-review screens, callers can disable the baseline filter with
+`RankingConfig(require_above_baseline=False)`. This is intended for internal inspection, not
+for the production Trading Bot filter.
+
+---
+
+## Validation metrics support
+
+Validation analytics is implemented in `src/analytics/validation.py`. A validation run uses
+the same `TradeLog + RunContext` input shape and reuses the same formulas through
+`calculate_metrics_from_trade_log()`. This means historical backtests and second-stage
+validation runs calculate P&L, Sharpe ratio, max drawdown, win rate, and deposit baseline in
+the same way wherever the inputs are applicable.
+
+Validation output is stored separately from backtest output by wrapping the shared
+`MetricsReport` in `ValidationMetricsReport`:
+
+```
+validation_run_id
+source_backtest_run_id
+strategy_id
+instrument
+metrics: MetricsReport
+computed_at
+```
+
+The current implementation provides an in-memory `AnalyticsResultStore` with separate
+backtest and validation buckets. Durable database persistence is still future work, but the
+separate result shape prevents validation metrics from overwriting historical backtest
+metrics. `build_ranking_review()` can attach the latest validation metrics to Top-N rows so
+reviewers can compare the backtest ranking against validation performance.
+
+---
+
 ## Edge-case summary
 
 |Situation|total_pnl|win_rate|max_drawdown|sharpe_ratio|
