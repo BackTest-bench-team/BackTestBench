@@ -1,0 +1,265 @@
+BackTestBench — Customer Meeting (Innopolis University)
+Date: ~29-06-2026 (Week 5 of 7)
+
+==============================================================
+ENGLISH SUMMARY — Sprint planning takeaways
+==============================================================
+
+1. CURRENT DEMO STATUS (POSITIVE)
+   - End-to-end dashboard works: candle data, backtest, metrics, chart, ranking.
+   - Chart shows two indexed lines: strategy equity vs buy-and-hold benchmark (both
+     normalized to 100 from initial capital).
+   - Buy/sell markers are visible on the strategy line.
+   - Strategy ranking is live; MA + RSI currently ranks best with tuned parameters.
+   - First profitable run demonstrated on the current SBER / ~1-month window.
+   - Zoom/brush exists but is laggy; Recharts limitations were noted.
+
+2. UX BUGS / QUICK WINS (HIGH PRIORITY FOR NEXT INCREMENT)
+   - Do NOT recalculate on every parameter keystroke/blur. User wants an explicit
+     "Calculate" / "Run" action. Partial input should not trigger a backtest.
+   - Ranking/validation must not update until the user finishes editing and submits.
+     Early recalculation while fields are half-filled produces misleading ranks.
+   - Chart zoom needs improvement so flat-looking segments still reveal local
+     price/action detail when zoomed in.
+
+3. MISSING STRATEGY PARAMETERS (CUSTOMER BLOCKER)
+   - Exit logic is more important than entry filters. Take-profit and stop-loss
+     percentages must become visible, editable parameters in the UI/config.
+   - Customer's real strategies depend heavily on TP/SL; results change drastically
+     when these move (example: 50% stop triggered a loss).
+   - Trailing stop and variable trailing delta mentioned as future extensions, not
+     required for the very next slice but should fit the planned abstraction.
+
+4. STRATEGY FLEXIBILITY IS THE MAIN PRODUCT GOAL
+   - Customer explicitly deprioritizes polishing rigid UI forms.
+   - The web UI should primarily be a visualizer: metrics, charts, ranking, search.
+   - Strategy definition should be flexible via files and/or a composable engine,
+     not hardcoded per-strategy form fields in the frontend.
+   - Adding a new strategy/mechanism should NOT require rewriting the backtester,
+     bot layer, or core pipeline.
+
+5. TARGET ABSTRACTION (CORE ENGINE WORK — PHILIP / BACKEND)
+   Define a universal model along these lines:
+     - Input: candle DataFrame (OHLCV series).
+     - Pipeline: indicators → triggers → actions.
+     - Trigger: atomic filter/condition (RSI level, MA cross, time filter, etc.).
+     - Action: parameterized operation (buy, sell, hold, limit/stop order, deferred
+       order, take-profit, stop-loss, trailing stop, partial exit / ladder sell).
+     - Strategy composition: trigger + action, OR nested sub-strategies, OR
+       reusable strategy fragments (e.g. shared trailing-stop block).
+   - Entry criteria and exit criteria are separate; buy/sell alone are not enough.
+   - Advanced cases discussed: session-end forced close, last-hour RSI exit, delayed
+     entries after pattern detection, switching active sub-strategy at runtime.
+   - Start by listing concrete triggers and actions, then design the minimal interface
+     that can compose them. Reduce uncertainty before coding.
+
+6. OPTIMIZER / REAL BACKTESTER VALUE (SECOND MAJOR TRACK)
+   - Running one parameter set is only a fragment of the backtester.
+   - Real value = find the best parameters for a strategy on an instrument.
+   - Need a parameter optimizer (grid search first) over discrete, realistic values
+     (e.g. MA 12/21/50/100/200, RSI period 14/20), NOT brute force 0..100.
+   - Customer parameters tuned for another asset still worked better on SBER — hints
+     at cross-instrument reuse, but multi-instrument selection stays out of scope
+     for the remaining sprint unless Nikolay delivers it quickly.
+   - Later vision: weekly batch job producing a ranked set of configs to run live.
+
+7. DEFER / OUT OF SCOPE FOR FINAL 2 WEEKS
+   - Multi-broker adapter abstraction (customer explicitly said team likely won't
+     finish it — stay on current T-Bank path).
+   - Multi-instrument UI (keep SBER; config/code change acceptable short-term).
+   - Visual strategy constructor (blocks/nodes) — too expensive; file/config +
+     engine composition is enough.
+   - Full DSL / LLM-assisted strategy generation — interesting but separate research.
+   - Exhaustive continuous parameter sweeps.
+
+8. DATA / METRICS NOTES
+   - order_size capped at 3 lots because service crashes at 10 — investigate stability.
+   - Deposit baseline line may not react to strategy parameter changes; verify whether
+     it is intentionally independent (bank deposit vs strategy) or a bug.
+   - RSI threshold strategy: confirm all parameters actually affect backtest output.
+   - Alpha = strategy index minus benchmark index; customer accepts it for now but
+     notes comparing "investing" vs "trading" paradigms is conceptually imperfect.
+   - Prefer correlating buy/sell markers with actual price movement, not only index.
+
+9. PROCESS / TEAM (FOR SPRINT PLANNING)
+   - Prepare updated GitHub issues/tasks by Wednesday for stakeholder (Gerald) review;
+     avoid under-reporting planned throughput.
+   - Team tends to finish tasks in the last 2 days — creates dependency bottlenecks.
+   - Recommend daily or bi-daily standups / async status updates.
+   - Assign tasks by dependency order and individual work style (serial workers get
+     downstream tasks; early finishers get upstream/blocking tasks).
+   - Manager should focus on prioritization and unblocking, not parallel deep coding.
+   - Parallel workstreams suggested:
+       A) Strategy abstraction (triggers/actions/composition) — Philip + design spike
+       B) Parameter optimizer on simplest strategy — backend
+       C) UI fixes (manual run, ranking timing, TP/SL params) — frontend
+       D) Optional: CI/build/deploy improvements if capacity exists
+
+10. RECOMMENDED SPRINT BACKLOG (PRIORITIZED)
+   P0 — Must have
+     - Explicit "Run/Calculate" instead of auto-run on every param change.
+     - Freeze ranking until submitted run completes.
+     - Expose take-profit / stop-loss (and document exit rules) for existing strategies.
+     - Spike + MVP of trigger/action strategy interface (even if only 1–2 actions first).
+     - Discrete-grid parameter optimizer for one existing strategy.
+   P1 — Should have
+     - Fix order_size stability above 3 lots.
+     - Chart zoom/usability improvements.
+     - Validate deposit baseline + RSI threshold parameter wiring.
+     - Indicator-level parameter validation (RSI bounds, MA periods, etc.).
+   P2 — Stretch / post-course
+     - Multi-instrument selection.
+     - Trailing stop, deferred orders, partial exits, session filters.
+     - Multi-broker adapter.
+     - Visual strategy builder.
+
+11. OPEN QUESTIONS
+   - Exact minimal trigger/action API that supports nesting without rewriting engine?
+   - Which 3–5 triggers and 3–5 actions to implement in the MVP abstraction?
+   - Optimizer output format: ranked JSON configs, dashboard integration, or both?
+   - Is deposit baseline intentionally constant across strategy params?
+   - Can order_size > 3 be supported safely before sprint end?
+
+12. BOTTOM LINE
+   The dashboard MVP is credible. Customer value is no longer "show a chart" but
+   "flexibly define strategies without code changes + automatically find good params."
+   UI remains important as a results visualizer, not as the primary strategy editor.
+   Focus the last two weeks on engine abstraction + optimizer; patch critical UX issues
+   (manual run, TP/SL params, ranking timing) in parallel.
+
+
+==============================================================
+РУССКИЙ SUMMARY — Выводы для планирования спринта
+==============================================================
+
+1. ТЕКУЩИЙ СТАТУС ДЕМО (ПОЗИТИВ)
+   - Сквозной пайплайн работает: свечи, бэктест, метрики, график, ранжирование.
+   - На графике две линии в индексе от 100: стратегия vs buy-and-hold бенчмарк.
+   - Маркеры buy/sell отображаются.
+   - Ранжирование работает; MA + RSI с подобранными параметрами сейчас лидирует.
+   - Впервые показан плюс на текущем окне SBER (~месяц).
+   - Zoom/brush есть, но подлагивает; ограничения Recharts обсуждались.
+
+2. UX-БАГИ / БЫСТРЫЕ ПОБЕДЫ (ВЫСОКИЙ ПРИОРИТЕТ)
+   - Нельзя пересчитывать стратегию при каждом изменении поля. Нужна явная кнопка
+     «Посчитать» / «Run». Частично введённые параметры не должны запускать прогон.
+   - Ранжирование не должно обновляться, пока пользователь не закончил ввод и не
+     запустил расчёт. Сейчас ранг меняется на половине введённых значений.
+   - Zoom на графике нужно улучшить: «плоские» участки должны раскрываться при
+     приближении, чтобы было видно локальные колебания и сделки.
+
+3. НЕХВАТАЮЩИЕ ПАРАМЕТРЫ СТРАТЕГИИ (БЛОКЕР ЗАКАЗЧИКА)
+   - Логика выхода важнее фильтров входа. Take-profit и stop-loss должны быть
+     видимыми настраиваемыми параметрами в UI/конфиге.
+   - Реальные стратегии заказчика сильно зависят от TP/SL (пример: стоп 50% закрыл
+     сделку в минус).
+   - Trailing stop и переменная дельта — перспектива, должны ложиться в абстракцию,
+     но не обязательны в самом первом инкременте.
+
+4. ГИБКОСТЬ СТРАТЕГИЙ — ГЛАВНАЯ ЦЕННОСТЬ ПРОДУКТА
+   - Заказчик сознательно ставит ниже приоритет жёстких UI-форм под каждую стратегию.
+   - Веб-интерфейс — прежде всего визуализатор: метрики, графики, рейтинг, поиск.
+   - Стратегии должны задаваться гибко (файлы и/или composable engine), а не
+     хардкодом полей во фронтенде.
+   - Новая стратегия/механика не должна требовать переписывания бэктестера, бота
+     и ядра пайплайна.
+
+5. ЦЕЛЕВАЯ АБСТРАКЦИЯ (ЯДРО — PHILIP / BACKEND)
+   Универсальная модель:
+     - Вход: DataFrame свечей (OHLCV).
+     - Цепочка: индикаторы → триггеры → экшены.
+     - Триггер: атомарное условие (RSI, пересечение MA, time filter и т.д.).
+     - Экшен: параметризованное действие (buy, sell, hold, limit/stop, отложенная
+       заявка, take-profit, stop-loss, trailing stop, частичный выход / лестница).
+     - Композиция: trigger + action, вложенные подстратегии, переиспользуемые блоки.
+   - Критерии входа и выхода разделены; одних buy/sell недостаточно.
+   - Обсуждались: закрытие в конце сессии, выход в последний час по RSI, отложенный
+     вход после паттерна, переключение активной подстратегии на лету.
+   - Сначала — список конкретных триггеров и экшенов, затем минимальный интерфейс
+     композиции. Снизить неопределённость до кодирования.
+
+6. ОПТИМИЗАТОР / НАСТОЯЩАЯ ЦЕННОСТЬ БЭКТЕСТЕРА (ВТОРОЙ КРУПНЫЙ ТРЕК)
+   - Один прогон с одним набором параметров — лишь часть задачи.
+   - Ценность = подбор лучших параметров для стратегии на инструменте.
+   - Нужен оптимизатор (grid search) по дискретным реалистичным значениям
+     (MA 12/21/50/100/200, RSI 14/20), а не перебор 0..100.
+   - Параметры, подобранные под другой актив, на SBER тоже сработали лучше —
+     задел на переносимость, но мульти-инструмент в UI в спринт не входит.
+   - Дальнейшая vision: еженедельный batch с ranked-конфигами для запуска.
+
+7. ОТЛОЖИТЬ / ВНЕ СКОУПА ПОСЛЕДНИХ 2 НЕДЕЛЬ
+   - Абстракция multi-broker (заказчик: скорее не успеете — остаёмся на T-Bank).
+   - Выбор инструмента в UI (пока SBER; правка конфига/кода допустима).
+   - Визуальный конструктор стратегий (blocks/nodes) — слишком дорого.
+   - Полноценный DSL / LLM для генерации стратегий — отдельная research-задача.
+   - Полный непрерывный перебор параметров.
+
+8. ДАННЫЕ / МЕТРИКИ
+   - order_size ограничен 3 лотами — сервис падает на 10; нужна стабилизация.
+   - Линия deposit baseline может не реагировать на параметры стратегии — проверить:
+     это задумано (вклад в банке) или баг.
+   - RSI threshold: убедиться, что все параметры реально влияют на результат.
+   - Alpha = индекс стратегии минус бенчмарк; заказчик принимает, но отмечает,
+     что сравнение «инвестирования» и «трейдинга» концептуально не идеально.
+   - Хочет сопоставлять buy/sell с реальным движением цены, не только индексом.
+
+9. ПРОЦЕСС / КОМАНДА
+   - До среды обновить issues/tasks в GitHub для отчёта Gerald; не занижать план.
+   - Задачи часто закрываются в последние 2 дня — узкое горло для зависимостей.
+   - Рекомендованы daily/bi-daily standups или async-статусы.
+   - Распределять задачи по стилю работы и зависимостям (T3 — serial workers,
+     T1/T2 — тем, кто может отдавать раньше).
+   - Менеджеру — приоритизация и разблокировка, не параллельный deep coding.
+   - Параллельные потоки:
+       A) Абстракция стратегий (triggers/actions) — Philip + design spike
+       B) Оптимизатор параметров — backend
+       C) UI-fixes (manual run, ranking, TP/SL) — frontend
+       D) Опционально: CI/deploy
+
+10. РЕКОМЕНДУЕМЫЙ BACKLOG СПРИНТА
+   P0 — Must have
+     - Явный Run/Calculate вместо автопересчёта на каждое изменение.
+     - Заморозка рейтинга до завершения submitted run.
+     - TP/SL как параметры существующих стратегий + документирование exit rules.
+     - Spike + MVP интерфейса trigger/action (хотя бы 1–2 экшена).
+     - Grid-optimizer для одной стратегии по дискретным значениям.
+   P1 — Should have
+     - Стабильность order_size > 3.
+     - Улучшение zoom/графика.
+     - Проверка deposit baseline и RSI threshold wiring.
+     - Валидация параметров на уровне индикаторов.
+   P2 — Stretch / после курса
+     - Multi-instrument.
+     - Trailing stop, отложенные ордера, частичные выходы, session filters.
+     - Multi-broker.
+     - Visual strategy builder.
+
+11. ОТКРЫТЫЕ ВОПРОСЫ
+   - Минимальный API trigger/action с поддержкой вложенности без переписывания engine?
+   - Какие 3–5 триггеров и 3–5 экшенов в MVP абстракции?
+   - Формат выхода оптимизатора: ranked JSON, интеграция в dashboard, или оба?
+   - Deposit baseline намеренно константа относительно параметров стратегии?
+   - Можно ли безопасно поднять лимит order_size до 10 до конца спринта?
+
+12. ИТОГ
+   Dashboard MVP убедителен. Ценность для заказчика сместилась: не «показать график»,
+   а «гибко описывать стратегии без правки ядра + автоматически искать хорошие
+   параметры». UI важен как визуализатор результатов, не как основной редактор
+   стратегий. Последние две недели — абстракция движка + оптимизатор; параллельно
+   критичные UX-fixes (manual run, TP/SL, timing ранжирования).
+
+
+==============================================================
+ACTION ITEMS (shared)
+==============================================================
+
+- Add explicit Run/Calculate; stop auto-backtest on param blur/change.
+- Do not update ranking until user-submitted run finishes.
+- Expose take-profit and stop-loss parameters for current strategies.
+- Philip: brainstorm trigger/action abstraction; list MVP triggers & actions.
+- Backend: discrete-grid parameter optimizer for at least one strategy.
+- Frontend: keep UI as visualizer; fix ranking timing + search/ranking polish.
+- Investigate order_size crash above 3 lots.
+- Verify deposit baseline and RSI-threshold parameter behavior.
+- Update GitHub issues by Wednesday for Gerald; align sprint capacity with reality.
+- Defer multi-broker and multi-instrument UI to post-sprint unless quick win appears.
