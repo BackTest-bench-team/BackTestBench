@@ -12,7 +12,11 @@ class CandleCache:
         return f"{instrument}:{timeframe}"
 
     def get(self, instrument: str, timeframe: str) -> Optional[List[CandleModel]]:
-        return self._cache.get(self._key(instrument, timeframe))
+        key = self._key(instrument, timeframe)
+        if key not in self._cache:
+            return None
+        self._cache.move_to_end(key)
+        return self._cache[key]
 
     def set(self, instrument: str, timeframe: str, candles: List[CandleModel]):
         key = self._key(instrument, timeframe)

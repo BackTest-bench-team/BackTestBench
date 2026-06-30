@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from src.data_loader.cache import CandleCache
-from src.data_loader.validator import validate_candles
+from src.data_loader.validator import ValidationError, prepare_candles
 from src.db.models import CandleModel
 from src.db.session import SessionLocal
 from src.engine.models import Candle
@@ -24,6 +24,16 @@ def utc_naive(dt: datetime) -> datetime:
 
 def candle_to_db_timestamp(timestamp: str) -> datetime:
     return utc_naive(datetime.fromisoformat(timestamp))
+
+
+_TIMEFRAME_SECONDS = {
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
+    "4h": 14400,
+    "1d": 86400,
+}
 
 
 def candle_model_to_engine(row: CandleModel) -> Candle:
@@ -48,7 +58,9 @@ class DataLoader:
         """Upsert candles by (instrument, timeframe, timestamp). Returns affected row count."""
         if not candles:
             return 0
-        validate_candles(candles)
+        candles = prepare_candles(candles)
+        if not candles:
+            raise ValidationError("No valid candles after filtering")
 
         values = [
             {
@@ -129,6 +141,23 @@ class DataLoader:
         end: datetime,
     ) -> List[Candle]:
         return [candle_model_to_engine(row) for row in self.load_candles(instrument, timeframe, start, end)]
+
+    def has_sufficient_data(
+        self,
+        instrument: str,
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        min_ratio: float = 0.5,
+    ) -> bool:
+        """True when DB/cache already covers most of the requested range."""
+        rows = self.load_candles(instrument, timeframe, start, end)
+        if len(rows) < 10:
+            return False
+        bar_seconds = _TIMEFRAME_SECONDS.get(timeframe, 3600)
+        span_seconds = (utc_naive(end) - utc_naive(start)).total_seconds()
+        expected = max(span_seconds / bar_seconds, 1)
+        return len(rows) >= expected * min_ratio
 
     def close(self):
         self.session.close()
