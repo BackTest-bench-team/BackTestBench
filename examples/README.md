@@ -149,9 +149,9 @@ A ticker that the API cannot resolve raises `InvalidInstrumentError`.
 | `15m`  | 15 minutes| 24                   |                                                  |
 | `30m`  | 30 minutes| 25                   |                                                  |
 | `1h`   | 1 hour    | 100                  |                                                  |
-| `1d`   | 1 day     | 365                  | bounded by available history, not by 30014       |
-| `1w`   | 1 week    | 365                  | bounded by available history, not by 30014       |
-| `1M`   | 1 month   | 365                  | bounded by available history, not by 30014       |
+| `1d`   | 1 day     | 2400                  |                                                 |
+| `1w`   | 1 week    | 2100                  |                                                 |
+| `1M`   | 1 month   | 3600                  |                                                 |
 
 - **Minimum timeframe is `1m`.** Sub-minute intervals (`1s`, `30s`, `15s`, …)
   are **rejected** with a `ValueError` before any network call — the T-Bank
