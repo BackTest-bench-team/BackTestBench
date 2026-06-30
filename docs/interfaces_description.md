@@ -1,6 +1,6 @@
 # Current Module Contracts
 
-Last audited against `main`: **June 23, 2026**.
+Last audited against `main`: **June 30, 2026**.
 
 The Week 2 design referred to a root-level `interfaces.py`. That file is not the current
 contract source. Current runtime models are split between `src/engine`, `src/strategy`, and
@@ -16,6 +16,10 @@ contract source. Current runtime models are split between `src/engine`, `src/str
 | Engine `Portfolio` | `src/engine/portfolio.py` | execution context and order executor |
 | `ExecutionContext` | `src/engine/context.py` | strategy |
 | `BaseStrategy` | `src/strategy/base.py` | strategy implementations |
+| `ParameterSpec` | `src/strategy/schema.py` | dashboard parameter schemas |
+| `CandleModel` | `src/db/models.py` | SQLite candle persistence |
+| `DataLoader` | `src/data_loader/loader.py` | candle validation, upsert, cache reuse |
+| `TopNEntry`, `RankingReviewEntry` | `src/analytics/ranking.py` | in-memory Top-N ranking |
 | `BrokerAdapter` | `src/broker_adapter/base.py` | T-Bank adapter and orchestrator |
 | Broker `OrderResult`, `Position`, `Portfolio` | `src/broker_adapter/models.py` | future order/portfolio operations |
 
@@ -61,8 +65,8 @@ class SignalType(Enum):
 The annotation is currently `str`, while runtime code and tests use `SignalType`. There is no
 `action`, `quantity`, or `reason` field.
 
-`size` is validated and emitted by MA Crossover, but the current all-in order executor does
-not use it to calculate quantity.
+`size` / `order_size` is validated by strategies and capped at 3 lots; the order executor uses
+it as lot quantity for BUY sizing.
 
 ### `Trade`
 
@@ -127,8 +131,8 @@ class MetricsReport:
     deposit_baseline_pnl: float
 ```
 
-The integrated pipeline serializes these values into `data/runtime-dashboard.json`. It does
-not currently persist them to a relational database.
+The integrated pipeline serializes these values into each strategy entry in
+`data/runtime-dashboard.json`. They are not persisted to a relational database.
 
 ### Engine `Portfolio`
 
@@ -168,6 +172,68 @@ class BaseStrategy(ABC):
 
 `on_candle` is deterministic and performs no broker, database, or file I/O.
 
+### `ParameterSpec`
+
+```python
+@dataclass(frozen=True)
+class ParameterSpec:
+    name: str
+    type: str
+    default: Any
+    minimum: float | None = None
+    maximum: float | None = None
+    choices: list[Any] | None = None
+    description: str = ""
+```
+
+Strategies expose parameter metadata through `describe_strategy()` / `describe_all()` for
+dashboard forms. Shared `order_size` is limited to 1–3 lots.
+
+## Data Loader Contract
+
+`DataLoader` (`src/data_loader/loader.py`):
+
+- `store_candles(instrument, timeframe, candles)` — validates and upserts into SQLite;
+- `load_candles(instrument, timeframe, from_dt, to_dt)` — reads normalised engine candles;
+- `db_candles_usable(...)` — checks whether cached candles cover a lookback window;
+- optional in-memory `CandleCache` when `use_cache=True`.
+
+`validate_candles()` in `src/data_loader/validator.py` rejects empty lists, null OHLC values,
+and invalid volume before storage.
+
+`CandleModel` maps to the `candles` table with unique `(instrument, timeframe, timestamp)`.
+
+## Analytics Ranking Types
+
+`TopNEntry` and `RankingReviewEntry` in `src/analytics/ranking.py` support in-memory Top-N
+sorting (P&L vs deposit baseline, drawdown, Sharpe, win rate, deterministic tie-break).
+
+`build_top_n()` filters and sorts `MetricsReport` rows. `build_ranking_review()` attaches
+latest validation metrics for ranking review.
+
+The dashboard serialises ranking as:
+
+```json
+{
+  "ranking": {
+    "computed_at": "ISO-8601 timestamp",
+    "entries": [
+      {
+        "rank": 1,
+        "strategy_id": "ma_crossover",
+        "instrument": "SBER",
+        "total_pnl": 0.0,
+        "sharpe_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "win_rate": 0.0,
+        "previous_rank": null,
+        "rank_delta": null
+      }
+    ]
+  }
+}
+```
+
 ## Broker Contract
 
 All methods are asynchronous:
@@ -187,7 +253,8 @@ Current implementation status:
 - `csv_adapter.py` is empty;
 - `limit` truncates returned candles;
 - `offset` is accepted by the interface but not used by `TBankAdapter`;
-- multi-request pagination and caching are not implemented.
+- multi-request pagination is not implemented in the adapter; candle reuse is handled by
+  `DataLoader` and SQLite.
 
 ### Broker-facing Models
 
@@ -203,18 +270,22 @@ portfolio retrieval are not implemented.
 ## Current End-to-End Flow
 
 ```text
-TBankAdapter.get_candles()
-  -> list[engine.Candle]
-  -> ExecutionEngine.run(strategy, candles, initial_capital)
-  -> ExecutionContext per candle
-  -> strategy.on_candle(context)
-  -> Signal
-  -> OrderExecutor
-  -> TradeLog + equity_curve + final Portfolio
-  -> calculate_metrics_from_trade_log(TradeLog, RunContext)
-  -> MetricsReport
-  -> runtime-dashboard.json
+config/dashboard.json
+  -> DataLoader (SQLite cache hit or TBankAdapter.get_candles())
+  -> list[engine.Candle] shared across strategies
+  -> for each strategy:
+       ExecutionEngine.run(strategy, candles, initial_capital)
+       -> ExecutionContext per candle
+       -> strategy.on_candle(context)
+       -> Signal
+       -> OrderExecutor
+       -> TradeLog + equity_curve + final Portfolio
+       -> calculate_metrics_from_trade_log(TradeLog, RunContext)
+       -> MetricsReport
+  -> build_top_n() / update_dashboard_ranking()
+  -> runtime-dashboard.json (strategies[] + ranking)
+  -> GET /api/dashboard
 ```
 
-Data Loader, database persistence, FastAPI, scheduler, trading bot, and notifications are
-target architecture, not part of this current flow.
+Relational run persistence, FastAPI, scheduler, trading bot, and notifications remain target
+architecture. SQLite stores candles only; run history lives in the JSON runtime file.
