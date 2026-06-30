@@ -1,7 +1,7 @@
 # Docker Guide
 
 This guide matches `docker-compose.yml`, `Dockerfile`, and `Dockerfile.fullstack` as of
-June 23, 2026.
+June 30, 2026.
 
 ## Prerequisites
 
@@ -29,8 +29,9 @@ docker compose up --build
 Open <http://localhost:3000>.
 
 The repository is mounted at `/app`, and a named volume preserves
-`/app/frontend/node_modules`. The frontend's `POST /api/run` route starts `/app/main.py`,
-which updates `/app/data/runtime-dashboard.json`.
+`/app/frontend/node_modules`. The dashboard calls Next.js API routes that spawn
+`/app/main.py` subcommands (`bootstrap`, `run`, `refresh-ranking`), which update
+`/app/data/runtime-dashboard.json` and may write `/app/data/backtest.db` (SQLite candle cache).
 
 Stop the stack:
 
@@ -43,7 +44,7 @@ docker compose down
 | Service | Default/profile | Purpose |
 |---|---|---|
 | `app` | default | Integrated Next.js dashboard and Python pipeline launcher |
-| `backtest-app` | `backend` | Runs `python main.py` directly |
+| `backtest-app` | `backend` | Runs `python main.py bootstrap` directly |
 | `test` | `test` | Runs `pytest tests -v` |
 | `dev` | `dev` | Interactive Python 3.12 shell |
 
@@ -69,7 +70,7 @@ docker compose --profile dev run --rm dev
 
 - base: `python:3.12-slim`;
 - installs backend dependencies;
-- starts `python main.py`;
+- starts `python main.py bootstrap`;
 - is reused by the backend, test, and dev services.
 
 The package metadata supports Python 3.10+, while the container runtime is currently pinned
@@ -98,7 +99,8 @@ Run backend tests:
 docker compose --profile test run --rm test
 ```
 
-As of June 23, 2026, the backend test suite contains 30 tests.
+As of June 30, 2026, the backend test suite contains **63 tests** with **80%** coverage of
+`src/`.
 
 ## CI
 
@@ -121,7 +123,8 @@ Create it with `cp .env.example .env`.
 
 ### Missing token
 
-Set `TINKOFF_TOKEN` in `.env`. The pipeline cannot fetch T-Bank candles without it.
+Set `TINKOFF_TOKEN` in `.env`. The pipeline cannot fetch T-Bank candles when the SQLite
+cache is empty and no token is available.
 
 ### Port 3000 is busy
 
@@ -148,6 +151,7 @@ docker compose build --no-cache app
 
 ```bash
 docker compose exec app cat /app/data/runtime-dashboard.json
+docker compose exec app ls -la /app/data/backtest.db
 docker compose logs app
 ```
 
@@ -156,5 +160,7 @@ docker compose logs app
 - The full-stack image runs the Next.js development server, not a production server.
 - The application is a single-container MVP, not the multi-container API/database/scheduler
   deployment described in the Week 2 target architecture.
-- The default Compose service depends on a real T-Bank token.
-- Runtime state is file-backed and mounted from the host repository.
+- The default Compose service depends on a real T-Bank token when candles are not already
+  cached in SQLite.
+- Runtime state is file-backed and mounted from the host repository; relational run history
+  is not persisted.

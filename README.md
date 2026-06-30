@@ -1,39 +1,41 @@
 # BackTestBench
 
 BackTestBench is a modular MVP for running deterministic, long-only trading-strategy
-backtests on historical market candles. The current integrated flow downloads SBER candles
-from T-Bank, runs one moving-average crossover strategy, calculates analytics, and displays
-the latest run in a Next.js dashboard.
+backtests on historical market candles. The integrated flow loads candles from SQLite or
+T-Bank, runs multiple configured strategies, calculates analytics and Top-N ranking, and
+displays results in a Next.js dashboard with editable parameters and benchmark comparison.
 
-Documentation status: **audited against `main` on June 23, 2026**.
+Documentation status: **audited against `main` on June 30, 2026**.
 
 ## Current MVP
 
 Implemented:
 
 - T-Bank historical-candle adapter for several timeframes;
-- strategy registry, YAML configuration parser, and parameter validation;
-- one built-in `ma_crossover` strategy;
+- Data Loader with candle validation, SQLite upsert, and cache reuse (`data/backtest.db`);
+- strategy registry, plugin auto-discovery, YAML configuration, and `ParameterSpec` schemas;
+- three built-in strategies: `ma_crossover`, `ma_rsi`, `rsi_threshold`;
 - candle-by-candle execution engine with BUY, SELL, and HOLD signals;
-- long-only, all-in simulated execution and forced close on the final candle;
+- long-only simulated execution with `order_size` capped at 3 lots and forced close on the final candle;
 - TradeLog, equity curve, final portfolio state, and analytics;
 - total P&L, Sharpe ratio, max drawdown, win rate, and 13% deposit baseline;
-- in-memory Top-N ranking helper with stable tie-breakers;
-- validation metrics support for second-stage evaluation, stored separately from backtest metrics;
-- Next.js dashboard with pipeline status, metrics, chart, and **Run backtest** button;
+- in-memory Top-N ranking with stable tie-breakers and validation metrics support;
+- Next.js multi-strategy dashboard with parameter editors, ranking panel, benchmark chart, and buy/sell markers;
+- configurable run context via `config/dashboard.json` (instrument, timeframe, capital, lookback);
 - Docker Compose and a self-hosted PR smoke-build workflow;
-- 58 backend unit/integration tests.
+- 63 backend unit/integration tests (80% `src/` coverage).
 
 Not implemented in the integrated MVP:
 
-- user-selectable strategy, instrument, timeframe, date range, or capital;
-- relational persistence of runs, trades, candles, or metrics;
+- multi-instrument UI picker (configuration path exists; picker deferred to Week 5);
+- explicit Calculate/Run submit UX (parameter edits trigger immediate reruns today);
+- take-profit / stop-loss and trigger/action strategy abstraction;
+- parameter grid optimizer;
+- relational persistence of runs, trades, or metrics;
 - the planned FastAPI service in `src/api`;
-- Data Loader caching/validation in `src/data_loader`;
 - CSV adapter behavior;
 - T-Bank order placement and portfolio retrieval;
-- scheduler, notifications, trading bot, durable Top-N persistence, or automated Top-N workflow;
-- multiple-strategy/parameter comparison in the UI.
+- scheduler, notifications, trading bot, or durable Top-N persistence.
 
 See [Documentation status](docs/README.md) for the distinction between current
 implementation, target architecture, and historical artifacts.
@@ -42,15 +44,15 @@ implementation, target architecture, and historical artifacts.
 
 ```text
 Browser
-  -> POST /api/run
-  -> frontend launches main.py
-  -> TBankAdapter downloads candles
-  -> MACrossover emits signals
-  -> ExecutionEngine simulates trades
-  -> Analytics calculates metrics
+  -> POST /api/bootstrap (first load) or POST /api/run-strategy (parameter edit)
+  -> frontend launches main.py (bootstrap | run | refresh-ranking)
+  -> DataLoader loads candles (SQLite cache or T-Bank fetch)
+  -> each strategy emits signals on shared candle series
+  -> ExecutionEngine simulates trades per strategy
+  -> Analytics calculates metrics and Top-N ranking
   -> data/runtime-dashboard.json
-  -> GET /api/dashboard
-  -> dashboard renders the latest state
+  -> GET /api/dashboard (polled until completed)
+  -> dashboard renders strategies, ranking, chart, and markers
 ```
 
 The runtime JSON is the current integration bridge. It is not a durable run-history store.
@@ -60,7 +62,7 @@ The runtime JSON is the current integration bridge. It is not a durable run-hist
 - Python 3.10+ for local development; Docker images currently use Python 3.12.
 - Node.js 20+ and npm for the frontend.
 - Docker with the Compose plugin for the integrated container workflow.
-- A T-Bank Invest API token for real candle downloads.
+- A T-Bank Invest API token for real candle downloads when the SQLite cache is empty.
 
 Create the local environment file:
 
@@ -86,7 +88,8 @@ docker compose up --build
 
 Open <http://localhost:3000>.
 
-The button starts `main.py` inside the full-stack container. Stop the stack with:
+On first load the dashboard bootstraps all strategies from `config/dashboard.json`. Stop the
+stack with:
 
 ```bash
 docker compose down
@@ -121,12 +124,13 @@ pytest tests -v
 Run the pipeline directly:
 
 ```bash
-python main.py
+python main.py bootstrap
+python main.py run ma_crossover '{"fast":12,"slow":20,"order_size":1}'
+python main.py refresh-ranking
 ```
 
-This requires `TINKOFF_TOKEN`. The current run parameters are defined in `main.py`:
-SBER, 1-hour candles, approximately 30 days, MA windows 15/20, and 100,000 RUB initial
-capital.
+Running `python main.py` without a subcommand defaults to `bootstrap`. Default run context
+is defined in `config/dashboard.json` (SBER, 1h, 30-day lookback, three strategies).
 
 Run the frontend:
 
@@ -141,34 +145,36 @@ level above `frontend/`.
 ## Verification
 
 ```bash
-pytest tests -v
+pytest tests -q
+pytest tests --cov=src --cov-report=term
 npm --prefix frontend run lint
 npm --prefix frontend run build
 docker compose config
 ```
 
-As of June 23, 2026:
+As of June 30, 2026:
 
-- the backend suite contains 30 passing tests;
-- the frontend production build passes with workspace-root and dynamic filesystem tracing
-  warnings;
-- frontend lint fails at `frontend/app/page.tsx:227` on
-  `react-hooks/set-state-in-effect`.
+- the backend suite contains **63 passing tests** with **80%** coverage of `src/`;
+- the frontend production build succeeds (Next.js 16);
+- non-blocking warnings: `pytest-asyncio` fixture loop scope deprecation; Next.js
+  workspace-root inference when multiple lockfiles are present.
 
 ## Repository Layout
 
 ```text
-main.py                     Current pipeline orchestrator
+main.py                     CLI orchestrator (bootstrap, run, refresh-ranking)
 src/engine/                 Simulation, portfolio, signals, trades, run models
-src/strategy/               Strategy registry, config parser, MA Crossover
+src/strategy/               Registry, plugin loader, ParameterSpec, built-in strategies
 src/broker_adapter/         T-Bank adapter and broker-facing models
-src/analytics/              Metrics, in-memory Top-N helper, validation metrics support
+src/data_loader/            Candle validation, SQLite storage, optional in-memory cache
+src/analytics/              Metrics, Top-N ranking, validation metrics
+src/db/                     SQLAlchemy session and CandleModel (candles table only)
 src/api/                    Placeholder for planned FastAPI service
-src/db/                     Placeholder for planned persistence
-src/data_loader/            Placeholder for planned cache/validation layer
-frontend/                   Next.js dashboard and implemented route handlers
-data/runtime-dashboard.json Latest dashboard state
-config/strategies/          Example YAML strategy configuration
+frontend/                   Next.js dashboard and route handlers
+config/dashboard.json       Instrument, timeframe, capital, strategy list and params
+config/strategies/          Per-strategy YAML configuration examples
+data/runtime-dashboard.json Latest multi-strategy dashboard state
+data/backtest.db            SQLite candle cache (gitignored)
 tests/                      Backend unit and integration tests
 docs/                       Current references and target architecture
 reports/                    Dated course reports and screenshots
@@ -178,10 +184,13 @@ reports/                    Dated course reports and screenshots
 
 The working dashboard exposes:
 
-- `POST /api/run` — launches the predefined pipeline and returns a run ID;
-- `GET /api/dashboard` — returns the latest dashboard state.
+- `GET /api/dashboard` — returns the latest multi-strategy dashboard state;
+- `POST /api/bootstrap` — runs all configured strategies (`main.py bootstrap`);
+- `POST /api/run-strategy` — reruns one strategy with `{ strategy_id, params }`;
+- `POST /api/refresh-ranking` — recomputes Top-N ranking from saved metrics.
 
-The broader FastAPI contract in [docs/api_description.md](docs/api_description.md) is
+Route details are in [docs/api_description.md](docs/api_description.md) and
+[frontend/README.md](frontend/README.md). The broader FastAPI contract in that document is
 planned, not implemented.
 
 ## Security and Financial Scope
@@ -194,6 +203,7 @@ planned, not implemented.
 
 ## Reports
 
+- [Week 4 report](reports/Week%204%20report.md) — latest course status snapshot
 - [Week 3 report](reports/Week%203%20report.md)
 - Week 1 and Week 2 PDFs are historical snapshots and intentionally retain statements that
   were true at the time.

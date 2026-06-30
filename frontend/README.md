@@ -170,7 +170,9 @@ npm run lint     # ESLint
 
 ## Known limitations
 
-- Instrument, timeframe, and date window are configured in `config/dashboard.json`, not in the UI.
+- Instrument, timeframe, and lookback are configured in `config/dashboard.json`, not in the UI picker (Week 5).
+- Parameter edits trigger immediate reruns; explicit Calculate/Run submit UX is deferred (Week 5).
+- No take-profit / stop-loss, trigger/action abstraction, or parameter grid optimizer yet.
 - Each strategy rerun is a separate Python subprocess.
 - Only the latest dashboard state is kept; there is no run history UI.
 - UI copy is English; currency values use `ru-RU` locale formatting for RUB.
@@ -178,8 +180,8 @@ npm run lint     # ESLint
 ## Verification
 
 ```bash
-# Python
-python -m pytest tests/integration/test_get_candles.py -v
+# Backend (63 tests as of June 30, 2026)
+pytest tests -q
 
 # Frontend
 npm --prefix frontend ci
