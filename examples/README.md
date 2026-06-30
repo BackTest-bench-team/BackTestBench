@@ -175,14 +175,12 @@ The caps are measured empirically (see the method below) and exported as
 ```python
 DAYS_LIMIT_BY_TIMEFRAME = {
     "1m": 1,    "5m": 7,    "15m": 24,   "30m": 25,
-    "1h": 100,  "1d": 365,  "1w": 365,   "1M": 365,
+    "1h": 100,  "1d": 2400,  "1w": 2100,   "1M": 3600,
 }
 ```
 
 - Intraday limits (`1m`–`1h`) are hard: one day more than the cap → `30014`,
   zero candles. The validator triggers just under the measured boundary.
-- Day/week/month limits are **not** caused by `30014` (those timeframes serve
-  wide ranges fine); they are a safety bound on available history.
 - **Note:** `days` is only validated when `from_date` is *not* supplied (i.e.
   when the window is derived from `days`). If you pass explicit `from_date` /
   `to_date`, the window is sent to the API as-is, and an overly wide intraday
