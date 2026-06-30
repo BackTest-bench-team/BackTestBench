@@ -7,7 +7,7 @@
     {
       "id": "ma_crossover",
       "params": {
-        "fast": 12,
+        "fast": 19,
         "slow": 20,
         "order_size": 1
       }
