@@ -230,7 +230,7 @@ then:
 
 On each bar the engine: (1) checks **PositionEffects** in O(1); (2) evaluates **Rules**; (3) sends orders to **OrderExecutor**.
 
-**Typed params** — `${name}` in YAML maps to `ParameterSpec` (type, default, min, max, choices) for the dashboard and grid optimizer.
+**Typed params** — each param has `type`, `default`, and usually **`choices`** (discrete allowed values). **`optimizable: true`** marks params included in grid search; params with `choices` but `optimizable: false` (e.g. `order_size`) are validated but not swept. Optional `min`/`max` only when free numeric input is allowed without a fixed `choices` list. See §1.7.
 
 ## 1.5 Types & Implementation
 
@@ -265,6 +265,8 @@ What already exists in the repo vs what we add.
 | `StrategyState` | Strategy-owned memory: bars in trade, event times, counters |
 | `PositionEffect` | **Internal only**: `{ kind, value_pct }` attached to portfolio after certain actions |
 | `ComposableStrategy(BaseStrategy)` | **compile** + **precompute** + rule evaluation in `on_candle` |
+| `OptimizeSpec` | Per-param grid: params where `optimizable: true`, values from `choices` |
+| `GridOptimizer` | Engine service: run backtests for all param combos, rank results |
 
 ### Registries
 
@@ -287,6 +289,7 @@ def sell_partial(ctx: EvaluationContext, action: Action) -> Signal: ...
 2. Add **`Portfolio.effects: list[PositionEffect]`** — filled by `buy` / `set_stop_loss` / `move_stop`.
 3. Bar loop order: check effects → call strategy → execute signal.
 4. **P1+:** partial sizing in `OrderExecutor`; **P2:** short positions.
+5. **`GridOptimizer`** — reads each strategy's `choices` + `optimizable` flags, runs backtests, returns ranked configs (see §1.7).
 
 **Adapter:** engine still passes `Candle` objects today; composable layer uses `close` + `timestamp` until the API narrows to `(t, price)`.
 
@@ -297,14 +300,14 @@ Full strategy equivalent to the current `ma_rsi` Python class:
 ```yaml
 name: ma_rsi_composable
 params:
-  fast:            { type: int,   default: 10,  min: 1 }
-  slow:            { type: int,   default: 30,  min: 2 }
-  rsi_period:      { type: int,   default: 14,  min: 2 }
-  rsi_buy_min:     { type: float, default: 50,  min: 0, max: 100 }
-  rsi_overbought:  { type: float, default: 70,  min: 0, max: 100 }
-  stop_loss_pct:   { type: float, default: 5,   min: 0 }
-  take_profit_pct: { type: float, default: 10,  min: 0 }
-  order_size:      { type: float, default: 1,   min: 1, max: 3 }
+  fast:           { type: int,   default: 10, choices: [5, 10, 12, 21, 30], optimizable: true }
+  slow:           { type: int,   default: 30, choices: [20, 30, 50, 100, 200], optimizable: true }
+  rsi_period:     { type: int,   default: 14, choices: [14, 20], optimizable: true }
+  rsi_buy_min:    { type: float, default: 50, choices: [40, 50, 60], optimizable: true }
+  rsi_overbought: { type: float, default: 70, choices: [65, 70, 80], optimizable: true }
+  stop_loss_pct:  { type: float, default: 5,  choices: [3, 5, 7, 10], optimizable: true }
+  take_profit_pct:{ type: float, default: 10, choices: [5, 10, 15, 20], optimizable: true }
+  order_size:     { type: float, default: 1,  choices: [1, 2, 3], optimizable: false }
 
 series:
   fast_ma: { fn: sma, source: price, period: ${fast} }
@@ -349,14 +352,114 @@ rules:
 
 **Shorter variant:** remove the `stop_loss` / `take_profit` rules and keep only `stop_loss_pct` / `take_profit_pct` on the `buy` action — same behaviour, less YAML.
 
-## 1.7 Extensibility
+## 1.7 Parameter Optimization (grid search)
+
+**Customer goal:** the backtester finds good parameters **for each strategy** on an instrument. Search uses **discrete `choices` lists** (commonly used values), not brute-force min..max.
+
+### UI note (customer scope)
+
+The dashboard is a **visualizer only** — not a strategy builder. Strategies are authored in **YAML files** by developers; the UI lists registered strategies, shows metrics/charts/ranking, and lets the user pick param values from `choices` and run backtests. No node editor, no rule composer in the frontend.
+
+### Split of responsibility
+
+| Layer | Responsibility |
+|---|---|
+| **Strategy YAML** | Logic (`series`, `rules`) + `choices` / `optimizable` per param |
+| **Engine (`GridOptimizer`)** | Cartesian product of optimizable params, filter invalid combos, rank, export JSON |
+| **Dashboard** | Display results; optional read-only table of optimizer top configs |
+
+Each strategy brings its own search space via `choices`. Engine does not hardcode MA periods.
+
+### Config: `choices` + `optimizable`
+
+One list serves **validation**, **UI dropdowns**, and **grid search**:
+
+```yaml
+params:
+  fast: { type: int, default: 10, choices: [5, 10, 12, 21, 30], optimizable: true }
+  slow: { type: int, default: 30, choices: preset:ma_long, optimizable: true }
+  order_size: { type: float, default: 1, choices: [1, 2, 3], optimizable: false }
+```
+
+Shared presets in `config/param_presets.yaml`:
+
+```yaml
+ma_short:  [5, 10, 12, 21, 30, 50]
+ma_long:   [20, 30, 50, 100, 200]
+rsi_period: [7, 14, 20, 21]
+stop_loss_pct: [3, 5, 7, 10]
+take_profit_pct: [5, 10, 15, 20]
+```
+
+Legacy Python strategies: `ParameterSpec.choices` + new `optimizable` flag (default true when choices set).
+
+When `choices` is set, value must be in the list — separate `min`/`max` not required.
+
+### Constraints (avoid invalid combos)
+
+Before running, filter combinations that violate strategy rules, e.g. `fast >= slow`, `rsi_buy_min >= rsi_overbought`. Invalid combos are skipped, not errors.
+
+### Performance
+
+Series **precompute** (§1.3) is keyed by param values that affect each series node — unchanged nodes are reused across grid runs where possible.
+
+### Optimizer output
+
+```json
+{
+  "strategy_id": "ma_rsi_composable",
+  "instrument": "SBER",
+  "ranked": [
+    { "rank": 1, "params": { "fast": 12, "slow": 30, ... }, "metrics": { "total_pnl": ..., "sharpe_ratio": ... } }
+  ]
+}
+```
+
+Dashboard displays top-N; user picks a row → loads params into a single backtest run.
+
+## 1.8 Extensibility
 
 | Who | Task | Writes code? |
 |---|---|---|
-| **Strategy author** | Edit YAML: series + rules | No |
+| **Strategy author** | Edit YAML: series, rules, choices | No |
 | **Platform developer** | Add new series fn / predicate / action | One plugin file |
 
-New strategy combination = new YAML file. New primitive (KAMA, head-and-shoulders pattern) = one registry entry. Optional: wrap a TA library once so dozens of indicators need no new files.
+New strategy combination = new YAML file. New primitive (KAMA, head-and-shoulders pattern) = one registry entry.
+
+## 1.9 MVP Phases
+
+| Label | Meaning |
+|---|---|
+| **P0** | Minimum viable — current / next sprint week |
+| **P1** | First extension |
+| **P2** | Post-course |
+
+| Phase | Deliverables |
+|---|---|
+| **P0** | ComposableStrategy, Series DAG, rules, actions + SL/TP on buy, ma_rsi YAML, engine integration |
+| **P0** | **GridOptimizer**; `choices` + `optimizable` in YAML; ranked JSON |
+| **P1** | Optimizer for legacy strategies; read-only optimizer results in dashboard |
+| **P2** | Smarter search (random/Bayesian), cross-instrument batch |
+
+## 1.10 Summary
+
+Authors define strategies **and their parameter search grids** in config. Engine runs single backtests and **grid optimization** per strategy. Risk control uses Actions; PositionEffect is internal.
+
+```text
+Input (timestamp, price)
+            │
+            ▼
+     Series (DAG)
+            │
+            ▼
+ Predicates (Context) → Rules → Actions → Engine
+            │
+            ├─ single run (user params)
+            └─ GridOptimizer (optimizable choices) → ranked configs
+            │
+            ▼
+   Trades & metrics
+```
 
 ---
 
@@ -575,7 +678,11 @@ then:
 
 На каждом bar: (1) **PositionEffects**; (2) **Rules**; (3) **OrderExecutor**.
 
-**Параметры** — `${name}` → `ParameterSpec` для UI и оптимизатора.
+**Параметры** — `choices` (список значений для UI и grid), `optimizable: true/false`. Без отдельного `optimize` и без min/max, если choices задан (§2.7).
+
+### UI (scope заказчика)
+
+Dashboard — **только визуализация**. Стратегии пишутся в YAML; UI показывает метрики, графики, ranking, позволяет выбрать params из `choices` и запустить backtest. Конструктор правил/узлов во frontend **не делаем**.
 
 ## 2.5 Типы и имплементация
 
@@ -607,6 +714,8 @@ then:
 | `StrategyState` | память стратегии между барами |
 | `PositionEffect` | **только engine** — SL/TP/trailing на позиции |
 | `ComposableStrategy` | compile + precompute + eval |
+| `OptimizeSpec` | params с `optimizable: true`, значения из `choices` |
+| `GridOptimizer` | engine: прогон всех комбо, ранжирование |
 
 ### Registries
 
@@ -629,6 +738,7 @@ def sell_partial(ctx, action) -> Signal: ...
 2. **`Portfolio.effects`** — из `buy` / `set_stop_loss` / `move_stop`.
 3. Порядок: effects → strategy → executor.
 4. **P1+:** partial size; **P2:** short.
+5. **`GridOptimizer`** — params с `optimizable: true`, значения из `choices` (§2.7).
 
 **Адаптер:** пока engine отдаёт `Candle` — composable берёт `close` + `timestamp`.
 
@@ -637,14 +747,14 @@ def sell_partial(ctx, action) -> Signal: ...
 ```yaml
 name: ma_rsi_composable
 params:
-  fast:            { type: int,   default: 10,  min: 1 }
-  slow:            { type: int,   default: 30,  min: 2 }
-  rsi_period:      { type: int,   default: 14,  min: 2 }
-  rsi_buy_min:     { type: float, default: 50,  min: 0, max: 100 }
-  rsi_overbought:  { type: float, default: 70,  min: 0, max: 100 }
-  stop_loss_pct:   { type: float, default: 5,   min: 0 }
-  take_profit_pct: { type: float, default: 10,  min: 0 }
-  order_size:      { type: float, default: 1,   min: 1, max: 3 }
+  fast:           { type: int,   default: 10, choices: [5, 10, 12, 21, 30], optimizable: true }
+  slow:           { type: int,   default: 30, choices: [20, 30, 50, 100, 200], optimizable: true }
+  rsi_period:     { type: int,   default: 14, choices: [14, 20], optimizable: true }
+  rsi_buy_min:    { type: float, default: 50, choices: [40, 50, 60], optimizable: true }
+  rsi_overbought: { type: float, default: 70, choices: [65, 70, 80], optimizable: true }
+  stop_loss_pct:  { type: float, default: 5,  choices: [3, 5, 7, 10], optimizable: true }
+  take_profit_pct:{ type: float, default: 10, choices: [5, 10, 15, 20], optimizable: true }
+  order_size:     { type: float, default: 1,  choices: [1, 2, 3], optimizable: false }
 
 series:
   fast_ma: { fn: sma, source: price, period: ${fast} }
@@ -689,9 +799,51 @@ rules:
 
 **Короткий вариант:** убрать rules stop/take и оставить поля на `buy` — тот же результат, меньше YAML.
 
-## 2.7 Расширяемость
+## 2.7 Подбор параметров (grid search)
+
+Перебор по **`choices`**, не min..max. **`optimizable: true`** — param участвует в grid.
+
+| Слой | Задача |
+|---|---|
+| **YAML** | `choices` + `optimizable`; presets в `config/param_presets.yaml` |
+| **Engine** | GridOptimizer: product optimizable params, filter invalid, ranked JSON |
+| **Dashboard** | Визуализация; read-only top configs из optimizer (P1) |
+
+Legacy: `ParameterSpec.choices`. UI — не конструктор стратегий (§2.4).
+
+## 2.8 Расширяемость
 
 | Кто | Задача | Код? |
 |---|---|---|
-| **Автор стратегии** | YAML | Нет |
-| **Разработчик платформы** | Новый series fn / predicate / action | Один plugin |
+| **Автор стратегии** | YAML: rules + choices | Нет |
+| **Разработчик платформы** | series fn / predicate / action | Один plugin |
+
+## 2.9 Фазы MVP
+
+| Фаза | Deliverables |
+|---|---|
+| **P0** | Composable + ma_rsi YAML + engine SL/TP + **GridOptimizer** |
+| **P1** | Optimizer для legacy; top configs в UI |
+| **P2** | Умный search, multi-instrument batch |
+
+## 2.10 Итог
+
+Стратегия задаёт **логику и сетки параметров**. Engine: single run + grid optimization.
+
+```text
+Input → Series → Rules → Actions → Engine
+                    ├─ single run
+                    └─ GridOptimizer → ranked configs
+```
+
+---
+
+## Document History
+
+| Date | Change |
+|---|---|
+| 2026-06-30 | Initial proposal |
+| 2026-06-30 | Input: price + timestamp only |
+| 2026-06-30 | Unified rules, Series DAG, Actions+PositionEffect |
+| 2026-07-02 | Key concepts, plain-language explanations |
+| 2026-07-02 | choices + optimizable; UI = visualizer only; GridOptimizer |
