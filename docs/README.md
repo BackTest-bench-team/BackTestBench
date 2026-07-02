@@ -26,6 +26,7 @@ No commits were added to `main` after June 22 during the June 18–23 audit wind
 | [`api_description.md`](api_description.md) | Implemented Next.js routes plus separately labeled target FastAPI API |
 | [`interfaces_description.md`](interfaces_description.md) | Current engine, strategy, analytics, and broker-facing dataclasses |
 | [`strategy_module_architecture.md`](strategy_module_architecture.md) | Current strategy contract and MA Crossover behavior |
+| [`strategy_composable_engine_design.md`](strategy_composable_engine_design.md) | **Proposed** composable rule engine (bilingual EN/RU); target strategy abstraction |
 | [`broker_adapter_description.md`](broker_adapter_description.md) | Current T-Bank read path and unimplemented broker operations |
 | [`core_perfomance_metrics.md`](core_perfomance_metrics.md) | Implemented metric formulas and edge cases |
 | [`analytics_data_model_specification.md`](analytics_data_model_specification.md) | Current in-memory analytics models and target persistence |
@@ -33,8 +34,14 @@ No commits were added to `main` after June 22 during the June 18–23 audit wind
 
 ## Target Architecture / Historical Design
 
-These files were produced during Week 2 and remain useful design records. They are not a
-complete description of the Week 3 implementation:
+These files describe target or proposed architecture. They are not a complete description
+of the current MVP unless marked as implemented:
+
+- [`strategy_composable_engine_design.md`](strategy_composable_engine_design.md) — proposed
+  declarative rule engine for flexible strategies (June 30, 2026; bilingual EN/RU).
+
+Historical Week 2 design records:
+
 
 - [`Product description.docx`](Product%20description.docx) — product vision and target
   static/dynamic/deployment architecture;
