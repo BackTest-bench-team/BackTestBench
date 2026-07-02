@@ -1,6 +1,6 @@
 # Broker Adapter
 
-Last audited against `main`: **June 23, 2026**.
+Last audited against `main`: **June 30, 2026**.
 
 ## Purpose
 
@@ -89,7 +89,8 @@ formatted as `YYYY-MM-DDTHH:MM:SS` without an explicit `Z` suffix.
 - `offset` is unused;
 - `limit` only slices the returned list after one request;
 - large ranges are not split into broker-safe windows;
-- no Data Loader cache or validation layer is wired into `main.py`;
+- `DataLoader` reuses SQLite candles when the lookback window is covered; otherwise
+  `main.py` fetches from T-Bank and upserts into `data/backtest.db`;
 - `connect()` validates the session by requesting SBER specifically;
 - `verify_ssl` defaults to `False`, and `main.py` explicitly disables certificate
   verification. Production use must enable verification.
@@ -116,11 +117,11 @@ Never commit token values. The integrated dashboard and Docker Compose require a
 
 ```text
 main.py
-  -> TBankAdapter(token, use_sandbox=False, verify_ssl=False)
-  -> await get_candles("SBER", "1h", from_dt, to_dt)
+  -> DataLoader.db_candles_usable() ?
+       yes -> load from SQLite (data/backtest.db)
+       no  -> TBankAdapter.get_candles(...) -> DataLoader.store_candles()
   -> list[engine.Candle]
-  -> ExecutionEngine
+  -> ExecutionEngine (per strategy)
 ```
 
-Caching, CSV fallback, multi-broker selection, order placement, and portfolio retrieval are
-future work.
+CSV fallback, multi-broker selection, order placement, and portfolio retrieval are future work.

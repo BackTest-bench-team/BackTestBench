@@ -1,6 +1,6 @@
 # BackTestBench API Reference
 
-Last audited against `main`: **June 23, 2026**.
+Last audited against `main`: **June 30, 2026**.
 
 This document separates the API that currently works from the target FastAPI contract.
 
@@ -9,30 +9,83 @@ This document separates the API that currently works from the target FastAPI con
 Implemented:
 
 - Next.js route handlers on `http://localhost:3000`;
-- file-backed latest-run state in `data/runtime-dashboard.json`;
-- asynchronous launch of the predefined pipeline.
+- file-backed multi-strategy state in `data/runtime-dashboard.json`;
+- asynchronous launch of `main.py` subcommands from the dashboard.
 
 Not implemented:
 
 - the FastAPI application under `src/api` (files are empty);
-- strategy/backtest/history/data/Top-N REST endpoints on port 8000;
+- strategy/backtest/history/data REST endpoints on port 8000;
 - durable run storage, request schemas, pagination, or OpenAPI generation.
 
 ## Implemented Dashboard API
 
-### `POST /api/run`
+### `GET /api/dashboard`
 
-Starts the predefined `main.py` pipeline.
+Returns the latest dashboard state. If the runtime file is missing or invalid, the route
+returns a valid idle state with HTTP `200`.
+
+The payload includes shared run context (`instrument`, `timeframe`, `initial_capital`,
+`data_source`), a `strategies` array (one entry per configured strategy with status, params,
+metrics, chart points, and trade log), and a `ranking` object with Top-N entries.
+
+**Response `200` (simplified):**
+
+```json
+{
+  "instrument": "SBER",
+  "timeframe": "1h",
+  "data_source": "database",
+  "initial_capital": 100000,
+  "strategies": [
+    {
+      "strategy_id": "ma_crossover",
+      "title": "MA Crossover",
+      "status": "completed",
+      "params": { "fast": 12, "slow": 20, "order_size": 1 },
+      "metrics": {
+        "total_pnl": 28.67,
+        "sharpe_ratio": 0.04,
+        "max_drawdown": 0.0249,
+        "win_rate": 0.5,
+        "deposit_baseline_pnl": 1009.59
+      },
+      "chart_points": [
+        { "date": "2026-06-01T10:00:00", "strategy_index": 100, "benchmark_index": 100 }
+      ],
+      "trade_log": [{ "timestamp": "2026-06-01T11:00:00", "action": "BUY", "price": 250.0 }]
+    }
+  ],
+  "ranking": {
+    "computed_at": "2026-06-30T10:00:00+00:00",
+    "entries": [
+      {
+        "rank": 1,
+        "strategy_id": "ma_crossover",
+        "instrument": "SBER",
+        "total_pnl": 28.67,
+        "sharpe_ratio": 0.04,
+        "max_drawdown": 0.0249,
+        "win_rate": 0.5,
+        "previous_rank": null,
+        "rank_delta": null
+      }
+    ]
+  },
+  "last_updated": "2026-06-30T10:00:00+00:00"
+}
+```
+
+Example numbers are a dated snapshot, not stable expected values.
+
+### `POST /api/bootstrap`
+
+Runs all strategies listed in `config/dashboard.json` via `python main.py bootstrap`.
 
 **Request body:** none.
 
-The route:
-
-1. finds the repository root;
-2. loads `TINKOFF_TOKEN` from root `.env` or the process environment;
-3. generates a UUID run ID;
-4. initializes `data/runtime-dashboard.json`;
-5. launches `main.py` as a detached process with `RUN_ID`.
+The route finds the repository root, loads `TINKOFF_TOKEN` from root `.env` or the process
+environment, and launches the bootstrap subprocess.
 
 **Response `202`:**
 
@@ -40,97 +93,84 @@ The route:
 {
   "ok": true,
   "started": true,
-  "run_id": "5d9716da-7d18-44c8-9357-9ed47fbb5474",
-  "message": "Pipeline started"
+  "message": "Bootstrap started"
 }
 ```
 
-**Response `500` — token missing:**
+**Response `500` — token missing or launch failure:** same `ok` / `message` pattern as other
+run routes.
+
+### `POST /api/run-strategy`
+
+Reruns a single strategy with caller-supplied parameters.
+
+**Request body:**
 
 ```json
 {
-  "ok": false,
-  "started": false,
-  "message": "TINKOFF_TOKEN is missing in repository root .env"
-}
-```
-
-**Response `500` — launch failure:**
-
-```json
-{
-  "ok": false,
-  "started": false,
-  "message": "Failed to start pipeline: <reason>"
-}
-```
-
-The current request is not configurable. `main.py` defines the strategy, instrument,
-timeframe, date window, and capital.
-
-### `GET /api/dashboard`
-
-Returns the latest dashboard state. If the runtime file is missing or invalid, the route
-returns a valid idle state with HTTP `200`.
-
-**Response `200`:**
-
-```json
-{
-  "run_id": "5d9716da-7d18-44c8-9357-9ed47fbb5474",
   "strategy_id": "ma_crossover",
-  "strategy_version": "1",
-  "instrument": "SBER",
-  "timeframe": "1h",
-  "data_source": "T-Bank",
-  "status": "completed",
-  "current_stage": "Finished",
-  "pipeline": [
-    {"name": "Broker Adapter", "status": "done"},
-    {"name": "Strategy Module", "status": "done"},
-    {"name": "Simulation Engine", "status": "done"},
-    {"name": "Analytics Module", "status": "done"}
-  ],
-  "metrics": {
-    "total_pnl": 28.67,
-    "sharpe_ratio": 0.04,
-    "max_drawdown": 0.0249,
-    "win_rate": 0.5,
-    "deposit_baseline_pnl": 1009.59
-  },
-  "equity_points": [
-    {"date": "0", "value": 100000.0}
-  ],
-  "trade_count": 20,
-  "final_portfolio": {
-    "cash": 100028.67,
-    "position_size": 0.0,
-    "equity": 100028.67
-  },
-  "message": "Backtest completed successfully",
-  "error": null,
-  "last_updated": "2026-06-23T10:10:02.993903+00:00"
+  "params": {
+    "fast": 12,
+    "slow": 20,
+    "order_size": 1
+  }
 }
 ```
 
-Example numbers are a dated snapshot, not stable expected values.
+The route validates that `strategy_id` and `params` are present, then launches
+`python main.py run <strategy_id> '<params_json>'`.
+
+**Response `202`:**
+
+```json
+{
+  "ok": true,
+  "started": true,
+  "strategy_id": "ma_crossover"
+}
+```
+
+**Response `400` — missing fields:**
+
+```json
+{
+  "ok": false,
+  "message": "strategy_id and params are required"
+}
+```
+
+Parameter validation errors surface in the strategy's dashboard entry (`status: "error"`) after
+polling `GET /api/dashboard`.
+
+### `POST /api/refresh-ranking`
+
+Recomputes Top-N ranking from completed strategy metrics without rerunning backtests.
+
+**Request body:** none.
+
+Launches `python main.py refresh-ranking`.
+
+**Response `202`:**
+
+```json
+{
+  "ok": true,
+  "started": true,
+  "message": "Ranking refresh started"
+}
+```
 
 ### Dashboard Status Values
 
-Overall status:
+Per-strategy status:
 
 - `idle`;
 - `running`;
 - `completed`;
 - `error`.
 
-Pipeline step status:
-
-- `pending`;
-- `running`;
-- `done`;
-- `skipped`;
-- `error`.
+Legacy single-run pipeline fields (`run_id`, `pipeline`, `current_stage`) may appear in
+older runtime files but are not the primary Week 4 contract.
 
 ## Target FastAPI Contract
 
@@ -165,8 +205,8 @@ The target request for a configurable backtest is expected to include:
 }
 ```
 
-The current strategy parameter names are `fast`, `slow`, and `order_size`; older examples
-using `fast_period` and `slow_period` are obsolete.
+Strategy parameter names vary by strategy; see `ParameterSpec` schemas in
+`src/strategy/schema.py` and YAML files under `config/strategies/`.
 
 ## Target Error Format
 
@@ -179,8 +219,8 @@ When FastAPI is implemented, application errors should use:
 }
 ```
 
-The current Next.js routes instead use `ok`, `started`, and `message` fields for start
-responses and embed pipeline errors in dashboard state.
+The current Next.js routes use `ok`, `started`, and `message` fields for start responses and
+embed pipeline errors in per-strategy dashboard state.
 
 ## Compatibility Work Required
 

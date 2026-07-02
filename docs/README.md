@@ -1,6 +1,6 @@
 # Documentation Status
 
-Last audited against `main`: **June 23, 2026**.
+Last audited against `main`: **June 30, 2026** (Week 4 milestone close).
 
 Use this page to distinguish current implementation references from target architecture and
 historical course artifacts.
@@ -14,7 +14,8 @@ For current behavior, use this order:
 3. Git history and merged pull requests;
 4. target/historical artifacts.
 
-No commits were added to `main` after June 22 during the June 18–23 audit window.
+Week 4 engineering merged PRs #98–#102 (June 24–30, 2026). The audit baseline reflects that
+state.
 
 ## Current Implementation References
 
@@ -29,8 +30,26 @@ No commits were added to `main` after June 22 during the June 18–23 audit wind
 | [`strategy_composable_engine_design.md`](strategy_composable_engine_design.md) | **Proposed** composable rule engine (bilingual EN/RU); target strategy abstraction |
 | [`broker_adapter_description.md`](broker_adapter_description.md) | Current T-Bank read path and unimplemented broker operations |
 | [`core_perfomance_metrics.md`](core_perfomance_metrics.md) | Implemented metric formulas and edge cases |
-| [`analytics_data_model_specification.md`](analytics_data_model_specification.md) | Current in-memory analytics models and target persistence |
-| [`database_schema.md`](database_schema.md) | Target relational schema; explicitly not implemented |
+| [`analytics_data_model_specification.md`](analytics_data_model_specification.md) | In-memory analytics, ranking, validation metrics; target persistence |
+| [`database_schema.md`](database_schema.md) | Implemented SQLite candle storage plus target relational run schema |
+
+## Implemented vs Planned (Week 4)
+
+| Area | Status |
+|---|---|
+| Three built-in strategies (`ma_crossover`, `ma_rsi`, `rsi_threshold`) | Implemented |
+| Plugin auto-discovery and YAML configs | Implemented |
+| `ParameterSpec` / dashboard parameter editors | Implemented |
+| Multi-strategy dashboard, ranking panel, benchmark chart | Implemented |
+| Data Loader validation, SQLite candle upsert, cache reuse | Implemented |
+| Configurable instrument/timeframe/lookback via `config/dashboard.json` | Implemented (UI picker deferred) |
+| In-memory Top-N ranking and validation metrics | Implemented |
+| FastAPI service (`src/api`) | Planned |
+| Relational run/trade/metrics persistence | Planned |
+| Multi-instrument UI picker | Deferred to Week 5 |
+| TP/SL, trigger/action abstraction, parameter optimizer | Deferred to Week 5 |
+| Explicit Calculate/Run submit UX | Deferred to Week 5 |
+| CSV adapter, order placement, scheduler, notifications, trading bot | Planned |
 
 ## Target Architecture / Historical Design
 
@@ -52,12 +71,11 @@ Historical Week 2 design records:
 
 Important differences from the current MVP:
 
-- there is no operational FastAPI service or relational database;
-- Data Loader, DB, API, CSV adapter, scheduler, notifications, and trading bot modules are
-  placeholders or future work;
-- the integrated app is one full-stack container plus a JSON runtime-state file;
-- only the T-Bank candle-read path is implemented;
-- only one strategy and one predefined dashboard run are wired end to end.
+- there is no operational FastAPI service;
+- relational run history, trades, and metrics tables are not implemented;
+- the integrated app is one full-stack container plus JSON runtime state and SQLite candle cache;
+- only the T-Bank candle-read path is implemented for live fetches;
+- three strategies run end to end with configurable parameters in the dashboard.
 
 ## Historical Reports
 
@@ -65,7 +83,11 @@ Files under `reports/` are dated course submissions. Week 1 and Week 2 reports i
 retain statements that were true at submission time. They must not be edited to reflect later
 implementation.
 
-The Week 3 Markdown report is the latest course status snapshot:
+The Week 4 Markdown report is the latest course status snapshot:
+
+- [`../reports/Week 4 report.md`](../reports/Week%204%20report.md)
+
+Earlier reports remain historical:
 
 - [`../reports/Week 3 report.md`](../reports/Week%203%20report.md)
 
