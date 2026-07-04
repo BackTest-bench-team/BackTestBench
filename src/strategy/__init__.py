@@ -38,7 +38,18 @@ from .store import (
     load_saved_config,
     save_strategy_config,
 )
+from .composable import (  # composable engine (config-driven strategies)
+    ComposableStrategy,
+    StrategyDefinition,
+    compile_strategy,
+    get_optimize_spec,
+    register_composable_file,
+    discover_composable_strategies,
+    CompileError,
+)
 from . import strategies  # noqa: F401  (auto-discovers & registers built-ins)
+
+discover_composable_strategies()  # register composable YAMLs in config/strategies
 
 __all__ = [
     "BaseStrategy", "StrategyConfig", "load_config", "parse_config",
@@ -49,4 +60,6 @@ __all__ = [
     "describe_strategy", "describe_all", "parameter_specs",
     "save_strategy_config", "load_saved_config", "list_saved_configs", "delete_saved_config",
     "StrategyError", "UnknownStrategyError", "ConfigError", "ParameterValidationError",
+    "ComposableStrategy", "StrategyDefinition", "compile_strategy", "get_optimize_spec",
+    "register_composable_file", "discover_composable_strategies", "CompileError",
 ]

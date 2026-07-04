@@ -30,6 +30,7 @@ class ParameterSpec:
     maximum: float | None = None
     choices: list[Any] | None = None
     description: str = ""
+    optimizable: bool = False
 
     def to_dict(self) -> dict:
         return {k: v for k, v in asdict(self).items() if v is not None or k == "default"}

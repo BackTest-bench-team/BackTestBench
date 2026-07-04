@@ -306,25 +306,25 @@ params:
   rsi_buy_min:    { type: float, default: 50, choices: [40, 50, 60], optimizable: true }
   rsi_overbought: { type: float, default: 70, choices: [65, 70, 80], optimizable: true }
   stop_loss_pct:  { type: float, default: 5,  choices: [3, 5, 7, 10], optimizable: true }
-  take_profit_pct:{ type: float, default: 10, choices: [5, 10, 15, 20], optimizable: true }
+  take_profit_pct: { type: float, default: 10, choices: [5, 10, 15, 20], optimizable: true }
   order_size:     { type: float, default: 1,  choices: [1, 2, 3], optimizable: false }
 
 series:
-  fast_ma: { fn: sma, source: price, period: ${fast} }
-  slow_ma: { fn: sma, source: price, period: ${slow} }
-  rsi:     { fn: rsi, source: price, period: ${rsi_period} }
+  fast_ma: { fn: sma, source: price, period: "${fast}" }
+  slow_ma: { fn: sma, source: price, period: "${slow}" }
+  rsi:     { fn: rsi, source: price, period: "${rsi_period}" }
 
 rules:
   - id: stop_loss
     scope: long
     priority: 100
-    when: { loss_pct: { gt: ${stop_loss_pct} } }
+    when: { loss_pct: { gt: "${stop_loss_pct}" } }
     then: { action: sell, size: all }
 
   - id: take_profit
     scope: long
     priority: 90
-    when: { profit_pct: { gt: ${take_profit_pct} } }
+    when: { profit_pct: { gt: "${take_profit_pct}" } }
     then: { action: sell, size: all }
 
   - id: signal_exit
@@ -333,7 +333,7 @@ rules:
     when:
       any:
         - cross_below: [fast_ma, slow_ma]
-        - gte: [rsi, ${rsi_overbought}]
+        - gte: [rsi, "${rsi_overbought}"]
     then: { action: sell, size: all }
 
   - id: entry
@@ -342,12 +342,12 @@ rules:
     when:
       all:
         - cross_above: [fast_ma, slow_ma]
-        - gte: [rsi, ${rsi_buy_min}]
+        - gte: [rsi, "${rsi_buy_min}"]
     then:
       action: buy
-      size: ${order_size}
-      stop_loss_pct: ${stop_loss_pct}
-      take_profit_pct: ${take_profit_pct}
+      size: "${order_size}"
+      stop_loss_pct: "${stop_loss_pct}"
+      take_profit_pct: "${take_profit_pct}"
 ```
 
 **Shorter variant:** remove the `stop_loss` / `take_profit` rules and keep only `stop_loss_pct` / `take_profit_pct` on the `buy` action — same behaviour, less YAML.
@@ -753,25 +753,25 @@ params:
   rsi_buy_min:    { type: float, default: 50, choices: [40, 50, 60], optimizable: true }
   rsi_overbought: { type: float, default: 70, choices: [65, 70, 80], optimizable: true }
   stop_loss_pct:  { type: float, default: 5,  choices: [3, 5, 7, 10], optimizable: true }
-  take_profit_pct:{ type: float, default: 10, choices: [5, 10, 15, 20], optimizable: true }
+  take_profit_pct: { type: float, default: 10, choices: [5, 10, 15, 20], optimizable: true }
   order_size:     { type: float, default: 1,  choices: [1, 2, 3], optimizable: false }
 
 series:
-  fast_ma: { fn: sma, source: price, period: ${fast} }
-  slow_ma: { fn: sma, source: price, period: ${slow} }
-  rsi:     { fn: rsi, source: price, period: ${rsi_period} }
+  fast_ma: { fn: sma, source: price, period: "${fast}" }
+  slow_ma: { fn: sma, source: price, period: "${slow}" }
+  rsi:     { fn: rsi, source: price, period: "${rsi_period}" }
 
 rules:
   - id: stop_loss
     scope: long
     priority: 100
-    when: { loss_pct: { gt: ${stop_loss_pct} } }
+    when: { loss_pct: { gt: "${stop_loss_pct}" } }
     then: { action: sell, size: all }
 
   - id: take_profit
     scope: long
     priority: 90
-    when: { profit_pct: { gt: ${take_profit_pct} } }
+    when: { profit_pct: { gt: "${take_profit_pct}" } }
     then: { action: sell, size: all }
 
   - id: signal_exit
@@ -780,7 +780,7 @@ rules:
     when:
       any:
         - cross_below: [fast_ma, slow_ma]
-        - gte: [rsi, ${rsi_overbought}]
+        - gte: [rsi, "${rsi_overbought}"]
     then: { action: sell, size: all }
 
   - id: entry
@@ -789,12 +789,12 @@ rules:
     when:
       all:
         - cross_above: [fast_ma, slow_ma]
-        - gte: [rsi, ${rsi_buy_min}]
+        - gte: [rsi, "${rsi_buy_min}"]
     then:
       action: buy
-      size: ${order_size}
-      stop_loss_pct: ${stop_loss_pct}
-      take_profit_pct: ${take_profit_pct}
+      size: "${order_size}"
+      stop_loss_pct: "${stop_loss_pct}"
+      take_profit_pct: "${take_profit_pct}"
 ```
 
 **Короткий вариант:** убрать rules stop/take и оставить поля на `buy` — тот же результат, меньше YAML.
@@ -847,3 +847,4 @@ Input → Series → Rules → Actions → Engine
 | 2026-06-30 | Unified rules, Series DAG, Actions+PositionEffect |
 | 2026-07-02 | Key concepts, plain-language explanations |
 | 2026-07-02 | choices + optimizable; UI = visualizer only; GridOptimizer |
+| 2026-07-04 | Quote `${param}` placeholders in YAML examples (valid YAML in flow maps) |
