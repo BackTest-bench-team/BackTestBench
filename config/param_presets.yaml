@@ -1,0 +1,7 @@
+# Shared parameter presets (design ). A param's `choices` may reference one
+# of these as `choices: preset:ma_long` instead of repeating the list.
+ma_short:        [5, 10, 12, 21, 30, 50]
+ma_long:         [20, 30, 50, 100, 200]
+rsi_period:      [7, 14, 20, 21]
+stop_loss_pct:   [3, 5, 7, 10]
+take_profit_pct: [5, 10, 15, 20]
