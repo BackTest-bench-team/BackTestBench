@@ -2,6 +2,8 @@
 Data Loader: receives List[Candle] from Broker Adapter and stores them in DB.
 Supports explicit date-range loading with optional in-memory caching.
 """
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List
 
@@ -10,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from src.data_loader.cache import CandleCache
+from src.data_loader.models import PriceBar
 from src.data_loader.validator import ValidationError, prepare_candles
 from src.db.models import CandleModel
 from src.db.session import SessionLocal
@@ -46,6 +49,20 @@ def candle_model_to_engine(row: CandleModel) -> Candle:
         close=float(row.close),
         volume=float(row.volume or 0),
     )
+
+
+def candle_model_to_price_bar(row: CandleModel) -> PriceBar:
+    candle = candle_model_to_engine(row)
+    return PriceBar(timestamp=candle.timestamp, price=float(candle.close))
+
+
+@dataclass(frozen=True, slots=True)
+class LoadedMarketData:
+    """Candles and composable price series for a single lookback window."""
+
+    candles: list[Candle]
+    price_series: list[PriceBar]
+    source: str
 
 
 class DataLoader:
@@ -164,6 +181,75 @@ class DataLoader:
     ) -> List[Candle]:
         return [candle_model_to_engine(row) for row in self.load_candles(instrument, timeframe, start, end)]
 
+    def load_price_series(
+        self,
+        instrument: str,
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[PriceBar]:
+        """Export (timestamp, close) bars for the composable engine."""
+        return [candle_model_to_price_bar(row) for row in self.load_candles(instrument, timeframe, start, end)]
+
+    async def ensure_candles_loaded(
+        self,
+        instrument: str,
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        fetch: Callable[[datetime, datetime], Awaitable[list[Candle]]],
+        *,
+        min_ratio: float = 0.5,
+    ) -> LoadedMarketData:
+        """Load once from DB/cache or broker; reuse in-memory cache on later reads."""
+        rows = self.load_candles(instrument, timeframe, start, end)
+        if self._rows_cover_window(rows, start, end, timeframe, min_ratio):
+            candles = [candle_model_to_engine(row) for row in rows]
+            return LoadedMarketData(
+                candles=candles,
+                price_series=[candle_model_to_price_bar(row) for row in rows],
+                source="database",
+            )
+
+        try:
+            api_candles = await fetch(start, end)
+            self.store_candles(instrument, timeframe, api_candles)
+            rows = self.load_candles(instrument, timeframe, start, end)
+            if rows:
+                candles = [candle_model_to_engine(row) for row in rows]
+                return LoadedMarketData(
+                    candles=candles,
+                    price_series=[candle_model_to_price_bar(row) for row in rows],
+                    source="T-Bank",
+                )
+            return LoadedMarketData(candles=api_candles, price_series=_candles_to_price_series(api_candles), source="T-Bank")
+        except Exception as exc:
+            if len(rows) >= 10:
+                candles = [candle_model_to_engine(row) for row in rows]
+                return LoadedMarketData(
+                    candles=candles,
+                    price_series=[candle_model_to_price_bar(row) for row in rows],
+                    source="database (offline)",
+                )
+            raise RuntimeError(
+                "T-Bank API unavailable. Check internet/VPN/firewall and TINKOFF_TOKEN."
+            ) from exc
+
+    @staticmethod
+    def _rows_cover_window(
+        rows: list[CandleModel],
+        start: datetime,
+        end: datetime,
+        timeframe: str,
+        min_ratio: float,
+    ) -> bool:
+        if len(rows) < 10:
+            return False
+        bar_seconds = _TIMEFRAME_SECONDS.get(timeframe, 3600)
+        span_seconds = (utc_naive(end) - utc_naive(start)).total_seconds()
+        expected = max(span_seconds / bar_seconds, 1)
+        return len(rows) >= expected * min_ratio
+
     def has_sufficient_data(
         self,
         instrument: str,
@@ -174,12 +260,12 @@ class DataLoader:
     ) -> bool:
         """True when DB/cache already covers most of the requested range."""
         rows = self.load_candles(instrument, timeframe, start, end)
-        if len(rows) < 10:
-            return False
-        bar_seconds = _TIMEFRAME_SECONDS.get(timeframe, 3600)
-        span_seconds = (utc_naive(end) - utc_naive(start)).total_seconds()
-        expected = max(span_seconds / bar_seconds, 1)
-        return len(rows) >= expected * min_ratio
+        return self._rows_cover_window(rows, start, end, timeframe, min_ratio)
 
     def close(self):
         self.session.close()
+
+
+def _candles_to_price_series(candles: list[Candle]) -> list[PriceBar]:
+    cleaned = prepare_candles(candles)
+    return [PriceBar(timestamp=c.timestamp, price=float(c.close)) for c in cleaned]

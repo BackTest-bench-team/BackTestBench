@@ -91,3 +91,33 @@ def test_candle_model_to_engine():
     candle = candle_model_to_engine(row)
     assert candle.timestamp == "2025-06-01T12:00:00"
     assert candle.close == 250.5
+
+
+def test_load_price_series(loader: DataLoader):
+    candles = _sample_candles()
+    loader.store_candles("SBER", "1h", candles)
+
+    start = datetime(2025, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
+    end = datetime(2025, 1, 1, 14, 0, 0, tzinfo=timezone.utc)
+    series = loader.load_price_series("SBER", "1h", start, end)
+
+    assert len(series) == len(candles)
+    assert series[0].timestamp == candles[0].timestamp
+    assert series[-1].price == pytest.approx(candles[-1].close)
+
+
+def test_load_candles_hits_in_memory_cache(loader: DataLoader, monkeypatch):
+    candles = _sample_candles(50)
+    loader.store_candles("SBER", "1h", candles)
+
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2025, 1, 3, tzinfo=timezone.utc)
+    first_rows = loader.load_candles("SBER", "1h", start, end)
+
+    def fail_db_query(*_args, **_kwargs):
+        raise AssertionError("DB should not be queried when CandleCache is warm")
+
+    monkeypatch.setattr(loader.session, "execute", fail_db_query)
+    cached_rows = loader.load_candles("SBER", "1h", start, end)
+    assert len(cached_rows) == len(first_rows)
+    assert cached_rows[0].timestamp == first_rows[0].timestamp

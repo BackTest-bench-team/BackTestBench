@@ -24,8 +24,7 @@ from src.backtest_config import (
     validate_runtime_settings,
 )
 from src.broker_adapter import TBankAdapter
-from src.data_loader import DataLoader, candle_model_to_engine
-from src.data_loader.loader import utc_naive
+from src.data_loader import DataLoader, LoadedMarketData
 from src.db import init_db
 from src.engine import ExecutionEngine, RunContext
 from src.engine.models import Candle, MetricsReport, Trade
@@ -326,26 +325,50 @@ def get_candle_date_range(
     return from_dt, to_dt
 
 
-def timeframe_to_timedelta(timeframe: str) -> timedelta:
-    mapping = {
-        "1m": timedelta(minutes=1),
-        "5m": timedelta(minutes=5),
-        "15m": timedelta(minutes=15),
-        "1h": timedelta(hours=1),
-        "4h": timedelta(hours=4),
-        "1d": timedelta(days=1),
-    }
-    return mapping.get(timeframe, timedelta(hours=1))
+async def load_market_data(
+    config: dict[str, Any],
+    loader: DataLoader | None = None,
+) -> tuple[DataLoader, LoadedMarketData]:
+    """Load candles once via DataLoader; reuse loader cache for in-process reads."""
+    init_db()
+    instrument = config["instrument"]
+    timeframe = config["timeframe"]
+    owns_loader = loader is None
+    loader = loader or DataLoader(use_cache=True)
+
+    latest = loader.get_latest_candle_timestamp(instrument, timeframe)
+    period_end = latest if latest is not None and not config.get("period_end") else None
+    from_dt, to_dt = get_candle_date_range(config, period_end=period_end)
+
+    async def fetch(from_dt: datetime, to_dt: datetime) -> list[Candle]:
+        return await fetch_candles_from_api(config, from_dt, to_dt)
+
+    try:
+        market_data = await loader.ensure_candles_loaded(
+            instrument,
+            timeframe,
+            from_dt,
+            to_dt,
+            fetch,
+        )
+        if not market_data.candles:
+            raise RuntimeError("No candles available for backtest window")
+        return loader, market_data
+    except Exception:
+        if owns_loader:
+            loader.close()
+        raise
 
 
-def db_candles_usable(rows: list, from_dt: datetime, to_dt: datetime, timeframe: str) -> bool:
-    """True when DB already has enough candles for this lookback window."""
-    if len(rows) < 10:
-        return False
-    span_seconds = (utc_naive(to_dt) - utc_naive(from_dt)).total_seconds()
-    bar_seconds = timeframe_to_timedelta(timeframe).total_seconds()
-    expected = max(span_seconds / bar_seconds, 1)
-    return len(rows) >= expected * 0.5
+async def get_candles(
+    config: dict[str, Any],
+    loader: DataLoader | None = None,
+) -> tuple[list[Candle], str]:
+    """Load candles: read from DB when fresh, otherwise fetch from T-Bank and store."""
+    active_loader, market_data = await load_market_data(config, loader=loader)
+    if loader is None:
+        active_loader.close()
+    return market_data.candles, market_data.source
 
 
 async def fetch_candles_from_api(
@@ -370,36 +393,6 @@ async def fetch_candles_from_api(
         raise RuntimeError("No candles returned from broker")
 
     return candles
-
-
-async def get_candles(config: dict[str, Any]) -> tuple[list[Candle], str]:
-    """Load candles: read from DB when fresh, otherwise fetch from T-Bank and store."""
-    init_db()
-    instrument = config["instrument"]
-    timeframe = config["timeframe"]
-
-    loader = DataLoader(use_cache=True)
-    try:
-        latest = loader.get_latest_candle_timestamp(instrument, timeframe)
-        period_end = latest if latest is not None and not config.get("period_end") else None
-        from_dt, to_dt = get_candle_date_range(config, period_end=period_end)
-        rows = loader.load_candles(instrument, timeframe, from_dt, to_dt)
-        if db_candles_usable(rows, from_dt, to_dt, timeframe):
-            return [candle_model_to_engine(row) for row in rows], "database"
-
-        try:
-            api_candles = await fetch_candles_from_api(config, from_dt, to_dt)
-            loader.store_candles(instrument, timeframe, api_candles)
-            rows = loader.load_candles(instrument, timeframe, from_dt, to_dt)
-            return [candle_model_to_engine(row) for row in rows] if rows else api_candles, "T-Bank"
-        except Exception as exc:
-            if len(rows) >= 10:
-                return [candle_model_to_engine(row) for row in rows], "database (offline)"
-            raise RuntimeError(
-                "T-Bank API unavailable. Check internet/VPN/firewall and TINKOFF_TOKEN."
-            ) from exc
-    finally:
-        loader.close()
 
 
 def build_chart_series(
@@ -743,6 +736,7 @@ async def refresh_ranking() -> None:
 async def bootstrap_all() -> None:
     clear_stop_request()
     write_run_pid()
+    loader: DataLoader | None = None
     try:
         config = load_config()
         strategies = runtime_strategies(config)
@@ -759,13 +753,15 @@ async def bootstrap_all() -> None:
         }
         save_dashboard(dashboard)
 
+        loader = DataLoader(use_cache=True)
         try:
-            candles, data_source = await get_candles(config)
+            _, market_data = await load_market_data(config, loader=loader)
             if stop_requested():
                 mark_strategies_stopped(dashboard)
                 save_dashboard(dashboard)
                 return
-            dashboard["data_source"] = data_source
+            candles = market_data.candles
+            dashboard["data_source"] = market_data.source
         except Exception as exc:
             for entry in dashboard["strategies"]:
                 entry.update({"status": "error", "error": str(exc)})
@@ -795,6 +791,8 @@ async def bootstrap_all() -> None:
         update_dashboard_ranking(dashboard)
         save_dashboard(dashboard)
     finally:
+        if loader is not None:
+            loader.close()
         clear_run_pid()
         clear_stop_request()
 
