@@ -21,11 +21,15 @@ from .models import (
     Portfolio
 )
 from .tbank import TBankAdapter
+from .twelvedata import TwelveDataAdapter
+from .bybit import BybitAdapter
 __all__ = [
     # Base interface
     'BrokerAdapter',
     # Concrete adapters
     'TBankAdapter',
+    'TwelveDataAdapter',
+    'BybitAdapter',
     # Exceptions
     'BrokerError',
     'AuthenticationError',
