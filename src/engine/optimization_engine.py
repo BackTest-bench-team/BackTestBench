@@ -93,9 +93,18 @@ class RandomSearchExecutionEngine:
             for name, val in zip(param_names, combo):
                 current_params[name] = val
 
-            strategy = create_strategy(strategy_id, current_params)
-            raw_result = self.base_engine.run(strategy, candles, initial_capital)
-            metrics = calculate_metrics_from_trade_log(raw_result["trade_log_report"], run_context)
+            try:
+                strategy = create_strategy(strategy_id, current_params)
+                raw_result = self.base_engine.run(strategy, candles, initial_capital)
+                
+                # Проверка: если сделок нет, пропускаем как неудачный прогон
+                if not raw_result.get("trade_log_report") or not raw_result["trade_log_report"].trades:
+                    continue
+                    
+                metrics = calculate_metrics_from_trade_log(raw_result["trade_log_report"], run_context)
+            except Exception as e:
+                print(f"Iteration {idx} failed: {e}")
+                continue # Skip failed iterations
 
             score = float(getattr(metrics, target_metric, metrics.total_pnl))
 
