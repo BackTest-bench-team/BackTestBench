@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
-
+from typing import Optional, Any, Dict, List
+from src.engine.portfolio import Portfolio
 
 @dataclass
 class Candle:
@@ -60,3 +60,29 @@ class MetricsReport:
     max_drawdown: float
     win_rate: float
     deposit_baseline_pnl: float
+
+@dataclass(frozen=True)
+class OptimizationIteration:
+    """Contract representing a single optimization attempt (iteration) during the random search."""
+    iteration_index: int              # Attempt number (1, 2, 3, ...)
+    params: Dict[str, Any]            # Generated parameter set (e.g. {"fast": 10, "slow": 50})
+    metrics: MetricsReport            # Calculated performance metrics (PnL, Sharpe, Drawdown, ...)
+    score: float                      # Primary optimization score (e.g. Sharpe Ratio)
+
+@dataclass(frozen=True)
+class OptimizationResult:
+    """Main output contract of the RandomSearchExecutionEngine optimization process."""
+    strategy_id: str                  # Strategy identifier (e.g. "ma_rsi_composable")
+    instrument: str                   # Asset ticker (e.g. "SBER")
+    target_metric: str                # Metric used for optimization (e.g. "total_pnl")
+    
+    # --- Best optimization result ---
+    best_params: Dict[str, Any]       # Best parameter combination found
+    best_metrics: MetricsReport       # Metrics of the best parameter combination
+    best_trade_log_report: TradeLog   # Trade log report of the best simulation
+    best_equity_curve: List[float]    # Equity curve of the best simulation
+    best_final_portfolio: Portfolio   # Final portfolio of the best simulation
+    
+    # --- Optimization history ---
+    iterations: List[OptimizationIteration]  # All optimization attempts (including the best and the worst)
+    total_iterations_run: int         # Total number of unique parameter combinations evaluated
