@@ -1,14 +1,50 @@
-# Examples — T-Bank Adapter Usage
+# Examples — Broker Adapter Usage
 
-This folder contains ready-to-run examples for the **T-Bank Invest API** adapter.
-The main entry point is [`tbank_adapter_usage.py`](./tbank_adapter_usage.py), which
-provides a thin, friendly wrapper around the low-level
-[`TBankAdapter`](../src/broker_adapter/tbank.py) for fetching historical market
-candles (OHLC/V) and running simple backtests.
+This folder contains ready-to-run examples for the **broker adapter** layer. The
+main entry point is [`tbank_adapter_usage.py`](./tbank_adapter_usage.py), which
+provides a thin, friendly wrapper around the low-level adapters
+([`TBankAdapter`](../src/broker_adapter/tbank.py),
+[`TwelveDataAdapter`](../src/broker_adapter/twelvedata.py), and
+[`BybitAdapter`](../src/broker_adapter/bybit.py)) for fetching historical
+market candles (OHLC/V) and running simple backtests.
 
-> The file's primary purpose is **parsing/fetching data from the T-Bank Invest API**
-> (production or sandbox). All candle-fetching logic goes through the
-> `run_fetch_candles` function (synchronous) or `fetch_candles` (async).
+> The file's primary purpose is **parsing/fetching data from a data API**.
+> You pick which API to use, and all candle-fetching logic goes through the
+> `run_fetch_candles` function (synchronous) or `fetch_candles` (async). All
+> adapters return the **same unified `Candle` model**, so downstream code
+> (strategies, the execution engine, backtests) is identical regardless of the
+> source.
+
+---
+
+## Data sources
+
+The example supports three data providers:
+
+| `source`     | Provider                            | Markets                                 | Token env var      | Token required? |
+|--------------|-------------------------------------|-----------------------------------------|--------------------|-----------------|
+| `"tbank"`     | T-Bank (Tinkoff Investments) API v2 | Russian equities (MOEX TQBR: SBER, GAZP, LKOH, …) | `TINKOFF_TOKEN`    | Yes             |
+| `"twelvedata"` | [twelvedata.com](https://twelvedata.com) REST API | Global equities, FX, crypto (AAPL, MSFT, ETH/BTC, …) | `TWELVEDATA_TOKEN` | Yes             |
+| `"bybit"`     | [Bybit](https://bybit-exchange.github.io/docs/v5/market/kline) V5 kline API | Crypto spot pairs (BTCUSDT, ETHUSDT, …) | `BYBIT_TOKEN`      | **No** (endpoint is public) |
+
+The source is chosen either **per-call** via the `source=...` argument, or
+**globally** via the `DATA_SOURCE` environment variable (defaults to `tbank`):
+
+```dotenv
+# .env — optional default. Can still be overridden per call with source=...
+DATA_SOURCE=bybit
+```
+
+```python
+# Per-call override wins regardless of DATA_SOURCE:
+run_fetch_candles(instrument="AAPL", source="twelvedata", timeframe="1d", days=60)
+run_fetch_candles(instrument="SBER", source="tbank", timeframe="1h", days=7)
+run_fetch_candles(instrument="BTCUSDT", source="bybit", timeframe="1d", days=60)
+```
+
+The **timeframe format is shared** across all sources (`1m`, `5m`, `1h`, `1d`,
+`1w`, `1M`) — each adapter maps these to its own internal interval names, so you
+use identical parameters either way.
 
 ---
 
@@ -18,6 +54,7 @@ candles (OHLC/V) and running simple backtests.
 2. [Quick start](#quick-start)
 3. [Public functions](#public-functions)
 4. [`run_fetch_candles` / `fetch_candles` parameters](#run_fetch_candles--fetch_candles-parameters)
+   - [Choosing a data source](#choosing-a-data-source)
    - [Instrument (tickers)](#instrument-tickers)
    - [Timeframe](#timeframe)
    - [History limits (`days`)](#history-limits-days)
@@ -34,19 +71,39 @@ candles (OHLC/V) and running simple backtests.
 
 ## Prerequisites
 
-1. **A T-Bank Invest API token.** Generate one in the T-Bank Invest app or via the
-   [API console](https://www.tbank.ru/about/business/ita/invest-api/). For read-only
-   candle data a *read-only* token is sufficient and recommended.
-2. **A `.env` file** in the project root with the token:
+1. **An API token** for at least one provider:
+
+   - **T-Bank** — generate a token in the T-Bank Invest app or via the
+     [API console](https://www.tbank.ru/about/business/ita/invest-api/). A
+     *read-only* token is sufficient and recommended for candle data.
+   - **Twelve Data** — get a free API key at
+     [twelvedata.com](https://twelvedata.com/pricing) (free tier covers the
+     common case; higher tiers lift rate limits).
+   - **Bybit** — *no token required* for historical candle data (the V5
+     `market/kline` endpoint is public). You can still set `BYBIT_TOKEN`; it is
+     accepted for parity but not sent with kline requests.
+
+2. **A `.env` file** in the project root with the token(s) you want to use:
 
    ```dotenv
-   TINKOFF_TOKEN=your_token_here
+   # T-Bank (use source="tbank")
+   TINKOFF_TOKEN=your_tbank_token_here
+
+   # Twelve Data (use source="twelvedata")
+   TWELVEDATA_TOKEN=your_twelvedata_key_here
+
+   # Bybit (use source="bybit") — optional, the kline endpoint is public
+   # BYBIT_TOKEN=your_bybit_key_here
+
+   # Optional default source. Omit to default to "tbank".
+   # DATA_SOURCE=tbank
    ```
 
-   The module loads `.env` automatically on import (`dotenv`), so normally you do not
-   pass the token explicitly.
-3. **Dependencies installed** (`aiohttp`, `python-dotenv`, protobuf, etc.) — see the
-   project [`requirements.txt`](../requirements.txt).
+   The module loads `.env` automatically on import (`dotenv`), so normally you
+   do not pass the token explicitly.
+
+3. **Dependencies installed** (`aiohttp`, `python-dotenv`, protobuf, etc.) — see
+   the project [`requirements.txt`](../requirements.txt).
 
 ---
 
@@ -55,11 +112,23 @@ candles (OHLC/V) and running simple backtests.
 ```python
 from examples.tbank_adapter_usage import run_fetch_candles
 
-# Fetch the last 7 days of 1-hour candles for SBER
+# Default source (DATA_SOURCE / "tbank") — last 7 days of 1h candles for SBER
+candles = run_fetch_candles(instrument="SBER", timeframe="1h", days=7)
+
+# Twelve Data explicitly — last 60 days of daily candles for AAPL
 candles = run_fetch_candles(
-    instrument="SBER",
-    timeframe="1h",
-    days=7,
+    instrument="AAPL",
+    source="twelvedata",
+    timeframe="1d",
+    days=60,
+)
+
+# Bybit explicitly — last 60 days of daily candles for BTCUSDT (no token needed)
+candles = run_fetch_candles(
+    instrument="BTCUSDT",
+    source="bybit",
+    timeframe="1d",
+    days=60,
 )
 
 print(f"Fetched {len(candles)} candles")
@@ -67,22 +136,25 @@ for c in candles[:3]:
     print(f"  {c.timestamp}: O={c.open} H={c.high} L={c.low} C={c.close} V={c.volume}")
 ```
 
-Running the file directly executes two built-in demos (fetch + backtest):
+Running the file directly executes built-in demos for all three providers:
 
 ```bash
 python examples/tbank_adapter_usage.py
 ```
 
+Each demo skips gracefully (with a clear message) if its token isn't set (or, for
+Bybit, if the request fails), so the file runs cleanly with any subset of tokens.
+
 ---
 
 ## Public functions
 
-| Function           | Type   | Description                                                     |
-|--------------------|--------|-----------------------------------------------------------------|
-| `run_fetch_candles` | sync  | Fetch historical candles. **Main entry point for data parsing.** |
-| `fetch_candles`     | async | Underlying coroutine awaited by `run_fetch_candles`.            |
-| `run_backtest`      | sync  | Fetch candles and run the MA-Crossover backtest on them.         |
-| `get_token`         | sync  | Helper that reads `TINKOFF_TOKEN` from the environment.          |
+| Function            | Type   | Description                                                            |
+|---------------------|--------|------------------------------------------------------------------------|
+| `run_fetch_candles` | sync   | Fetch historical candles. **Main entry point for data parsing.**       |
+| `fetch_candles`     | async  | Underlying coroutine awaited by `run_fetch_candles`.                   |
+| `run_backtest`      | sync   | Fetch candles and run the MA-Crossover backtest on them.               |
+| `get_token`         | sync   | Helper that reads the right token (`TINKOFF_TOKEN` / `TWELVEDATA_TOKEN`) for the given source. |
 
 ---
 
@@ -95,30 +167,57 @@ run_fetch_candles(
     instrument: str = "SBER",
     timeframe: str = "1h",
     days: int = 7,
-    from_date: Optional[str] = None,   # "YYYY-MM-DD"
-    to_date: Optional[str] = None,     # "YYYY-MM-DD"
-    use_sandbox: bool = False,
+    source: Optional[str] = None,     # "tbank" | "twelvedata"; default: DATA_SOURCE / "tbank"
+    from_date: Optional[str] = None,  # "YYYY-MM-DD"
+    to_date: Optional[str] = None,    # "YYYY-MM-DD"
+    use_sandbox: bool = False,        # T-Bank only
     token: Optional[str] = None,
 ) -> List[Candle]
 ```
 
-| Parameter     | Type             | Default   | Description                                                                                       |
-|---------------|------------------|-----------|---------------------------------------------------------------------------------------------------|
-| `instrument`  | `str`            | `"SBER"`  | Ticker (e.g. `"SBER"`, `"GAZP"`, `"LKOH"`) or a 12-char FIGI / `BBG…` identifier. See [tickers](#instrument-tickers). |
-| `timeframe`   | `str`            | `"1h"`    | Candle granularity. **Minimum resolution is `1m`.** See [timeframes](#timeframe).                |
-| `days`        | `int`            | `7`       | History depth in days, counting back from `to_date`/now. Ignored if `from_date` is given. **Capped per timeframe** — see [history limits](#history-limits-days). |
-| `from_date`   | `Optional[str]`  | `None`    | Start date `YYYY-MM-DD`. Overrides `days`.                                                         |
-| `to_date`     | `Optional[str]`  | `None`    | End date `YYYY-MM-DD`. Defaults to *now*.                                                          |
-| `use_sandbox` | `bool`           | `False`   | Use the T-Bank **sandbox** host instead of the production host.                                    |
-| `token`       | `Optional[str]`  | `None`    | API token. If omitted, loaded from `TINKOFF_TOKEN` in `.env` via `get_token()`.                    |
+| Parameter     | Type             | Default            | Description                                                                                       |
+|---------------|------------------|--------------------|---------------------------------------------------------------------------------------------------|
+| `instrument`  | `str`            | `"SBER"`           | Ticker. T-Bank: `SBER`, `GAZP`, `LKOH` or a FIGI. Twelve Data: `AAPL`, `MSFT`, `ETH/BTC`. See [tickers](#instrument-tickers). |
+| `timeframe`   | `str`            | `"1h"`             | Candle granularity, **same format for all sources**. Minimum resolution is `1m`. See [timeframes](#timeframe). |
+| `days`        | `int`            | `7`                | History depth in days, counting back from `to_date`/now. Ignored if `from_date` is given. Caps differ per source — see [history limits](#history-limits-days). |
+| `source`      | `Optional[str]`  | `DATA_SOURCE`/`"tbank"` | Data API: `"tbank"` or `"twelvedata"`. See [choosing a data source](#choosing-a-data-source). |
+| `from_date`   | `Optional[str]`  | `None`             | Start date `YYYY-MM-DD`. Overrides `days`.                                                         |
+| `to_date`     | `Optional[str]`  | `None`             | End date `YYYY-MM-DD`. Defaults to *now*.                                                          |
+| `use_sandbox` | `bool`           | `False`            | T-Bank **sandbox** host (ignored by Twelve Data).                                                  |
+| `token`       | `Optional[str]`  | `None`             | API token. If omitted, loaded from the matching env var via `get_token()`.                        |
 
 > **`from_date` overrides `days`.** If you pass both, `days` is ignored.
 > If you pass neither `from_date` nor `to_date`, the window is `[now - days, now]`.
 
+### Choosing a data source
+
+The `source` parameter selects the adapter. It is resolved as follows:
+
+1. If `source=` is given, it's used (case-insensitive).
+2. Otherwise the `DATA_SOURCE` env var is read.
+3. Otherwise it defaults to `"tbank"`.
+
+Anything other than `"tbank"` / `"twelvedata"` raises `ValueError`. The chosen
+source determines which token env var is read (`TINKOFF_TOKEN` or
+`TWELVEDATA_TOKEN`) and which history-depth caps apply.
+
+```python
+# Explicit per call
+fetch_candles(source="twelvedata", instrument="AAPL", timeframe="1d", days=30)
+
+# Implicit, via .env:  DATA_SOURCE=twelvedata
+fetch_candles(instrument="AAPL", timeframe="1d", days=30)
+```
+
 ### Instrument (tickers)
 
-The adapter accepts any ticker listed in the **TQBR** trading mode of MOEX
-(Moscow Exchange). Tickers are passed by their standard short symbol:
+The `instrument` value you pass depends on the chosen `source`. Both adapters
+return the same `Candle` model regardless of the underlying symbol.
+
+#### T-Bank (`source="tbank"`)
+
+Accepts any ticker listed in the **TQBR** trading mode of MOEX (Moscow
+Exchange), passed by its standard short symbol:
 
 | Ticker  | Issuer                    | Ticker  | Issuer                    |
 |---------|---------------------------|---------|---------------------------|
@@ -129,48 +228,159 @@ The adapter accepts any ticker listed in the **TQBR** trading mode of MOEX
 | `NVTK`  | Новатэк                   | `MTSS`  | МТС                       |
 | `TATN`  | Татнефть                  | `CHMF`  | Северсталь                |
 | `VTBR`  | ВТБ                       | `NLMK`  | НЛМК                      |
-| `MGNT`  | Магнит                    | `ALRS`  | Алроса                    |
 | `PLZL`  | Полюс                     | `MOEX`  | Московская биржа          |
 | `AFKS`  | Sistema                   | `RUAL`  | РУСАЛ                     |
 
 The list above is illustrative, not exhaustive — any TQBR ticker the T-Bank API
 knows about will work. The adapter resolves the ticker to a FIGI automatically.
-If you already have a FIGI, you can pass it directly: any value starting with
-`BBG` or exactly 12 characters long is treated as a FIGI and looked up as-is.
 
-A ticker that the API cannot resolve raises `InvalidInstrumentError`.
+**FIGI (T-Bank only).** A FIGI may also be passed directly instead of a ticker:
+any value starting with `BBG` or exactly 12 characters long is treated as a
+FIGI and looked up as-is. Example: `BBG000S8XPJ4` (SBER ADR). FIGIs are unique
+per instrument, so they are never ambiguous.
+
+A symbol the T-Bank API cannot resolve raises `InvalidInstrumentError`.
+
+#### Twelve Data (`source="twelvedata"`)
+
+Twelve Data covers **global equities, ETFs, forex, crypto, and (on paid plans)
+indices**. The symbol format depends on the asset class:
+
+| Asset class       | `instrument` format          | Examples                          | Notes                                                  |
+|-------------------|------------------------------|-----------------------------------|--------------------------------------------------------|
+| Stocks            | `SYMBOL`                     | `AAPL`, `MSFT`, `TSLA`, `SAP`     | Bare ticker, no exchange suffix.                       |
+| ETFs              | `SYMBOL`                     | `SPY`, `QQQ`, `AAAA`              | Same format as stocks.                                 |
+| Forex             | `BASE/QUOTE`                 | `EUR/USD`, `GBP/USD`, `USD/JPY`   | ISO currency codes, slash-separated.                   |
+| Crypto            | `BASE/QUOTE`                 | `BTC/USD`, `ETH/BTC`, `USDT/USD`  | Same `BASE/QUOTE` shape as forex.                      |
+| Indices (paid)    | `SYMBOL`                     | `SPX`, `NDX`                      | Only on Grow/Venture plans; 404 on free tier.          |
+
+> **Slash matters.** Forex/crypto pairs must use the `BASE/QUOTE` form —
+> `EUR/USD` works, `EURUSD` does **not**.
+
+**Ambiguity across exchanges.** The same ticker often trades on multiple
+exchanges (e.g. `AAPL` is listed on NASDAQ, plus CEDEARs/DRs in Argentina,
+Canada, Mexico, …; `SHOP` trades on both NASDAQ and TSX). This example does not
+expose Twelve Data's `exchange=`/`mic_code=` disambiguation parameters, so a
+bare ticker resolves to Twelve Data's **primary listing** (verified: bare
+`AAPL` → NASDAQ `XNGS`). If you need a specific listing, open an issue — it is
+a small adapter extension to forward `exchange=`/`mic_code=`.
+
+**Index support is limited on the free tier.** Plain index tickers like
+`GSPC`/`IXIC`/`DJI` return `404`; major ones (`SPX`, `NDX`) require a paid
+plan. Use an ETF proxy on free tiers instead (e.g. `SPY` for S&P 500, `QQQ`
+for Nasdaq-100).
+
+A symbol Twelve Data cannot resolve returns `404` and is raised as
+`InvalidInstrumentError`; exceeding your plan returns a `BrokerError` (429 for
+rate/credit limits).
+
+**Finding a valid symbol.** Use Twelve Data's reference endpoints to confirm a
+symbol before fetching candles:
+
+```python
+import asyncio, aiohttp, os
+
+async def search(symbol):
+    async with aiohttp.ClientSession() as s:
+        async with s.get(
+            "https://api.twelvedata.com/symbol_search",
+            params={"symbol": symbol, "apikey": os.environ["TWELVEDATA_TOKEN"]},
+        ) as r:
+            return await r.json()
+
+print(asyncio.run(search("AAPL")))
+# -> [{'symbol':'AAPL','instrument_name':'Apple Inc.','exchange':'NASDAQ',
+#      'mic_code':'XNGS','instrument_type':'Common Stock','country':'United States'}, ...]
+```
+
+The full symbol lists are also browsable at the
+[Twelve Data request builder](https://twelvedata.com/request-builder) and in
+the [API docs](https://twelvedata.com/docs#reference-data).
+
+#### Bybit (`source="bybit"`)
+
+Bybit is a crypto exchange. Symbols are **base+quote concatenated without a
+separator** (unlike Twelve Data's `BASE/QUOTE`):
+
+| Asset class | `instrument` format  | Examples                              | Notes                                            |
+|-------------|----------------------|---------------------------------------|--------------------------------------------------|
+| Spot pairs  | `BASEQUOTE`          | `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `XRPUSDT`, `DOGEUSDT` | Default category. Quote is typically `USDT`/`USDC`. |
+| Perpetuals  | `BASEQUOTE`          | `BTCUSDT`, `ETHUSDT`                  | Linear (USDT-margined). Set via `BybitAdapter(category="linear")`. |
+| Inverse     | `BASEUSD`            | `BTCUSD`, `ETHUSD`                    | Inverse contracts. Set via `BybitAdapter(category="inverse")`. |
+
+**Default category is `spot`.** This example wires `BybitAdapter(category="spot")`
+in `_build_adapter`, so `BTCUSDT` resolves to the **spot** pair. Spot and
+perpetual prices/volumes differ for the same symbol — to fetch perpetuals,
+construct the adapter directly:
+
+```python
+import asyncio
+from src.broker_adapter import BybitAdapter
+
+async def main():
+    async with BybitAdapter(category="linear") as adapter:
+        return await adapter.get_candles(
+            instrument="BTCUSDT",
+            timeframe="1h",
+            from_dt=__import__("datetime").datetime(2024, 1, 1),
+            to_dt=__import__("datetime").datetime(2024, 2, 1),
+        )
+
+candles = asyncio.run(main())
+```
+
+Common spot pairs (illustrative — Bybit lists hundreds):
+
+| Symbol      | Pair              | Symbol      | Pair              |
+|-------------|-------------------|-------------|-------------------|
+| `BTCUSDT`   | Bitcoin / Tether  | `SOLUSDT`   | Solana / Tether   |
+| `ETHUSDT`   | Ethereum / Tether | `XRPUSDT`   | XRP / Tether      |
+| `BTCUSDC`   | Bitcoin / USD Coin| `DOGEUSDT`  | Dogecoin / Tether |
+| `ETHUSDC`   | Ethereum / USD Coin| `ADAUSDT`  | Cardano / Tether  |
+| `BNBUSDT`   | BNB / Tether      | `AVAXUSDT`  | Avalanche / Tether|
+
+More information in file List_of_spots_bybit.txt
+A symbol Bybit doesn't recognise returns `retCode 10001` and is raised as
+`InvalidInstrumentError`. **No token is required** — the kline endpoint is
+public. The full instrument list is available via the
+[`instruments-info`](https://bybit-exchange.github.io/docs/v5/market/instrument)
+endpoint or the Bybit UI.
 
 ### Timeframe
 
-| Value  | Meaning   | Max `days` (sandbox) | Notes                                            |
-|--------|-----------|----------------------|--------------------------------------------------|
-| `1m`   | 1 minute  | 1                    | **Minimum supported resolution.**                |
-| `5m`   | 5 minutes | 7                    |                                                  |
-| `15m`  | 15 minutes| 24                   |                                                  |
-| `30m`  | 30 minutes| 25                   |                                                  |
-| `1h`   | 1 hour    | 100                  |                                                  |
-| `1d`   | 1 day     | 2400                  |                                                 |
-| `1w`   | 1 week    | 2100                  |                                                 |
-| `1M`   | 1 month   | 3600                  |                                                 |
+The same set of timeframe values works for **all three** sources:
+
+| Value  | Meaning   | Max `days` — T-Bank sandbox | Max `days` — Twelve Data | Max `days` — Bybit |
+|--------|-----------|-----------------------------|--------------------------|--------------------|
+| `1m`   | 1 minute  | 1                           | 3650 (soft cap)          | 3650 (soft cap)    |
+| `5m`   | 5 minutes | 7                           | 3650 (soft cap)          | 3650 (soft cap)    |
+| `15m`  | 15 minutes| 24                          | 3650 (soft cap)          | 3650 (soft cap)    |
+| `30m`  | 30 minutes| 25                          | 3650 (soft cap)          | 3650 (soft cap)    |
+| `1h`   | 1 hour    | 100                         | 3650 (soft cap)          | 3650 (soft cap)    |
+| `1d`   | 1 day     | 2400                        | 3650 (soft cap)          | 3650 (soft cap)    |
+| `1w`   | 1 week    | 2100                        | 3650 (soft cap)          | 3650 (soft cap)    |
+| `1M`   | 1 month   | 3600                        | 3650 (soft cap)          | 3650 (soft cap)    |
 
 - **Minimum timeframe is `1m`.** Sub-minute intervals (`1s`, `30s`, `15s`, …)
-  are **rejected** with a `ValueError` before any network call — the T-Bank
-  candle endpoint does not serve finer granularity.
+  are **rejected** with a `ValueError` before any network call — no provider
+  serves finer granularity.
 - The supported set is exported as `TIMEFRAMES`; the minimum is exported as
   `MIN_TIMEFRAME = "1m"`.
 - Unknown values (e.g. `"2m"`, `"hour"`) are also rejected.
 - Surrounding whitespace is tolerated and stripped.
 
+Internally, each adapter maps these onto its interval names (Twelve Data:
+`1min`/`5min`/`1h`/`1day`/`1week`/`1month`; Bybit: `1`/`5`/`15`/`30`/`60`/`D`/`W`/`M`);
+you never need to use those names yourself.
+
 ### History limits (`days`)
 
-The T-Bank sandbox's `GetCandles` endpoint caps how wide a date range it will
-serve. For **intraday** timeframes, a range that is too wide fails with gRPC
-error `30014` and returns **no candles at all**. So the `days` parameter is
-validated up front against a per-timeframe cap, and an oversized request raises
-a `ValueError` instead of an empty response.
-
-The caps are measured empirically (see the method below) and exported as
-`DAYS_LIMIT_BY_TIMEFRAME`:
+**T-Bank (`source="tbank"`).** The sandbox's `GetCandles` endpoint caps how
+wide a date range it will serve. For **intraday** timeframes, a range that is
+too wide fails with gRPC error `30014` and returns **no candles at all**. So
+`days` is validated up front against a per-timeframe cap, and an oversized
+request raises a `ValueError` instead of an empty response. The caps are
+exported as `DAYS_LIMIT_BY_TIMEFRAME`:
 
 ```python
 DAYS_LIMIT_BY_TIMEFRAME = {
@@ -179,19 +389,24 @@ DAYS_LIMIT_BY_TIMEFRAME = {
 }
 ```
 
-- Intraday limits (`1m`–`1h`) are hard: one day more than the cap → `30014`,
-  zero candles. The validator triggers just under the measured boundary.
-- **Note:** `days` is only validated when `from_date` is *not* supplied (i.e.
-  when the window is derived from `days`). If you pass explicit `from_date` /
-  `to_date`, the window is sent to the API as-is, and an overly wide intraday
-  range will come back empty.
+These intraday limits were measured empirically (exponential-then-binary search
+probing the sandbox for the largest `days` that still returns a non-empty candle
+list for `SBER`). Re-run such a probe if the sandbox changes.
 
-**How the limits were measured.** For each timeframe, an exponential-then-binary
-search probed the sandbox for the largest `days` that still returns a non-empty
-candle list for `SBER`, while retrying on transient rate-limit errors so
-throttling was not misread as a width limit. The boundary where the response
-flips from "candles" to gRPC error `30014` is the cap. The validation values
-sit just inside those boundaries. Re-run such a probe if the sandbox changes.
+**Twelve Data (`source="twelvedata"`).** There is no per-timeframe sandbox cap;
+only a generous sanity ceiling (`_MAX_DAYS_TWELVEDATA = 3650`) guards against
+pathological requests. Use `from_date`/`to_date` for very long histories.
+
+**Bybit (`source="bybit"`).** No per-timeframe cap. Bybit caps each request at
+**200 candles**, but the adapter **paginates transparently** — wide windows
+(e.g. a year of 1-minute bars) are split into 200-candle pages internally, so a
+single `fetch_candles` call returns the whole range. Only the soft ceiling
+(`_MAX_DAYS_BYBIT = 3650`) applies.
+
+> **Note:** `days` is only validated when `from_date` is *not* supplied (i.e.
+> when the window is derived from `days`). If you pass explicit `from_date` /
+> `to_date`, the window is sent to the API as-is, and an overly wide T-Bank
+> intraday range will come back empty.
 
 ### Date range
 
@@ -200,16 +415,26 @@ sit just inside those boundaries. Re-run such a probe if the sandbox changes.
 - If `from_date` is omitted it is computed as `to_date - days`; in that case
   `days` is validated against the [history limits](#history-limits-days).
 - If `from_date` is supplied explicitly, it overrides `days` and the window is
-  not pre-validated for width — an overly wide intraday range returns an empty
-  list from the API (no exception).
+  not pre-validated for width — an overly wide T-Bank intraday range returns an
+  empty list from the API (no exception).
 
 ### Environment & token
 
-- `use_sandbox=False` (default) → `https://invest-public-api.tbank.ru`.
-- `use_sandbox=True`  → `https://sandbox-invest-public-api.tbank.ru`.
-  Use the sandbox for testing without touching real account endpoints.
-- `token=None` (default) → loaded from the `TINKOFF_TOKEN` environment variable
-  via `get_token()`, which raises a clear `ValueError` if the variable is unset.
+- `source="tbank"`:
+  - `use_sandbox=False` (default) → `https://invest-public-api.tbank.ru`.
+  - `use_sandbox=True`  → `https://sandbox-invest-public-api.tbank.ru`.
+  - `token=None` (default) → loaded from `TINKOFF_TOKEN` via `get_token("tbank")`.
+- `source="twelvedata"`:
+  - `https://api.twelvedata.com` is always used (no sandbox).
+  - `token=None` (default) → loaded from `TWELVEDATA_TOKEN` via
+    `get_token("twelvedata")`.
+- `source="bybit"`:
+  - `https://api.bybit.com` is always used (no sandbox).
+  - `token=None` (default) → `BYBIT_TOKEN` is **optional**; if unset,
+    `get_token("bybit")` returns `None` (the kline endpoint is public).
+  - The token is **not** sent with kline requests.
+- `DATA_SOURCE` (env) sets the default source when `source=` isn't passed;
+  defaults to `"tbank"` if unset.
 
 ---
 
@@ -222,42 +447,43 @@ Both `fetch_candles` and `run_fetch_candles` return a `List[Candle]` in
 ```python
 @dataclass
 class Candle:
-    timestamp: str   # ISO-8601 without tz: "YYYY-MM-DDTHH:MM:SS" (UTC)
-    open:     float  # OHLC are prices in the instrument's currency (usually RUB)
+    timestamp: str   # ISO-8601 without tz: "YYYY-MM-DDTHH:MM:SS"
+    open:     float  # OHLC are prices in the instrument's currency
     high:     float
     low:      float
-    close:    float
+    close:     float
     volume:    float  # traded volume for the candle's interval
 ```
 
-- **`timestamp`** is a string in `"YYYY-MM-DDTHH:MM:SS"` format and represents
-  the candle's **start time in UTC** (the API returns UTC).
-- **`open/high/low/close`** are floats converted from the API's
-  `Quotation` (units + nano) representation, preserving full precision.
-- **`volume`** is a float (cast from the integer the API returns).
-- The list is returned in the order the API provides (chronological, oldest
-  first). It is **not** post-validated — the adapter passes candles through
-  unchanged.
-
-You can iterate the list directly, or hand it to any component that expects
-`List[Candle]` — e.g. `ExecutionEngine.run(...)`.
+- **`timestamp`** is a string in `"YYYY-MM-DDTHH:MM:SS"` format. T-Bank returns
+  UTC; Twelve Data returns the exchange's timezone; **Bybit returns UTC**. For
+  daily/weekly/monthly intervals the time component is `00:00:00`.
+- **`open/high/low/close`** are floats. T-Bank values come from the API's
+  `Quotation` (units + nano) with full precision; Twelve Data and Bybit values
+  come as decimal strings.
+- **`volume`** is a float. If Twelve Data omits it (e.g. for some FX pairs), it
+  defaults to `0.0`. Bybit always provides volume (in base units).
+- The list is returned oldest-first. You can iterate it directly, or hand it to
+  any component that expects `List[Candle]` — e.g. `ExecutionEngine.run(...)`.
 
 ---
 
 ## Validation rules
 
-The module validates user **inputs** before any network call. Both checks raise
-`ValueError` with a descriptive message:
+The module validates user **inputs** before any network call. The following
+raise `ValueError` with a descriptive message:
 
-1. **Timeframe** (`_validate_timeframe`)
+1. **Source** (`_resolve_source`)
+   - Must be one of `("tbank", "twelvedata", "bybit")`. Anything else is rejected.
+2. **Timeframe** (`_validate_timeframe`)
    - Must be one of `TIMEFRAMES`.
    - Sub-minute intervals (`*s`) are explicitly rejected — minimum is `1m`.
-
-2. **History depth** (`_validate_days`), checked only when the window is derived
+3. **History depth** (`_validate_days`), checked only when the window is derived
    from `days` (i.e. `from_date` not supplied):
    - `days` must be a positive integer.
-   - `days` must not exceed the per-timeframe cap in `DAYS_LIMIT_BY_TIMEFRAME`
-     (see [history limits](#history-limits-days)).
+   - For `source="tbank"`: must not exceed the per-timeframe cap in
+     `DAYS_LIMIT_BY_TIMEFRAME`.
+   - For `source="twelvedata"`/`"bybit"`: must not exceed the soft cap (3650).
 
 No validation is performed on the candles themselves — the adapter returns
 whatever the API delivers. An empty result set (no candles in range) is returned
@@ -276,6 +502,7 @@ run_backtest(
     days: int = 30,
     initial_capital: float = 100000.0,
     strategy_params: Optional[Dict[str, Any]] = None,  # default: fast=10, slow=30, order_size=1.0
+    source: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     use_sandbox: bool = False,
@@ -294,8 +521,8 @@ Returns a dict with keys:
 If no candles are fetched, it returns `{"trade_log": [], "final_portfolio": None, "candles_count": 0}`.
 
 `strategy_params` defaults to `{"fast": 10, "slow": 30, "order_size": 1.0}` for
-the `MACrossover` strategy. Pass the same timeframe/instrument validation rules
-apply (minimum `1m`).
+the `MACrossover` strategy. The same timeframe/instrument/source validation
+rules apply as for fetching.
 
 ---
 
@@ -303,12 +530,12 @@ apply (minimum `1m`).
 
 | Exception                     | When it is raised                                                                 |
 |-------------------------------|-----------------------------------------------------------------------------------|
-| `ValueError`                  | Unsupported/`sub-1m` `timeframe`, or `days` larger than the per-timeframe cap (`DAYS_LIMIT_BY_TIMEFRAME`). |
-| `ValueError` (from `get_token`)| `TINKOFF_TOKEN` is not set in the environment and no `token=` was passed.        |
-| `AuthenticationError`         | The token is invalid/expired (gRPC status 16) or connection test fails.          |
-| `InvalidInstrumentError`      | The ticker cannot be resolved to a FIGI by the API.                              |
-| `RateLimitError`              | T-Bank rate limit hit (gRPC status 8).                                            |
-| `BrokerError`                 | Any other adapter-level/gRPC/transport error (e.g. gRPC `30014` if an explicit `from_date`/`to_date` window is too wide for an intraday timeframe). |
+| `ValueError`                  | Unsupported `source`, unsupported/`sub-1m` `timeframe`, or `days` larger than the source's cap. |
+| `ValueError` (from `get_token`)| The token env var for a source that *requires* it (`tbank`/`twelvedata`) is not set and no `token=` was passed. Not raised for `bybit` (token optional).  |
+| `AuthenticationError`         | The token is invalid/expired (T-Bank gRPC status 16; Twelve Data HTTP 401/403). Not raised by Bybit kline (public).  |
+| `InvalidInstrumentError`      | The ticker/symbol cannot be resolved by the API (T-Bank lookup, Twelve Data 400/404, Bybit `retCode 10001`).  |
+| `RateLimitError`              | A rate limit is hit (T-Bank gRPC status 8; Twelve Data HTTP 429; Bybit `retCode 10006`).                 |
+| `BrokerError`                 | Any other adapter-level/transport error (e.g. gRPC `30014` for an overly wide explicit T-Bank intraday window). |
 
 All of these except `ValueError` come from
 [`src/broker_adapter/base.py`](../src/broker_adapter/base.py).
@@ -317,7 +544,7 @@ All of these except `ValueError` come from
 
 ## Examples
 
-### 1. Fetch by days
+### 1. Fetch by days (default source)
 
 ```python
 from examples.tbank_adapter_usage import run_fetch_candles
@@ -325,7 +552,64 @@ from examples.tbank_adapter_usage import run_fetch_candles
 candles = run_fetch_candles(instrument="GAZP", timeframe="1h", days=14)
 ```
 
-### 2. Fetch an explicit window
+### 2. Twelve Data explicitly
+
+```python
+from examples.tbank_adapter_usage import run_fetch_candles
+
+# Daily candles for Apple
+candles = run_fetch_candles(
+    instrument="AAPL",
+    source="twelvedata",
+    timeframe="1d",
+    days=60,
+)
+
+# Forex pair
+candles = run_fetch_candles(
+    instrument="EUR/USD",
+    source="twelvedata",
+    timeframe="1h",
+    days=7,
+)
+```
+
+### 3. Bybit explicitly
+
+```python
+from examples.tbank_adapter_usage import run_fetch_candles
+
+# Daily candles for BTC/USDT (spot). No token required.
+candles = run_fetch_candles(
+    instrument="BTCUSDT",
+    source="bybit",
+    timeframe="1d",
+    days=60,
+)
+
+# Intraday — the adapter paginates past Bybit's 200-candle cap automatically
+candles = run_fetch_candles(
+    instrument="ETHUSDT",
+    source="bybit",
+    timeframe="1m",
+    days=1,  # ~1440 one-minute candles
+)
+```
+
+### 4. Set the default source via `.env`
+
+```dotenv
+# .env
+TWELVEDATA_TOKEN=...
+DATA_SOURCE=twelvedata
+```
+
+```python
+# source= is now optional; DATA_SOURCE is used
+candles = run_fetch_candles(instrument="AAPL", timeframe="1d", days=30)
+```
+
+### 4. Fetch an explicit window
 
 ```python
 candles = run_fetch_candles(
@@ -336,45 +620,49 @@ candles = run_fetch_candles(
 )
 ```
 
-### 3. Use the sandbox
+### 5. Use the T-Bank sandbox
 
 ```python
 candles = run_fetch_candles(
     instrument="SBER",
+    source="tbank",
     timeframe="5m",
     days=1,
     use_sandbox=True,
 )
 ```
 
-### 4. Async usage
+### 6. Async usage
 
 ```python
 import asyncio
 from examples.tbank_adapter_usage import fetch_candles
 
 async def main():
-    return await fetch_candles(instrument="SBER", timeframe="1h", days=7)
+    return await fetch_candles(
+        instrument="AAPL", source="twelvedata", timeframe="1h", days=7
+    )
 
 candles = asyncio.run(main())
 ```
 
-### 5. Run a backtest
+### 7. Run a backtest
 
 ```python
 from examples.tbank_adapter_usage import run_backtest
 
 result = run_backtest(
-    instrument="SBER",
-    timeframe="1h",
-    days=30,
+    instrument="AAPL",
+    source="twelvedata",
+    timeframe="1d",
+    days=120,
     initial_capital=100_000,
     strategy_params={"fast": 10, "slow": 30, "order_size": 1.0},
 )
 print(result["candles_count"], "candles ->", len(result["trade_log"]), "trades")
 ```
 
-### 6. Minimum timeframe (1 minute)
+### 8. Minimum timeframe (1 minute)
 
 ```python
 candles = run_fetch_candles(instrument="SBER", timeframe="1m", days=1)
@@ -388,18 +676,22 @@ candles = run_fetch_candles(instrument="SBER", timeframe="1m", days=1)
 
 ## Limitations
 
-- **History window is capped per timeframe** in the sandbox — intraday
+- **T-Bank history window is capped per timeframe** in the sandbox — intraday
   timeframes (`1m`–`1h`) return *nothing* past their cap (gRPC `30014`). See
   [history limits](#history-limits-days). For longer intraday history, split
-  the request into multiple ≤-cap windows or use a coarser timeframe.
+  the request into multiple ≤-cap windows or use a coarser timeframe. Twelve
+  Data has no such per-timeframe cap (only a soft 3650-day ceiling).
 - **`days` validation only applies when `from_date` is not supplied.** An
-  explicit `from_date`/`to_date` window is sent as-is; an overly wide intraday
-  range will return an empty list (no exception).
-- **No real orders / portfolio access.** `TBankAdapter.place_order()` and
+  explicit `from_date`/`to_date` window is sent as-is; an overly wide T-Bank
+  intraday range will return an empty list (no exception).
+- **Twelve Data rate limits** depend on your plan (free tier is ~8 requests/min,
+  with a daily credit allowance). For bulk fetches, throttle your calls.
+- **No real orders / portfolio access.** Both adapters' `place_order()` and
   `get_portfolio()` raise `NotImplementedError` — this module is read-only for
   market data.
-- **SSL verification is disabled** (`verify_ssl=False`) in the example for
-  convenience in dev/test. Re-enable certificate verification before any
-  production use.
+- **SSL verification is disabled** (`verify_ssl=False`) for the T-Bank adapter
+  in the example for convenience in dev/test. Re-enable certificate
+  verification before any production use. (Twelve Data uses plain HTTPS and
+  does not disable verification.)
 - Results are **historical market data**, not financial advice and not evidence
   of future profitability.
