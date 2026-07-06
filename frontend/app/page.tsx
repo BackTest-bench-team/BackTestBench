@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Brush,
+  BacktestControlPanel,
+  type RuntimeSettings,
+} from "@/components/BacktestControlPanel";
+import { AddStrategyPanel } from "@/components/AddStrategyPanel";
+import {
   CartesianGrid,
   ComposedChart,
   Line,
@@ -41,6 +45,22 @@ type ChartRow = ChartPoint & {
   alpha: number;
 };
 
+type OptimizationSummary = {
+  target_metric: string;
+  mode: string;
+  grid_size: number;
+  iterations_requested: number;
+  iterations_run: number;
+  exhaustive: boolean;
+  seed: number;
+  top_iterations: Array<{
+    params: Record<string, number>;
+    total_pnl: number;
+    sharpe_ratio: number;
+    score: number;
+  }>;
+};
+
 type StrategyResult = {
   strategy_id: string;
   strategy_version: string;
@@ -49,6 +69,7 @@ type StrategyResult = {
   params: Record<string, number>;
   parameter_specs?: ParamSpec[];
   initial_capital: number;
+  optimization?: OptimizationSummary;
   metrics: {
     total_pnl: number | null;
     sharpe_ratio: number | null;
@@ -151,16 +172,6 @@ function formatAxisDate(value: string) {
     : d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
 }
 
-function paramsEqual(a: Record<string, number>, b: Record<string, number>) {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
-function runSettled(strategy: StrategyResult, expectedParams: Record<string, number>) {
-  if (strategy.status === "error") return true;
-  if (strategy.status !== "completed") return false;
-  if (!paramsEqual(strategy.params, expectedParams)) return false;
-  return (strategy.chart_points?.length ?? 0) > 0;
-}
 
 function buildChartRows(points: ChartPoint[], trades: TradePoint[]): ChartRow[] {
   const actionByDate = new Map(trades.map((t) => [t.timestamp, t.action]));
@@ -171,12 +182,6 @@ function buildChartRows(points: ChartPoint[], trades: TradePoint[]): ChartRow[] 
   }));
 }
 
-function needsBootstrap(strategies: StrategyResult[]) {
-  if (!strategies.length) return true;
-  return strategies.every(
-    (s) => s.status === "idle" && (s.chart_points?.length ?? 0) === 0
-  );
-}
 
 function needsRankingRefresh(strategies: StrategyResult[], ranking?: DashboardRanking) {
   if (!strategies.length) return false;
@@ -280,7 +285,10 @@ function StrategySearch({
       >
         <input
           className="strategy-search-input"
-          type="search"
+          type="text"
+          role="searchbox"
+          autoComplete="off"
+          spellCheck={false}
           value={query}
           placeholder="Name or ID, e.g. MA Crossover"
           aria-label="Find strategy"
@@ -425,87 +433,72 @@ function formatParamLabel(name: string) {
   return name.replace(/_/g, " ");
 }
 
-function ParamEditor({
-  specs,
-  params,
-  disabled,
-  onCommit,
-}: {
-  specs: ParamSpec[];
-  params: Record<string, number>;
-  disabled: boolean;
-  onCommit: (next: Record<string, number>) => void;
-}) {
-  const [draft, setDraft] = useState<Record<string, string>>(() =>
-    Object.fromEntries(Object.entries(params).map(([key, value]) => [key, String(value)]))
-  );
-  const editingRef = useRef(false);
-
-  useEffect(() => {
-    if (editingRef.current) return;
-    setDraft(Object.fromEntries(Object.entries(params).map(([key, value]) => [key, String(value)])));
-  }, [params]);
-
-  const ordered: ParamSpec[] = specs.length
-    ? specs
-    : Object.keys(params).map((name) => ({
-        name,
-        type: "float",
-        default: params[name],
-      }));
-
-  function parseDraft(): Record<string, number> | null {
-    const next: Record<string, number> = {};
-    for (const spec of ordered) {
-      const raw = draft[spec.name]?.trim();
-      if (!raw) return null;
-      const parsed = spec.type === "int" ? parseInt(raw, 10) : parseFloat(raw);
-      if (Number.isNaN(parsed)) return null;
-      if (spec.minimum != null && parsed < spec.minimum) return null;
-      if (spec.maximum != null && parsed > spec.maximum) return null;
-      next[spec.name] = parsed;
-    }
-    return next;
-  }
-
-  function commitIfChanged() {
-    editingRef.current = false;
-    const next = parseDraft();
-    if (!next) return;
-    if (paramsEqual(next, params)) return;
-    onCommit(next);
-  }
-
+function ParamSummary({ params }: { params: Record<string, number> }) {
   return (
-    <div className="params-form">
-      {ordered.map((spec) => (
-        <label className="param-field" key={spec.name}>
-          <span className="param-label">{formatParamLabel(spec.name)}</span>
-          <input
-            className="param-input"
-            type="number"
-            step={spec.type === "int" ? 1 : 0.1}
-            min={spec.minimum}
-            max={spec.maximum}
-            disabled={disabled}
-            value={draft[spec.name] ?? String(spec.default)}
-            onFocus={() => {
-              editingRef.current = true;
-            }}
-            onChange={(e) => {
-              editingRef.current = true;
-              setDraft((prev) => ({ ...prev, [spec.name]: e.target.value }));
-            }}
-            onBlur={commitIfChanged}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") e.currentTarget.blur();
-            }}
-          />
-          {spec.description && <span className="param-hint">{spec.description}</span>}
-        </label>
+    <div className="params-summary" aria-label="Strategy parameters">
+      {Object.entries(params).map(([name, value]) => (
+        <div className="param-chip" key={name}>
+          <span className="param-chip-label">{formatParamLabel(name)}</span>
+          <span className="param-chip-value">{value}</span>
+        </div>
       ))}
     </div>
   );
+}
+
+function OptimizationPanel({ summary }: { summary: OptimizationSummary }) {
+  const scopeLabel =
+    summary.mode === "grid" || summary.exhaustive
+      ? `Full grid search: ${summary.iterations_run} valid combinations evaluated (best by ${summary.target_metric})`
+      : `Random sample: ${summary.iterations_run} of ${summary.grid_size} combinations (seed ${summary.seed})`;
+
+  return (
+    <div className="optimization-panel">
+      <div className="optimization-header">
+        <span className="optimization-title">Parameter search</span>
+        <span className="optimization-scope">{scopeLabel}</span>
+      </div>
+      {summary.top_iterations.length > 0 && (
+        <div className="optimization-table-wrap">
+          <table className="optimization-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>P&amp;L</th>
+                <th>Sharpe</th>
+                <th>Params</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.top_iterations.map((row, index) => (
+                <tr key={index} className={index === 0 ? "is-best" : undefined}>
+                  <td>{index + 1}</td>
+                  <td>{formatMoney(row.total_pnl)}</td>
+                  <td>{formatNumber(row.sharpe_ratio)}</td>
+                  <td>
+                    {Object.entries(row.params)
+                      .filter(([key]) => key !== "order_size")
+                      .map(([key, value]) => `${formatParamLabel(key)}=${value}`)
+                      .join(", ")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function clampViewRange(start: number, end: number, maxIndex: number, minWindow: number) {
+  const size = Math.max(minWindow, Math.min(maxIndex + 1, end - start + 1));
+  let nextStart = Math.max(0, Math.min(start, maxIndex));
+  let nextEnd = Math.min(maxIndex, nextStart + size - 1);
+  if (nextEnd - nextStart + 1 < minWindow) {
+    nextStart = Math.max(0, nextEnd - minWindow + 1);
+  }
+  return { start: nextStart, end: nextEnd };
 }
 
 function ChartTooltip({
@@ -546,28 +539,69 @@ function TradeMarker(props: { cx?: number; cy?: number; payload?: ChartRow }) {
 
 function PerformanceChart({ points, trades = [] }: { points: ChartPoint[]; trades: TradePoint[] }) {
   const data = useMemo(() => buildChartRows(points, trades), [points, trades]);
+  const chartBoxRef = useRef<HTMLDivElement>(null);
 
   const dataSignature = useMemo(
     () => `${data.length}:${data[0]?.date ?? ""}:${data[data.length - 1]?.date ?? ""}`,
     [data]
   );
 
-  const lastSignature = useRef("");
-  const [brushIndices, setBrushIndices] = useState({ startIndex: 0, endIndex: 0 });
+  const [viewRange, setViewRange] = useState<{ start: number; end: number } | null>(null);
 
   useEffect(() => {
-    if (!data.length) return;
-    const lastIndex = data.length - 1;
-    if (lastSignature.current !== dataSignature) {
-      lastSignature.current = dataSignature;
-      setBrushIndices({ startIndex: 0, endIndex: lastIndex });
-    }
-  }, [dataSignature, data.length]);
+    setViewRange(null);
+  }, [dataSignature]);
 
-  const handleBrushChange = (range: { startIndex?: number; endIndex?: number }) => {
-    if (range.startIndex == null || range.endIndex == null) return;
-    setBrushIndices({ startIndex: range.startIndex, endIndex: range.endIndex });
-  };
+  const maxIndex = Math.max(data.length - 1, 0);
+  const minWindow = Math.min(12, Math.max(data.length, 1));
+  const start = viewRange?.start ?? 0;
+  const end = viewRange?.end ?? maxIndex;
+  const isZoomed = start > 0 || end < maxIndex;
+
+  useEffect(() => {
+    const element = chartBoxRef.current;
+    if (!element || !data.length) return;
+
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      setViewRange((current) => {
+        const currentStart = current?.start ?? 0;
+        const currentEnd = current?.end ?? maxIndex;
+        const windowSize = currentEnd - currentStart + 1;
+        const zoomIn = event.deltaY < 0;
+        const factor = zoomIn ? 0.82 : 1.22;
+        let nextSize = Math.round(windowSize * factor);
+        nextSize = Math.max(minWindow, Math.min(data.length, nextSize));
+
+        if (nextSize >= data.length) {
+          return null;
+        }
+
+        const center = (currentStart + currentEnd) / 2;
+        let nextStart = Math.round(center - (nextSize - 1) / 2);
+        let nextEnd = nextStart + nextSize - 1;
+
+        if (nextEnd > maxIndex) {
+          nextEnd = maxIndex;
+          nextStart = Math.max(0, nextEnd - nextSize + 1);
+        }
+        if (nextStart < 0) {
+          nextStart = 0;
+          nextEnd = Math.min(maxIndex, nextSize - 1);
+        }
+
+        return clampViewRange(nextStart, nextEnd, maxIndex, minWindow);
+      });
+    };
+
+    element.addEventListener("wheel", onWheel, { passive: false });
+    return () => element.removeEventListener("wheel", onWheel);
+  }, [data.length, maxIndex, minWindow]);
+
+  const xDomain = useMemo(() => {
+    if (!data.length || !isZoomed) return ["dataMin", "dataMax"] as const;
+    return [data[start].date, data[end].date] as [string, string];
+  }, [data, end, isZoomed, start]);
 
   const summary = useMemo(() => {
     if (!data.length) return null;
@@ -595,12 +629,15 @@ function PerformanceChart({ points, trades = [] }: { points: ChartPoint[]; trade
         </div>
       )}
 
-      <div className="chart-box">
+      <div className={`chart-box${isZoomed ? " is-zoomed" : ""}`} ref={chartBoxRef}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 12, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART.grid} />
             <XAxis
               dataKey="date"
+              type="category"
+              domain={xDomain}
+              allowDataOverflow
               tickFormatter={formatAxisDate}
               minTickGap={32}
               tick={{ fill: CHART.axis, fontSize: 11 }}
@@ -636,17 +673,6 @@ function PerformanceChart({ points, trades = [] }: { points: ChartPoint[]; trade
               activeDot={{ r: 4, fill: CHART.strategy }}
               isAnimationActive={false}
             />
-            <Brush
-              dataKey="date"
-              height={22}
-              stroke={CHART.brush}
-              fill="rgba(71, 94, 230, 0.1)"
-              tickFormatter={formatAxisDate}
-              travellerWidth={10}
-              startIndex={brushIndices.startIndex}
-              endIndex={brushIndices.endIndex}
-              onChange={handleBrushChange}
-            />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -657,30 +683,51 @@ function PerformanceChart({ points, trades = [] }: { points: ChartPoint[]; trade
         <span className="legend-baseline">Baseline 100</span>
         <span className="buy-dot">BUY</span>
         <span className="sell-dot">SELL</span>
-        <span className="legend-brush">Drag brush to zoom</span>
       </div>
     </div>
   );
 }
 
+function formatStrategyError(message: string | null | undefined) {
+  if (!message) return "Unknown error";
+  if (message.includes("invest-public-api.tbank.ru") || message.includes("Connection failed")) {
+    return "T-Bank API unreachable (network timeout). Check internet/VPN/firewall, or run again when cached candles exist in the database.";
+  }
+  return message;
+}
+
 function StrategyCard({
   strategy,
-  pendingParams,
   rankEntry,
   highlighted,
-  onParamsCommit,
+  forceLoading,
+  busy,
+  onDelete,
 }: {
   strategy: StrategyResult;
-  pendingParams?: Record<string, number>;
   rankEntry?: RankingEntry;
   highlighted?: boolean;
-  onParamsCommit: (strategyId: string, params: Record<string, number>) => void;
+  forceLoading?: boolean;
+  busy?: boolean;
+  onDelete?: (strategyId: string) => Promise<void>;
 }) {
-  const displayParams = pendingParams ?? strategy.params;
-  const isBusy =
-    strategy.status === "running" ||
-    (pendingParams != null && !runSettled(strategy, pendingParams));
-  const isError = strategy.status === "error";
+  const isBusy = forceLoading || strategy.status === "running";
+  const isError = !forceLoading && strategy.status === "error";
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete() {
+    if (!onDelete || isBusy || deleting) return;
+    const label = strategy.title ?? strategy.strategy_id;
+    if (!window.confirm(`Delete strategy "${label}"? This removes config/strategies/${strategy.strategy_id}.yaml and all dashboard results.`)) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await onDelete(strategy.strategy_id);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
     <article
@@ -696,6 +743,16 @@ function StrategyCard({
           </div>
         </div>
         <div className="strategy-status">
+          {onDelete && (
+            <button
+              className="strategy-delete-btn"
+              type="button"
+              disabled={busy || isBusy || deleting}
+              onClick={handleDelete}
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </button>
+          )}
           {isBusy && <span className="status-pill status-running">Running</span>}
           {!isBusy && !isError && strategy.status === "completed" && (
             <span className="status-pill status-done">Ready</span>
@@ -707,14 +764,13 @@ function StrategyCard({
         </div>
       </header>
 
-      <ParamEditor
-        specs={strategy.parameter_specs ?? []}
-        params={displayParams}
-        disabled={isBusy}
-        onCommit={(next) => onParamsCommit(strategy.strategy_id, next)}
-      />
+      <ParamSummary params={strategy.params} />
 
-      {isError && strategy.error && <div className="strategy-error">{strategy.error}</div>}
+      {!isBusy && strategy.optimization && <OptimizationPanel summary={strategy.optimization} />}
+
+      {isError && strategy.error && (
+        <div className="strategy-error">{formatStrategyError(strategy.error)}</div>
+      )}
 
       {isBusy ? (
         <StrategyLoading />
@@ -765,8 +821,8 @@ function StrategyCard({
 
 export default function Page() {
   const [data, setData] = useState<DashboardData | null>(null);
-  const [pendingRuns, setPendingRuns] = useState<Record<string, Record<string, number>>>({});
-  const bootstrapRequested = useRef(false);
+  const [runRequested, setRunRequested] = useState(false);
+  const runStartedRef = useRef(false);
   const rankingRefreshRequested = useRef(false);
   const highlightTimerRef = useRef<number | null>(null);
   const [highlightedStrategyId, setHighlightedStrategyId] = useState<string | null>(null);
@@ -775,66 +831,105 @@ export default function Page() {
     const res = await fetch("/api/dashboard", { cache: "no-store" });
     const json = (await res.json()) as DashboardData;
     setData(json);
-
-    setPendingRuns((prev) => {
-      const next = { ...prev };
-      for (const [strategyId, expectedParams] of Object.entries(prev)) {
-        const strategy = json.strategies.find((s) => s.strategy_id === strategyId);
-        if (strategy && runSettled(strategy, expectedParams)) {
-          delete next[strategyId];
-        }
-      }
-      return next;
-    });
   }, []);
 
-  const runStrategy = useCallback(async (strategyId: string, params: Record<string, number>) => {
-    setPendingRuns((prev) => ({ ...prev, [strategyId]: params }));
+  const runBacktest = useCallback(async (settings: RuntimeSettings) => {
+    runStartedRef.current = false;
+    setRunRequested(true);
 
-    const res = await fetch("/api/run-strategy", {
+    const saveRes = await fetch("/api/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ strategy_id: strategyId, params }),
+      body: JSON.stringify(settings),
     });
+    const saveBody = (await saveRes.json().catch(() => null)) as { message?: string } | null;
+    if (!saveRes.ok) {
+      setRunRequested(false);
+      throw new Error(saveBody?.message ?? "Failed to save settings");
+    }
 
+    const res = await fetch("/api/bootstrap", { method: "POST" });
     if (!res.ok) {
-      setPendingRuns((prev) => {
-        const next = { ...prev };
-        delete next[strategyId];
-        return next;
-      });
+      setRunRequested(false);
       const body = (await res.json().catch(() => null)) as { message?: string } | null;
-      console.error(body?.message ?? "Strategy run failed");
+      throw new Error(body?.message ?? "Backtest run failed");
     }
   }, []);
+
+  const deleteStrategy = useCallback(
+    async (strategyId: string) => {
+      const res = await fetch(`/api/strategies/${encodeURIComponent(strategyId)}`, {
+        method: "DELETE",
+      });
+      const body = (await res.json().catch(() => null)) as { message?: string } | null;
+      if (!res.ok) {
+        throw new Error(body?.message ?? "Failed to delete strategy");
+      }
+      if (highlightedStrategyId === strategyId) {
+        setHighlightedStrategyId(null);
+      }
+      await loadDashboard();
+    },
+    [highlightedStrategyId, loadDashboard]
+  );
+
+  const stopBacktest = useCallback(async () => {
+    runStartedRef.current = false;
+    setRunRequested(false);
+
+    setData((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        strategies: prev.strategies.map((strategy) =>
+          strategy.status === "running"
+            ? { ...strategy, status: "idle" as const, error: "Stopped by user" }
+            : strategy
+        ),
+      };
+    });
+
+    const res = await fetch("/api/stop", { method: "POST" });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { message?: string } | null;
+      throw new Error(body?.message ?? "Stop request failed");
+    }
+    await loadDashboard();
+  }, [loadDashboard]);
 
   useEffect(() => {
     loadDashboard();
   }, [loadDashboard]);
 
   useEffect(() => {
-    if (!data || bootstrapRequested.current) return;
-    if (!needsBootstrap(data.strategies)) return;
-    bootstrapRequested.current = true;
-    fetch("/api/bootstrap", { method: "POST" });
-  }, [data]);
-
-  useEffect(() => {
     if (!data || rankingRefreshRequested.current) return;
-    if (needsBootstrap(data.strategies)) return;
     if (!needsRankingRefresh(data.strategies, data.ranking)) return;
     rankingRefreshRequested.current = true;
     fetch("/api/refresh-ranking", { method: "POST" });
   }, [data]);
 
   const anyBusy = useMemo(() => {
-    if (!data) return false;
-    return data.strategies.some(
-      (s) =>
-        s.status === "running" ||
-        (pendingRuns[s.strategy_id] != null && !runSettled(s, pendingRuns[s.strategy_id]))
+    if (!data) return runRequested;
+    return runRequested || data.strategies.some((s) => s.status === "running");
+  }, [data, runRequested]);
+
+  useEffect(() => {
+    if (!data || !runRequested) return;
+
+    if (data.strategies.some((s) => s.status === "running")) {
+      runStartedRef.current = true;
+    }
+
+    if (!runStartedRef.current) return;
+
+    const allSettled = data.strategies.every(
+      (s) => s.status === "completed" || s.status === "error" || s.status === "idle"
     );
-  }, [data, pendingRuns]);
+    if (allSettled) {
+      setRunRequested(false);
+      runStartedRef.current = false;
+    }
+  }, [data, runRequested]);
 
   useEffect(() => {
     const ms = anyBusy ? POLL_RUNNING_MS : POLL_IDLE_MS;
@@ -892,6 +987,10 @@ export default function Page() {
           </div>
         </header>
 
+        <BacktestControlPanel busy={anyBusy} onRun={runBacktest} onStop={stopBacktest} />
+
+        <AddStrategyPanel busy={anyBusy} onAdded={loadDashboard} />
+
         <section className="strategy-list">
           {rankedStrategies.map((strategy) => (
             <StrategyCard
@@ -899,8 +998,9 @@ export default function Page() {
               strategy={strategy}
               rankEntry={rankMap.get(strategy.strategy_id)}
               highlighted={highlightedStrategyId === strategy.strategy_id}
-              pendingParams={pendingRuns[strategy.strategy_id]}
-              onParamsCommit={runStrategy}
+              forceLoading={runRequested}
+              busy={anyBusy}
+              onDelete={deleteStrategy}
             />
           ))}
 

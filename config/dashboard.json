@@ -1,36 +1,35 @@
 {
-  "instrument": "SBER",
+  "instrument": "MGNT",
   "timeframe": "1h",
-  "initial_capital": 100000,
-  "lookback_days": 30,
-  "strategies": [
-    {
-      "id": "ma_crossover",
-      "params": {
-        "fast": 19,
-        "slow": 20,
-        "order_size": 1
-      }
+  "initial_capital": 1000000.0,
+  "lookback_days": 32,
+  "optimization_iterations": 16,
+  "optimization_mode": "sample",
+  "optimization_seed": 42,
+  "strategy_overrides": {
+    "ma_rsi_composable": {
+      "order_size": 1,
+      "fast": 5,
+      "slow": 30,
+      "rsi_period": 20,
+      "rsi_buy_min": 40,
+      "rsi_overbought": 65,
+      "stop_loss_pct": 3,
+      "take_profit_pct": 15
     },
-    {
-      "id": "ma_rsi",
-      "params": {
-        "fast": 21,
-        "slow": 29,
-        "rsi_period": 14,
-        "rsi_buy_min": 50,
-        "rsi_overbought": 71,
-        "order_size": 1
-      }
+    "rsi_bounce_demo": {
+      "stop_loss_pct": 5,
+      "order_size": 1,
+      "rsi_period": 21,
+      "rsi_oversold": 25,
+      "rsi_overbought": 75
     },
-    {
-      "id": "rsi_threshold",
-      "params": {
-        "period": 11,
-        "oversold": 30,
-        "overbought": 70.5,
-        "order_size": 1
-      }
+    "sma_cross_demo": {
+      "order_size": 1,
+      "fast": 5,
+      "slow": 20,
+      "stop_loss_pct": 10,
+      "take_profit_pct": 5
     }
-  ]
+  }
 }

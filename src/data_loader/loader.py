@@ -133,6 +133,28 @@ class DataLoader:
             self.cache.set(instrument, timeframe, rows)
         return rows
 
+    def get_latest_candle_timestamp(
+        self,
+        instrument: str,
+        timeframe: str,
+    ) -> datetime | None:
+        stmt = (
+            select(CandleModel.timestamp)
+            .where(
+                and_(
+                    CandleModel.instrument == instrument,
+                    CandleModel.timeframe == timeframe,
+                )
+            )
+            .order_by(CandleModel.timestamp.desc())
+            .limit(1)
+        )
+        row = self.session.execute(stmt).scalar_one_or_none()
+        if row is None:
+            return None
+        latest = utc_naive(row)
+        return latest.replace(tzinfo=timezone.utc)
+
     def load_engine_candles(
         self,
         instrument: str,

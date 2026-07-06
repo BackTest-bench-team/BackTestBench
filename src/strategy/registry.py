@@ -61,6 +61,11 @@ def is_registered(name: str) -> bool:
     return name in _REGISTRY
 
 
+def unregister_strategy(name: str) -> bool:
+    """Remove a strategy from the registry. Returns True if it was registered."""
+    return _REGISTRY.pop(name, None) is not None
+
+
 def clear_registry() -> None:
     """Empty the registry. Tests only."""
     _REGISTRY.clear()

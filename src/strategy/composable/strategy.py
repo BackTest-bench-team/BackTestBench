@@ -18,7 +18,7 @@ from src.engine.models import Signal
 from src.engine.types import SignalType
 
 from ..base import BaseStrategy
-from ..registry import register_strategy
+from ..registry import register_strategy, is_registered
 from ..schema import ParameterSpec
 from .compile import CompiledStrategy, compile_strategy, get_optimize_spec
 from .context import EvaluationContext, StrategyState
@@ -87,6 +87,8 @@ def register_composable_file(path: str | Path, strategy_id: str | None = None) -
     """Register a composable YAML as a concrete, describable strategy."""
     definition = StrategyDefinition.from_yaml(path)
     sid = strategy_id or definition.name
+    if is_registered(sid):
+        return sid
     cls = type(
         f"Composable_{sid}",
         (ComposableStrategy,),

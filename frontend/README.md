@@ -12,11 +12,10 @@ Browser  →  Next.js API routes  →  spawn Python (main.py)  →  backtest + s
          poll GET /api/dashboard  ←  data/runtime-dashboard.json
 ```
 
-1. The user opens `/` or changes strategy parameters.
-2. On first load (all strategies idle), the frontend calls `POST /api/bootstrap`.
+1. The user opens `/` and configures run settings in the control panel.
+2. **Run backtest** calls `POST /api/config` (save settings) then `POST /api/bootstrap`.
 3. If saved results exist but ranking is missing, it calls `POST /api/refresh-ranking`.
-4. When the user edits parameters, the frontend calls `POST /api/run-strategy`.
-5. Next.js starts `main.py` as a background process.
+4. Next.js starts `main.py` as a background process.
 6. Python loads candles (database first, T-Bank API if needed), runs the engine, recomputes
    strategy ranking, and writes `data/runtime-dashboard.json`.
 7. The page polls `GET /api/dashboard` until each strategy status is `completed` or `error`.
@@ -27,15 +26,22 @@ Browser  →  Next.js API routes  →  spawn Python (main.py)  →  backtest + s
 frontend/
 ├── app/
 │   ├── layout.tsx              # Root HTML shell; imports global CSS
-│   ├── page.tsx                # Dashboard UI (ranking, search, charts, params, polling)
+│   ├── page.tsx                # Dashboard UI (ranking, search, charts, polling)
 │   ├── globals.css             # Light trading-theme styles (CSS variables)
 │   └── api/
 │       ├── dashboard/route.ts       # GET — read runtime-dashboard.json
 │       ├── bootstrap/route.ts       # POST — run all strategies (main.py bootstrap)
-│       ├── run-strategy/route.ts    # POST — rerun one strategy (main.py run …)
-│       └── refresh-ranking/route.ts # POST — recompute ranking only (main.py refresh-ranking)
+│       ├── config/route.ts          # GET/POST — runtime settings schema + save
+│       ├── stop/route.ts            # POST — stop running backtest
+│       ├── strategies/route.ts      # POST — add composable strategy YAML
+│       ├── strategies/[id]/route.ts # DELETE — remove strategy YAML + dashboard state
+│       └── refresh-ranking/route.ts # POST — recompute ranking only
+├── components/
+│   ├── BacktestControlPanel.tsx
+│   └── AddStrategyPanel.tsx
 ├── lib/
-│   └── spawn-python.ts         # Finds repo root, loads .env, spawns main.py
+│   ├── spawn-python.ts         # Finds repo root, loads .env, spawns main.py
+│   └── backtest-paths.ts       # Paths for stop file, pid, dashboard JSON
 ├── package.json
 └── README.md                   # This file
 ```
@@ -44,9 +50,10 @@ frontend/
 
 | Path | Role |
 |------|------|
-| `main.py` | CLI entry point: `bootstrap`, `run`, `refresh-ranking` |
+| `main.py` | CLI entry point: `bootstrap`, `stop`, `config-schema`, `add-strategy`, `delete-strategy`, `refresh-ranking` |
 | `src/analytics/ranking.py` | Top-N ranking via `build_top_n()` (P&L, drawdown, Sharpe, win rate) |
-| `config/dashboard.json` | Saved instrument, timeframe, capital, strategy list and default params |
+| `config/dashboard.json` | Runtime settings (instrument, timeframe, capital, optimization) and `strategy_overrides` |
+| `config/strategies/*.yaml` | Composable strategy definitions (source of truth for which strategies run) |
 | `data/runtime-dashboard.json` | Live dashboard state including ranking (gitignored) |
 | `data/backtest.db` | SQLite candle cache used by `src/data_loader` (gitignored) |
 | `.env` | `TINKOFF_TOKEN` for the first candle fetch; optional `DATABASE_URL` |
@@ -73,8 +80,8 @@ Keep the standard monorepo layout.
 
 ```bash
 python main.py bootstrap
-python main.py run ma_crossover '{"fast":15,"slow":20,"order_size":1}'
 python main.py refresh-ranking
+python main.py config-schema
 ```
 
 ## API routes
@@ -82,8 +89,11 @@ python main.py refresh-ranking
 | Method | Path | Action |
 |--------|------|--------|
 | `GET` | `/api/dashboard` | Returns merged dashboard JSON (idle defaults if file missing) |
+| `GET` / `POST` | `/api/config` | Load/save runtime settings (`instrument`, timeframe, optimization, …) |
 | `POST` | `/api/bootstrap` | Starts `python main.py bootstrap` (202 Accepted) |
-| `POST` | `/api/run-strategy` | Body: `{ "strategy_id": "…", "params": { … } }` → `main.py run …` |
+| `POST` | `/api/stop` | Requests stop of a running backtest |
+| `POST` | `/api/strategies` | Body: `{ yaml }` — save composable strategy to `config/strategies/` |
+| `DELETE` | `/api/strategies/{id}` | Remove strategy YAML and dashboard entries |
 | `POST` | `/api/refresh-ranking` | Starts `python main.py refresh-ranking` (202 Accepted) |
 
 All run endpoints return immediately; the UI polls until results appear.
@@ -170,9 +180,8 @@ npm run lint     # ESLint
 
 ## Known limitations
 
-- Instrument, timeframe, and lookback are configured in `config/dashboard.json`, not in the UI picker (Week 5).
-- Parameter edits trigger immediate reruns; explicit Calculate/Run submit UX is deferred (Week 5).
-- No take-profit / stop-loss, trigger/action abstraction, or parameter grid optimizer yet.
+- Parameter overrides after optimization are stored in `config/dashboard.json` → `strategy_overrides`.
+- No take-profit / stop-loss beyond composable YAML rules; no full grid optimizer UI beyond mode/iterations/seed.
 - Each strategy rerun is a separate Python subprocess.
 - Only the latest dashboard state is kept; there is no run history UI.
 - UI copy is English; currency values use `ru-RU` locale formatting for RUB.

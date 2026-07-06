@@ -44,8 +44,9 @@ implementation, target architecture, and historical artifacts.
 
 ```text
 Browser
-  -> POST /api/bootstrap (first load) or POST /api/run-strategy (parameter edit)
-  -> frontend launches main.py (bootstrap | run | refresh-ranking)
+  -> POST /api/config (save settings) + POST /api/bootstrap (Run backtest)
+  -> frontend launches main.py bootstrap | stop | refresh-ranking | add/delete strategy
+  -> strategies discovered from config/strategies/*.yaml
   -> DataLoader loads candles (SQLite cache or T-Bank fetch)
   -> each strategy emits signals on shared candle series
   -> ExecutionEngine simulates trades per strategy
@@ -88,8 +89,8 @@ docker compose up --build
 
 Open <http://localhost:3000>.
 
-On first load the dashboard bootstraps all strategies from `config/dashboard.json`. Stop the
-stack with:
+On first load the dashboard lists strategies from `config/strategies/*.yaml`. **Run backtest**
+executes all of them. Stop the stack with:
 
 ```bash
 docker compose down
@@ -125,12 +126,11 @@ Run the pipeline directly:
 
 ```bash
 python main.py bootstrap
-python main.py run ma_crossover '{"fast":12,"slow":20,"order_size":1}'
 python main.py refresh-ranking
 ```
 
-Running `python main.py` without a subcommand defaults to `bootstrap`. Default run context
-is defined in `config/dashboard.json` (SBER, 1h, 30-day lookback, three strategies).
+Running `python main.py` without a subcommand defaults to `bootstrap`. Runtime settings live in
+`config/dashboard.json`; strategy definitions live in `config/strategies/*.yaml`.
 
 Run the frontend:
 
@@ -162,7 +162,7 @@ As of June 30, 2026:
 ## Repository Layout
 
 ```text
-main.py                     CLI orchestrator (bootstrap, run, refresh-ranking)
+main.py                     CLI orchestrator (bootstrap, stop, config-schema, add/delete strategy)
 src/engine/                 Simulation, portfolio, signals, trades, run models
 src/strategy/               Registry, plugin loader, ParameterSpec, built-in strategies
 src/broker_adapter/         T-Bank adapter and broker-facing models
@@ -171,8 +171,8 @@ src/analytics/              Metrics, Top-N ranking, validation metrics
 src/db/                     SQLAlchemy session and CandleModel (candles table only)
 src/api/                    Placeholder for planned FastAPI service
 frontend/                   Next.js dashboard and route handlers
-config/dashboard.json       Instrument, timeframe, capital, strategy list and params
-config/strategies/          Per-strategy YAML configuration examples
+config/dashboard.json       Runtime settings and strategy_overrides (post-optimization params)
+config/strategies/          Composable strategy YAML files (dashboard discovers all *.yaml)
 data/runtime-dashboard.json Latest multi-strategy dashboard state
 data/backtest.db            SQLite candle cache (gitignored)
 tests/                      Backend unit and integration tests
@@ -185,8 +185,10 @@ reports/                    Dated course reports and screenshots
 The working dashboard exposes:
 
 - `GET /api/dashboard` — returns the latest multi-strategy dashboard state;
-- `POST /api/bootstrap` — runs all configured strategies (`main.py bootstrap`);
-- `POST /api/run-strategy` — reruns one strategy with `{ strategy_id, params }`;
+- `GET` / `POST /api/config` — load/save runtime settings and UI schema;
+- `POST /api/bootstrap` — runs all strategies from `config/strategies/` (`main.py bootstrap`);
+- `POST /api/stop` — stops a running backtest;
+- `POST /api/strategies` / `DELETE /api/strategies/{id}` — add or remove composable strategies;
 - `POST /api/refresh-ranking` — recomputes Top-N ranking from saved metrics.
 
 Route details are in [docs/api_description.md](docs/api_description.md) and

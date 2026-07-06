@@ -1,0 +1,33 @@
+name: rsi_bounce_demo
+title: RSI Bounce Demo
+
+params:
+  rsi_period:      { type: int,   default: 14, choices: preset:rsi_period, optimizable: true }
+  rsi_oversold:    { type: float, default: 30, choices: [25, 30, 35], optimizable: true }
+  rsi_overbought:  { type: float, default: 70, choices: [65, 70, 75], optimizable: true }
+  stop_loss_pct:   { type: float, default: 5,  choices: [5, 7, 10], optimizable: false }
+  order_size:      { type: float, default: 1,  choices: [1], optimizable: false }
+
+series:
+  rsi: { fn: rsi, source: price, period: "${rsi_period}" }
+
+rules:
+  - id: stop_loss
+    scope: long
+    priority: 100
+    when: { loss_pct: { gt: "${stop_loss_pct}" } }
+    then: { action: sell, size: all }
+
+  - id: exit
+    scope: long
+    priority: 10
+    when: { gte: [rsi, "${rsi_overbought}"] }
+    then: { action: sell, size: all }
+
+  - id: entry
+    scope: flat
+    priority: 10
+    when: { lte: [rsi, "${rsi_oversold}"] }
+    then:
+      action: buy
+      size: "${order_size}"
