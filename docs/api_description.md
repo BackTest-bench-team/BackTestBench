@@ -80,7 +80,8 @@ Example numbers are a dated snapshot, not stable expected values.
 
 ### `POST /api/bootstrap`
 
-Runs all strategies listed in `config/dashboard.json` via `python main.py bootstrap`.
+Runs all composable strategies from `config/strategies/*.yaml` via `python main.py bootstrap`.
+Settings (instrument, timeframe, lookback, optimization) come from `config/dashboard.json`.
 
 **Request body:** none.
 
@@ -100,47 +101,18 @@ environment, and launches the bootstrap subprocess.
 **Response `500` — token missing or launch failure:** same `ok` / `message` pattern as other
 run routes.
 
-### `POST /api/run-strategy`
+### `GET /api/config` and `POST /api/config`
 
-Reruns a single strategy with caller-supplied parameters.
+Load or save runtime settings. `GET` returns `{ settings, schema }` from `main.py config-schema`.
+`POST` validates and persists instrument, timeframe, lookback, capital, and optimization options.
 
-**Request body:**
+### `POST /api/stop`
 
-```json
-{
-  "strategy_id": "ma_crossover",
-  "params": {
-    "fast": 12,
-    "slow": 20,
-    "order_size": 1
-  }
-}
-```
+Writes a stop request file and terminates the running `main.py bootstrap` process when possible.
 
-The route validates that `strategy_id` and `params` are present, then launches
-`python main.py run <strategy_id> '<params_json>'`.
+### `POST /api/strategies` / `DELETE /api/strategies/{id}`
 
-**Response `202`:**
-
-```json
-{
-  "ok": true,
-  "started": true,
-  "strategy_id": "ma_crossover"
-}
-```
-
-**Response `400` — missing fields:**
-
-```json
-{
-  "ok": false,
-  "message": "strategy_id and params are required"
-}
-```
-
-Parameter validation errors surface in the strategy's dashboard entry (`status: "error"`) after
-polling `GET /api/dashboard`.
+Add or remove composable strategy YAML under `config/strategies/` and sync `runtime-dashboard.json`.
 
 ### `POST /api/refresh-ranking`
 

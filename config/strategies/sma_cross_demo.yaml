@@ -1,0 +1,40 @@
+name: sma_cross_demo
+title: SMA Cross Demo
+
+params:
+  fast:            { type: int,   default: 10, choices: [5, 10, 12, 21], optimizable: true }
+  slow:            { type: int,   default: 30, choices: [20, 30, 50, 100], optimizable: true }
+  stop_loss_pct:   { type: float, default: 5,  choices: preset:stop_loss_pct, optimizable: true }
+  take_profit_pct: { type: float, default: 10, choices: preset:take_profit_pct, optimizable: true }
+  order_size:      { type: float, default: 1,  choices: [1, 2, 3], optimizable: false }
+
+series:
+  fast_ma: { fn: sma, source: price, period: "${fast}" }
+  slow_ma: { fn: sma, source: price, period: "${slow}" }
+
+rules:
+  - id: stop_loss
+    scope: long
+    priority: 100
+    when: { loss_pct: { gt: "${stop_loss_pct}" } }
+    then: { action: sell, size: all }
+
+  - id: take_profit
+    scope: long
+    priority: 90
+    when: { profit_pct: { gt: "${take_profit_pct}" } }
+    then: { action: sell, size: all }
+
+  - id: exit
+    scope: long
+    priority: 10
+    when: { cross_below: [fast_ma, slow_ma] }
+    then: { action: sell, size: all }
+
+  - id: entry
+    scope: flat
+    priority: 10
+    when: { cross_above: [fast_ma, slow_ma] }
+    then:
+      action: buy
+      size: "${order_size}"

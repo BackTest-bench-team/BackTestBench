@@ -1,6 +1,6 @@
 import itertools
 import random
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 from src.analytics import calculate_metrics_from_trade_log
 from src.engine.execution_engine import ExecutionEngine
@@ -12,6 +12,20 @@ from src.engine.models import (
     RunContext,
 )
 from src.strategy import create_strategy
+
+
+def is_valid_param_combo(params: Dict[str, Any]) -> bool:
+    fast = params.get("fast")
+    slow = params.get("slow")
+    if fast is not None and slow is not None and float(fast) >= float(slow):
+        return False
+
+    rsi_min = params.get("rsi_buy_min")
+    rsi_max = params.get("rsi_overbought")
+    if rsi_min is not None and rsi_max is not None and float(rsi_min) >= float(rsi_max):
+        return False
+
+    return True
 
 
 class RandomSearchExecutionEngine:
@@ -27,7 +41,10 @@ class RandomSearchExecutionEngine:
         initial_capital: float,
         run_context: RunContext,
         n_iterations: int = 10,
-        target_metric: str = "total_pnl"
+        target_metric: str = "total_pnl",
+        seed: int = 42,
+        mode: str = "grid",
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> OptimizationResult:
         
         fixed_params = {}
@@ -70,59 +87,71 @@ class RandomSearchExecutionEngine:
                 total_iterations_run=1
             )
 
-        # Generate the full grid of all unique parameter combinations.
+        # Build the list of parameter combinations to evaluate.
         param_names = list(search_space.keys())
         all_combinations_tuples = list(itertools.product(*(search_space[name] for name in param_names)))
+        rng = random.Random(seed)
 
-        # Select random unique combinations without repetition.
-        if len(all_combinations_tuples) <= n_iterations:
+        if mode == "grid":
             chosen_combinations = all_combinations_tuples
-            random.shuffle(chosen_combinations)
+        elif len(all_combinations_tuples) <= n_iterations:
+            chosen_combinations = all_combinations_tuples
         else:
-            chosen_combinations = random.sample(all_combinations_tuples, n_iterations)
+            chosen_combinations = rng.sample(all_combinations_tuples, n_iterations)
 
         best_score = float("-inf")
         best_params: Dict[str, Any] = {}
         best_metrics: MetricsReport | None = None
         best_raw_result: Dict[str, Any] = {}
         iterations_list: List[OptimizationIteration] = []
+        skipped_invalid = 0
 
         # Execute the optimization loop.
-        for idx, combo in enumerate(chosen_combinations, start=1):
+        run_index = 0
+        for combo in chosen_combinations:
+            if should_stop and should_stop():
+                break
+
             current_params = dict(fixed_params)
             for name, val in zip(param_names, combo):
                 current_params[name] = val
 
+            if not is_valid_param_combo(current_params):
+                skipped_invalid += 1
+                continue
+
+            run_index += 1
+
             try:
                 strategy = create_strategy(strategy_id, current_params)
                 raw_result = self.base_engine.run(strategy, candles, initial_capital)
-                
-                # Проверка: если сделок нет, пропускаем как неудачный прогон
+
                 if not raw_result.get("trade_log_report") or not raw_result["trade_log_report"].trades:
                     continue
-                    
+
                 metrics = calculate_metrics_from_trade_log(raw_result["trade_log_report"], run_context)
             except Exception as e:
-                print(f"Iteration {idx} failed: {e}")
-                continue # Skip failed iterations
+                print(f"Iteration {run_index} failed: {e}")
+                continue
 
             score = float(getattr(metrics, target_metric, metrics.total_pnl))
 
-            # Store the current optimization iteration.
             iteration_record = OptimizationIteration(
-                iteration_index=idx,
+                iteration_index=run_index,
                 params=current_params,
                 metrics=metrics,
-                score=score
+                score=score,
             )
             iterations_list.append(iteration_record)
 
-            # Update the current best result if this iteration performs better.
             if score > best_score or best_metrics is None:
                 best_score = score
                 best_params = current_params
                 best_metrics = metrics
                 best_raw_result = raw_result
+
+        if skipped_invalid:
+            print(f"Skipped {skipped_invalid} invalid parameter combinations")
 
         # Return the final optimization result.
         return OptimizationResult(

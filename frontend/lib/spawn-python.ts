@@ -48,3 +48,45 @@ export function spawnPython(args: string[]): void {
 
   child.unref();
 }
+
+export type SpawnCaptureResult = {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+};
+
+function decodeChunk(chunk: Buffer | string): string {
+  return typeof chunk === "string" ? chunk : chunk.toString("utf8");
+}
+
+export function spawnPythonCapture(args: string[]): Promise<SpawnCaptureResult> {
+  const repoRoot = findRepoRoot(process.cwd());
+  const pythonCmd = process.env.PYTHON_BIN ?? (process.platform === "win32" ? "py" : "python3");
+  const rootEnv = loadDotEnv(path.join(repoRoot, ".env"));
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(pythonCmd, args, {
+      cwd: repoRoot,
+      windowsHide: true,
+      env: {
+        ...process.env,
+        PYTHONPATH: repoRoot,
+        PYTHONIOENCODING: "utf-8",
+        TINKOFF_TOKEN: rootEnv.TINKOFF_TOKEN ?? process.env.TINKOFF_TOKEN,
+      },
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk: Buffer | string) => {
+      stdout += decodeChunk(chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer | string) => {
+      stderr += decodeChunk(chunk);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      resolve({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode: code ?? 1 });
+    });
+  });
+}

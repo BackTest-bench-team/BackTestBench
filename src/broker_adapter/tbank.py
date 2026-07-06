@@ -25,6 +25,8 @@ import users_pb2
 from .base import BrokerAdapter, BrokerError, AuthenticationError, InvalidInstrumentError, RateLimitError
 from .models import Candle, OrderResult, Position, Portfolio
 
+API_TIMEOUT = aiohttp.ClientTimeout(total=60, connect=30, sock_connect=30)
+
 TIMEFRAME_MAP = {
     "1m": marketdata_pb2.CANDLE_INTERVAL_1_MIN,
     "5m": marketdata_pb2.CANDLE_INTERVAL_5_MIN,
@@ -127,7 +129,7 @@ class TBankAdapter(BrokerAdapter):
                 ssl_context.check_hostname = False
                 ssl_context.verify_mode = ssl.CERT_NONE
             connector = aiohttp.TCPConnector(ssl=ssl_context)
-            self._session = aiohttp.ClientSession(connector=connector)
+            self._session = aiohttp.ClientSession(connector=connector, timeout=API_TIMEOUT)
 
             # Test connection
             request = instruments_pb2.InstrumentRequest(

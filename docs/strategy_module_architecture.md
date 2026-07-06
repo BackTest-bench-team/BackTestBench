@@ -18,7 +18,7 @@ The Strategy Module provides:
 
 `main.py` loads strategies from `config/dashboard.json` and YAML files under
 `config/strategies/`. The dashboard renders parameter editors from `parameter_specs` returned
-by the backend and reruns individual strategies through `POST /api/run-strategy`.
+by the backend; the dashboard runs all strategies via `POST /api/bootstrap`.
 
 See also [`strategy_module_plugins_and_configuration.md`](strategy_module_plugins_and_configuration.md).
 
