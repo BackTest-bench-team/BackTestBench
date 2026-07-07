@@ -17,7 +17,14 @@ if str(BASE_DIR) not in sys.path:
 
 import src.strategy.strategies  # noqa: F401 — register built-in strategies
 
-from src.analytics import RankingConfig, TopNEntry, build_top_n, calculate_metrics_from_trade_log
+from src.analytics import (
+    RankingConfig,
+    TopNEntry,
+    build_optimizer_output,
+    build_top_n,
+    calculate_metrics_from_trade_log,
+    rank_optimizer_results,
+)
 from src.backtest_config import (
     ConfigValidationError,
     ui_schema,
@@ -486,15 +493,28 @@ def build_optimization_summary(
     for values in search_lists:
         grid_size *= len(values)
 
-    sorted_iters = sorted(opt_result.iterations, key=lambda item: item.score, reverse=True)
+    ranked_iterations = rank_optimizer_results(
+        [(dict(item.params), item.metrics) for item in opt_result.iterations],
+        config=RankingConfig(n=5, require_above_baseline=False),
+    )
+    optimizer_output = build_optimizer_output(
+        opt_result.strategy_id,
+        opt_result.instrument,
+        ranked_iterations,
+    )
     top_iterations = [
         {
+            "rank": item.rank,
             "params": dict(item.params),
+            "metrics": dict(row["metrics"]),
+            # Backward-compatible flattened fields used by the current dashboard UI.
             "total_pnl": float(item.metrics.total_pnl),
             "sharpe_ratio": float(item.metrics.sharpe_ratio),
-            "score": float(item.score),
+            "max_drawdown": float(item.metrics.max_drawdown),
+            "win_rate": float(item.metrics.win_rate),
+            "score": float(getattr(item.metrics, opt_result.target_metric, item.metrics.total_pnl)),
         }
-        for item in sorted_iters[:5]
+        for item, row in zip(ranked_iterations, optimizer_output["ranked"])
     ]
 
     exhaustive = mode == "grid" or grid_size <= n_iterations
@@ -507,6 +527,9 @@ def build_optimization_summary(
         "iterations_run": opt_result.total_iterations_run,
         "exhaustive": exhaustive,
         "seed": seed,
+        "strategy_id": optimizer_output["strategy_id"],
+        "instrument": optimizer_output["instrument"],
+        "ranked": optimizer_output["ranked"],
         "top_iterations": top_iterations,
     }
 

@@ -9,9 +9,12 @@ from src.analytics import (
     AnalyticsResultStore,
     DataIntegrityError,
     MetricsConfig,
+    OptimizerCandidate,
+    build_optimizer_output,
     RankingConfig,
     build_top_n,
     build_ranking_review,
+    rank_optimizer_results,
     calculate_max_drawdown,
     calculate_metrics,
     calculate_metrics_from_trade_log,
@@ -322,3 +325,84 @@ def test_validation_results_are_available_for_ranking_review():
     assert review[0].top_n.strategy_id == "ma_crossover"
     assert review[0].validation_run_id == "validation-1"
     assert review[0].validation_metrics.total_pnl == 30.0
+
+
+def optimizer_metric(
+    name: str,
+    *,
+    total_pnl: float,
+    max_drawdown: float,
+    sharpe_ratio: float = 1.0,
+    win_rate: float = 0.5,
+) -> MetricsReport:
+    return MetricsReport(
+        name,
+        "SBER",
+        total_pnl=total_pnl,
+        sharpe_ratio=sharpe_ratio,
+        max_drawdown=max_drawdown,
+        win_rate=win_rate,
+        deposit_baseline_pnl=0.0,
+    )
+
+
+def test_rank_optimizer_results_stable_top_three_for_fake_grid_results():
+    candidates = [
+        ({"fast": 1}, optimizer_metric("ma_rsi_composable", total_pnl=200.0, max_drawdown=0.20, sharpe_ratio=1.0)),
+        ({"fast": 2}, optimizer_metric("ma_rsi_composable", total_pnl=200.0, max_drawdown=0.10, sharpe_ratio=0.5)),
+        ({"fast": 3}, optimizer_metric("ma_rsi_composable", total_pnl=200.0, max_drawdown=0.10, sharpe_ratio=0.5)),
+        ({"fast": 4}, optimizer_metric("ma_rsi_composable", total_pnl=150.0, max_drawdown=0.05, sharpe_ratio=4.0)),
+        ({"fast": 5}, optimizer_metric("ma_rsi_composable", total_pnl=50.0, max_drawdown=0.01, sharpe_ratio=9.0)),
+    ]
+
+    ranked = rank_optimizer_results(candidates, config=RankingConfig(n=3))
+
+    assert [entry.rank for entry in ranked] == [1, 2, 3]
+    assert [entry.params["fast"] for entry in ranked] == [2, 3, 1]
+
+
+def test_rank_optimizer_results_skips_invalid_and_empty_runs():
+    valid = optimizer_metric("ma_rsi_composable", total_pnl=10.0, max_drawdown=0.1)
+    invalid = optimizer_metric("ma_rsi_composable", total_pnl=float("nan"), max_drawdown=0.1)
+
+    ranked = rank_optimizer_results(
+        [
+            None,
+            ({"fast": 1}, invalid),
+            OptimizerCandidate({"fast": 2}, valid, trade_count=0),
+            ({"fast": 3}, valid, [trade(10.0)]),
+        ],
+        config=RankingConfig(n=10),
+    )
+
+    assert len(ranked) == 1
+    assert ranked[0].params == {"fast": 3}
+
+
+def test_optimizer_output_schema_works_with_composable_strategy_id():
+    ranked = rank_optimizer_results(
+        [
+            ({"fast": 12, "slow": 30}, optimizer_metric("ma_rsi_composable", total_pnl=20.0, max_drawdown=0.2)),
+        ],
+        config=RankingConfig(n=1),
+    )
+
+    payload = build_optimizer_output("ma_rsi_composable", "SBER", ranked)
+
+    assert payload["strategy_id"] == "ma_rsi_composable"
+    assert payload["instrument"] == "SBER"
+    assert payload["ranked"] == [
+        {
+            "rank": 1,
+            "params": {"fast": 12, "slow": 30},
+            "metrics": {
+                "strategy_id": "ma_rsi_composable",
+                "instrument": "SBER",
+                "total_pnl": 20.0,
+                "sharpe_ratio": 1.0,
+                "max_drawdown": 0.2,
+                "win_rate": 0.5,
+                "deposit_baseline_pnl": 0.0,
+            },
+        }
+    ]
