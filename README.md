@@ -22,7 +22,7 @@ Implemented:
 - in-memory Top-N ranking with stable tie-breakers and validation metrics support;
 - Next.js multi-strategy dashboard with parameter editors, ranking panel, benchmark chart, and buy/sell markers;
 - configurable run context via `config/dashboard.json` (instrument, timeframe, capital, lookback);
-- Docker Compose and a self-hosted PR smoke-build workflow;
+- Docker Compose and a GitHub Actions PR verification workflow;
 - 63 backend unit/integration tests (80% `src/` coverage).
 
 Not implemented in the integrated MVP:
@@ -158,7 +158,7 @@ As of July 7, 2026:
 - the backend suite contains **108 tests** (all passing) with **79%** coverage of `src/`;
 - the frontend production build succeeds (Next.js 16);
 - frontend lint reports 5 errors in `page.tsx` (non-blocking in CI until refactor);
-- CI runs backend tests, frontend build, and Docker smoke on self-hosted PR checks;
+- CI runs backend tests, frontend build, and Docker smoke on GitHub-hosted `ubuntu-latest` runners;
 - non-blocking warnings: `pytest-asyncio` fixture loop scope deprecation.
 
 ## Repository Layout

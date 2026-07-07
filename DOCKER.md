@@ -108,18 +108,18 @@ As of July 7, 2026, the backend test suite contains **108 tests** (all passing) 
 
 ## CI
 
-`.github/workflows/ci.yml` runs on pull requests to `main` using a self-hosted runner with
-four jobs:
+`.github/workflows/ci.yml` runs on pull requests to `main` using GitHub-hosted
+`ubuntu-latest` runners with three jobs:
 
 | Job | When | Checks |
 |---|---|---|
-| `backend-tests` | PR opened/synchronized | `pytest tests -q` |
-| `frontend-checks` | PR opened/synchronized | `npm ci`, `npm run build`, `npm run lint` (lint non-blocking) |
+| `backend-tests` | PR opened/synchronized | Python 3.12, `pytest tests -q` |
+| `frontend-checks` | PR opened/synchronized | Node 20, `npm ci`, `npm run build`, `npm run lint` (lint non-blocking) |
 | `docker-smoke` | PR opened/synchronized | `docker compose up -d --build`, 10 s uptime, `curl` HTTP 200 on port 8080 |
-| `cleanup` | PR closed | `docker compose down --remove-orphans` |
 
-The Docker job passes `TINKOFF_TOKEN` from GitHub Secrets and sets `APP_PORT=8080` to avoid
-host port 80 conflicts on shared runners. Local Compose defaults to `${APP_PORT:-80}:3000`.
+The Docker job creates `.env` from the `TINKOFF_TOKEN` GitHub secret and sets
+`APP_PORT=8080`. Ephemeral runners tear down after each job, so no separate cleanup job is
+required on PR close. Local Compose defaults to `${APP_PORT:-80}:3000`.
 
 The full-stack image runs the Next.js **standalone** server (`node server.js`), not
 `npm run start`.
