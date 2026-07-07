@@ -1,4 +1,5 @@
 import math
+from datetime import datetime, timedelta
 
 import src.strategy.strategies  # noqa: F401 — register built-in strategies
 
@@ -11,9 +12,10 @@ discover_composable_strategies()
 
 
 def _candles(n: int = 200) -> list[Candle]:
+    base = datetime(2025, 1, 1, 10, 0, 0)
     return [
         Candle(
-            timestamp=str(i),
+            timestamp=(base + timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M:%S"),
             open=(price := 100 + 18 * math.sin(i / 6)),
             high=price + 1,
             low=price - 1,
@@ -42,8 +44,8 @@ def _run(seed: int) -> dict:
         "rsi_period": [14, 20],
         "rsi_buy_min": [40, 50],
         "rsi_overbought": [70],
-        "stop_loss_pct": [5],
-        "take_profit_pct": [10],
+        "stop_loss_pct": [0.5],
+        "take_profit_pct": [1.0],
         "order_size": 1,
     }
     result = RandomSearchExecutionEngine(ExecutionEngine()).run_optimization(

@@ -5,44 +5,78 @@ on:
     branches: [main]
 
 jobs:
-  build-and-run:
+  backend-tests:
     runs-on: self-hosted
-
-    env:
-      IMAGE_NAME: backtest-bench
-      CONTAINER_NAME: backtest-bench-pr-${{ github.event.pull_request.number }}
+    if: github.event.action != 'closed'
 
     steps:
       - name: Checkout PR
         uses: actions/checkout@v4
 
-      - name: Stop & remove previous containers for this PR
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+
+      - name: Run backend tests
+        run: pytest tests -q
+
+  frontend-checks:
+    runs-on: self-hosted
+    if: github.event.action != 'closed'
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Install and build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Lint frontend (non-blocking until page.tsx refactor)
+        working-directory: frontend
+        continue-on-error: true
+        run: npm run lint
+
+  docker-smoke:
+    runs-on: self-hosted
+    if: github.event.action != 'closed'
+
+    env:
+      APP_PORT: "8080"
+      TINKOFF_TOKEN: ${{ secrets.TINKOFF_TOKEN }}
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Stop previous Compose services
         run: docker compose down --remove-orphans 2>/dev/null || true
 
-      - name: Build & run via docker compose
-        env:
-          TINKOFF_TOKEN: ${{ secrets.TINKOFF_TOKEN }}
+      - name: Build and start via docker compose
         run: docker compose up -d --build
 
-      - name: Smoke-check (containers stay up 10 s)
+      - name: Smoke-check (containers up + HTTP 200)
         run: |
           sleep 10
           docker compose ps
           EXITED=$(docker compose ps --status exited -q)
           [ -z "$EXITED" ]
+          curl -fsS "http://localhost:${APP_PORT}/"
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose down --remove-orphans 2>/dev/null || true
 
   cleanup:
     runs-on: self-hosted
     if: github.event.action == 'closed'
-    needs: []
-
-    env:
-      IMAGE_NAME: backtest-bench
-      CONTAINER_NAME: backtest-bench-pr-${{ github.event.pull_request.number }}
 
     steps:
-      - name: Stop & remove container on PR close
-        run: |
-          docker stop $CONTAINER_NAME 2>/dev/null || true
-          docker rm   $CONTAINER_NAME 2>/dev/null || true
-          docker rmi  $IMAGE_NAME:pr-${{ github.event.pull_request.number }} 2>/dev/null || true
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Stop Compose services on PR close
+        run: docker compose down --remove-orphans 2>/dev/null || true

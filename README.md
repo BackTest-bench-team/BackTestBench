@@ -150,14 +150,16 @@ pytest tests --cov=src --cov-report=term
 npm --prefix frontend run lint
 npm --prefix frontend run build
 docker compose config
+APP_PORT=8080 docker compose up -d --build && curl -fsS "http://localhost:8080/" && docker compose down
 ```
 
-As of June 30, 2026:
+As of July 7, 2026:
 
-- the backend suite contains **63 passing tests** with **80%** coverage of `src/`;
+- the backend suite contains **108 tests** (all passing) with **79%** coverage of `src/`;
 - the frontend production build succeeds (Next.js 16);
-- non-blocking warnings: `pytest-asyncio` fixture loop scope deprecation; Next.js
-  workspace-root inference when multiple lockfiles are present.
+- frontend lint reports 5 errors in `page.tsx` (non-blocking in CI until refactor);
+- CI runs backend tests, frontend build, and Docker smoke on self-hosted PR checks;
+- non-blocking warnings: `pytest-asyncio` fixture loop scope deprecation.
 
 ## Repository Layout
 

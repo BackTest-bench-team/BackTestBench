@@ -30,6 +30,15 @@ ENV PYTHON_BIN=python3 \
 WORKDIR /app/frontend
 RUN npm run build
 
+# Standalone output needs static assets beside server.js
+RUN cp -r public .next/standalone/frontend/public && \
+    cp -r .next/static .next/standalone/frontend/.next/static
+
+WORKDIR /app/frontend/.next/standalone/frontend
+
+ENV HOSTNAME=0.0.0.0 \
+    PORT=3000
+
 EXPOSE 3000
 
-CMD ["npm", "run", "start", "--", "--hostname", "0.0.0.0"]
+CMD ["node", "server.js"]

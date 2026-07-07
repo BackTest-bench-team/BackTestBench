@@ -9,8 +9,8 @@ params:
   rsi_period:      { type: int,   default: 14, choices: [14, 20],              optimizable: true }
   rsi_buy_min:     { type: float, default: 50, choices: [40, 50, 60],          optimizable: true }
   rsi_overbought:  { type: float, default: 70, choices: [65, 70, 80],          optimizable: true }
-  stop_loss_pct:   { type: float, default: 5,  choices: preset:stop_loss_pct,   optimizable: true }
-  take_profit_pct: { type: float, default: 10, choices: preset:take_profit_pct, optimizable: true }
+  stop_loss_pct:   { type: float, default: 0.5, choices: preset:stop_loss_pct,   optimizable: true }
+  take_profit_pct: { type: float, default: 1.0, choices: preset:take_profit_pct, optimizable: true }
   order_size:      { type: float, default: 1,  choices: [1, 2, 3],             optimizable: false }
 
 series:
