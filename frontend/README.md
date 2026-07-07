@@ -181,18 +181,21 @@ npm run lint     # ESLint
 ## Known limitations
 
 - Parameter overrides after optimization are stored in `config/dashboard.json` → `strategy_overrides`.
-- No take-profit / stop-loss beyond composable YAML rules; no full grid optimizer UI beyond mode/iterations/seed.
-- Each strategy rerun is a separate Python subprocess.
+- No multi-period stability validation or percentage metrics in UI yet (Week 6 priorities).
+- Each bootstrap run is a separate Python subprocess.
 - Only the latest dashboard state is kept; there is no run history UI.
 - UI copy is English; currency values use `ru-RU` locale formatting for RUB.
 
 ## Verification
 
 ```bash
-# Backend (63 tests as of June 30, 2026)
+# Backend (144 tests as of July 7, 2026)
 pytest tests -q
 
 # Frontend
 npm --prefix frontend ci
 npm --prefix frontend run build
 ```
+
+CI on pull requests: GitHub-hosted `ubuntu-latest` — `backend-tests`, `frontend-checks`,
+`docker-smoke` (see `DOCKER.md` and `.github/workflows/ci.yml`).

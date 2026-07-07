@@ -2,35 +2,37 @@
 
 BackTestBench is a modular MVP for running deterministic, long-only trading-strategy
 backtests on historical market candles. The integrated flow loads candles from SQLite or
-T-Bank, runs multiple configured strategies, calculates analytics and Top-N ranking, and
-displays results in a Next.js dashboard with editable parameters and benchmark comparison.
+T-Bank, runs composable YAML strategies with optional parameter optimization, calculates
+analytics and Top-N ranking, and displays results in an MVP2 Next.js dashboard with Run/Stop
+controls, benchmark comparison, and an optimization results panel.
 
-Documentation status: **audited against `main` on June 30, 2026**.
+Documentation status: **audited against `main` on July 7, 2026** (PR #137 CI baseline).
 
 ## Current MVP
 
 Implemented:
 
 - T-Bank historical-candle adapter for several timeframes;
-- Data Loader with candle validation, SQLite upsert, and cache reuse (`data/backtest.db`);
-- strategy registry, plugin auto-discovery, YAML configuration, and `ParameterSpec` schemas;
-- three built-in strategies: `ma_crossover`, `ma_rsi`, `rsi_threshold`;
+- Data Loader with candle validation, SQLite upsert, single-fetch reuse for optimizer (`data/backtest.db`);
+- composable YAML strategy engine (`src/strategy/composable/`) with series, rules, actions, TP/SL;
+- strategy registry, plugin auto-discovery, and legacy built-in strategies (`ma_crossover`, `ma_rsi`, `rsi_threshold`);
+- parameter optimizer — grid and random sample (`RandomSearchExecutionEngine`);
 - candle-by-candle execution engine with BUY, SELL, and HOLD signals;
 - long-only simulated execution with `order_size` capped at 3 lots and forced close on the final candle;
 - TradeLog, equity curve, final portfolio state, and analytics;
 - total P&L, Sharpe ratio, max drawdown, win rate, and 13% deposit baseline;
-- in-memory Top-N ranking with stable tie-breakers and validation metrics support;
-- Next.js multi-strategy dashboard with parameter editors, ranking panel, benchmark chart, and buy/sell markers;
-- configurable run context via `config/dashboard.json` (instrument, timeframe, capital, lookback);
-- Docker Compose and a GitHub Actions PR verification workflow;
-- 63 backend unit/integration tests (80% `src/` coverage).
+- in-memory Top-N ranking with stable tie-breakers and validation metrics library;
+- MVP2 Next.js dashboard with Run/Stop controls, instrument dropdown, optimization panel, ranking, chart, and buy/sell markers;
+- configurable run context via `config/dashboard.json` (instrument, timeframe, capital, lookback, optimization);
+- TwelveData and Bybit example adapters (`examples/` only; live dashboard path uses T-Bank);
+- Docker Compose and a GitHub Actions PR verification workflow (three jobs on `ubuntu-latest`);
+- 144 backend unit/integration tests (82% `src/` coverage).
 
 Not implemented in the integrated MVP:
 
-- multi-instrument UI picker (configuration path exists; picker deferred to Week 5);
-- explicit Calculate/Run submit UX (parameter edits trigger immediate reruns today);
-- take-profit / stop-loss and trigger/action strategy abstraction;
-- parameter grid optimizer;
+- multi-period stability validation (Week 6 customer priority);
+- end-to-end validation workflow (holdout second stage);
+- multi-instrument portfolio UI;
 - relational persistence of runs, trades, or metrics;
 - the planned FastAPI service in `src/api`;
 - CSV adapter behavior;
@@ -159,7 +161,8 @@ As of July 7, 2026:
 - the frontend production build succeeds (Next.js 16);
 - frontend lint reports 5 errors in `page.tsx` (non-blocking in CI until refactor);
 - CI runs backend tests, frontend build, and Docker smoke on GitHub-hosted `ubuntu-latest` runners;
-- non-blocking warnings: `pytest-asyncio` fixture loop scope deprecation.
+- non-blocking warnings: `pytest-asyncio` fixture loop scope deprecation; Next.js
+  workspace-root inference when multiple lockfiles are present.
 
 ## Repository Layout
 
@@ -207,7 +210,9 @@ planned, not implemented.
 
 ## Reports
 
-- [Week 4 report](reports/Week%204%20report.md) — latest course status snapshot
+- [Week 5 report](reports/Week%205%20report.md) — latest course status snapshot
+- [Week 5 report (PDF)](reports/Week%205%20report.pdf)
+- [Week 4 report](reports/Week%204%20report.md)
 - [Week 3 report](reports/Week%203%20report.md)
 - Week 1 and Week 2 PDFs are historical snapshots and intentionally retain statements that
   were true at the time.

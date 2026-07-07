@@ -1,6 +1,6 @@
 # Strategy Module Architecture
 
-Last audited against `main`: **June 30, 2026**.
+Last audited against `main`: **July 7, 2026**.
 
 ## Current Scope
 
@@ -211,9 +211,16 @@ JSON and SQLite candle cache persist across sessions.
 
 ## Known Gaps
 
-- no take-profit / stop-loss or trigger/action abstraction;
-- no parameter grid optimizer;
-- multi-instrument UI picker deferred to Week 5;
-- explicit Calculate/Run submit UX deferred (edits trigger immediate reruns);
+- multi-period stability validation (Week 6 customer priority);
+- percentage-based metrics and risk/reward ratio in dashboard;
+- end-to-end validation workflow (holdout second stage; analytics library exists);
+- multi-instrument portfolio UI (single-instrument dropdown implemented);
 - signal explanations, short positions, and multi-instrument portfolios are not supported;
 - relational strategy/run/parameter persistence is planned, not implemented.
+
+## Composable Engine (Week 5)
+
+The dashboard discovers strategies from `config/strategies/*.yaml` with `series` and `rules`.
+See `docs/strategy_composable_engine_design.md` and `src/strategy/composable/`. Legacy plugin
+strategies under `src/strategy/strategies/` remain in the codebase but are not the primary
+dashboard path.

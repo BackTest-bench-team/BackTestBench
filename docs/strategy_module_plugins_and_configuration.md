@@ -4,6 +4,10 @@ How to add strategies (plugins) and how the configuration interface works. This
 complements `strategy_module_architecture.md`; it documents the pieces added for
 issues #45 (plugin loading) and #94 (configuration interface).
 
+> **Week 5 note:** The MVP2 dashboard discovers **composable YAML strategies** from
+> `config/strategies/*.yaml` (see `docs/strategy_composable_engine_design.md`). Plugin
+> strategies below remain in the codebase and tests but are not the primary dashboard path.
+
 ## Adding a strategy (plugin model)
 
 A strategy is a plugin: a subclass of `BaseStrategy`, in its own file, that
