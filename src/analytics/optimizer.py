@@ -165,3 +165,39 @@ def _trade_count_from(value: Any) -> int | None:
     if value is None:
         return None
     if isinstance(value, int):
+        return value
+    if hasattr(value, "trades"):
+        try:
+            return len(value.trades)
+        except TypeError:
+            return None
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return len(value)
+    return None
+
+
+def _optimizer_ranking_key(metrics: MetricsReport | None, original_index: int) -> tuple:
+    assert metrics is not None
+    return (
+        -float(metrics.total_pnl),
+        float(metrics.max_drawdown),
+        -float(metrics.sharpe_ratio),
+        -float(metrics.win_rate),
+        original_index,
+    )
+
+
+def _is_valid_metrics(metrics: MetricsReport | None) -> bool:
+    if metrics is None:
+        return False
+    values = (
+        getattr(metrics, "total_pnl", None),
+        getattr(metrics, "sharpe_ratio", None),
+        getattr(metrics, "max_drawdown", None),
+        getattr(metrics, "win_rate", None),
+        getattr(metrics, "deposit_baseline_pnl", None),
+    )
+    try:
+        return all(isfinite(float(value)) for value in values)
+    except (TypeError, ValueError):
+        return False
