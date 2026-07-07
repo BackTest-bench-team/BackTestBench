@@ -19,7 +19,7 @@ def _candles(n=300):
 def test_ma_rsi_composable_backtest_produces_trades():
     strat = create_strategy("ma_rsi_composable", {
         "fast": 5, "slow": 20, "rsi_buy_min": 40, "rsi_overbought": 65,
-        "stop_loss_pct": 7, "take_profit_pct": 10,
+        "stop_loss_pct": 0.7, "take_profit_pct": 1.0,
     })
     result = ExecutionEngine().run(strat, _candles(), initial_capital=10_000.0)
     assert len(result["trade_log"]) >= 1

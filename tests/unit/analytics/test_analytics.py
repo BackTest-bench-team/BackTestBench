@@ -218,6 +218,72 @@ def test_validation_metrics_reuse_same_formulas_and_are_stored_separately():
     assert store.list_validation_metrics() == [validation]
 
 
+def test_analytics_store_requires_ids_and_filters_validation_reports():
+    store = AnalyticsResultStore()
+    metrics = MetricsReport(
+        "ma_crossover",
+        "SBER",
+        total_pnl=10.0,
+        sharpe_ratio=1.0,
+        max_drawdown=0.1,
+        win_rate=0.5,
+        deposit_baseline_pnl=1.0,
+    )
+
+    with pytest.raises(ValueError):
+        store.save_backtest_metrics("", metrics)
+
+    from src.analytics.validation import ValidationMetricsReport
+
+    with pytest.raises(ValueError):
+        store.save_validation_metrics(
+            ValidationMetricsReport(
+                validation_run_id="",
+                strategy_id="ma_crossover",
+                instrument="SBER",
+                metrics=metrics,
+            )
+        )
+
+    older = calculate_validation_metrics_from_trade_log(
+        TradeLog(strategy_id="ma_crossover", instrument="SBER", trades=[trade(1.0)], final_portfolio_value=1001.0),
+        RunContext(
+            run_id="v-old",
+            strategy_id="ma_crossover",
+            strategy_version="1",
+            instrument="SBER",
+            timeframe="1d",
+            period_start=datetime(2025, 1, 1),
+            period_end=datetime(2025, 1, 10),
+            initial_capital=1000.0,
+        ),
+        validation_run_id="v-old",
+        computed_at=datetime(2025, 1, 1),
+    )
+    newer = calculate_validation_metrics_from_trade_log(
+        TradeLog(strategy_id="ma_crossover", instrument="GAZP", trades=[trade(2.0)], final_portfolio_value=1002.0),
+        RunContext(
+            run_id="v-new",
+            strategy_id="ma_crossover",
+            strategy_version="1",
+            instrument="GAZP",
+            timeframe="1d",
+            period_start=datetime(2025, 2, 1),
+            period_end=datetime(2025, 2, 10),
+            initial_capital=1000.0,
+        ),
+        validation_run_id="v-new",
+        computed_at=datetime(2025, 2, 1),
+    )
+    store.save_validation_metrics(older)
+    store.save_validation_metrics(newer)
+
+    assert store.list_validation_metrics(strategy_id="ma_crossover", instrument="GAZP") == [newer]
+    latest = store.latest_validation_by_strategy()
+    assert latest[("ma_crossover", "SBER")] == older
+    assert latest[("ma_crossover", "GAZP")] == newer
+
+
 def test_validation_results_are_available_for_ranking_review():
     backtest_report = MetricsReport(
         "ma_crossover",

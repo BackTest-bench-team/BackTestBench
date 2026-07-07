@@ -9,7 +9,9 @@ from src.engine.models import (
     MetricsReport,
     OptimizationIteration,
     OptimizationResult,
+    Portfolio,
     RunContext,
+    TradeLog,
 )
 from src.strategy import create_strategy
 
@@ -152,6 +154,19 @@ class RandomSearchExecutionEngine:
 
         if skipped_invalid:
             print(f"Skipped {skipped_invalid} invalid parameter combinations")
+
+        if not best_raw_result:
+            best_raw_result = {
+                "trade_log_report": TradeLog(
+                    strategy_id=strategy_id,
+                    instrument=instrument,
+                    trades=[],
+                    final_portfolio_value=initial_capital,
+                    equity_curve=[initial_capital],
+                ),
+                "equity_curve": [initial_capital],
+                "final_portfolio": Portfolio(cash=initial_capital),
+            }
 
         # Return the final optimization result.
         return OptimizationResult(

@@ -4,8 +4,8 @@ title: SMA Cross Demo
 params:
   fast:            { type: int,   default: 10, choices: [5, 10, 12, 21], optimizable: true }
   slow:            { type: int,   default: 30, choices: [20, 30, 50, 100], optimizable: true }
-  stop_loss_pct:   { type: float, default: 5,  choices: preset:stop_loss_pct, optimizable: true }
-  take_profit_pct: { type: float, default: 10, choices: preset:take_profit_pct, optimizable: true }
+  stop_loss_pct:   { type: float, default: 0.5, choices: preset:stop_loss_pct, optimizable: true }
+  take_profit_pct: { type: float, default: 1.0, choices: preset:take_profit_pct, optimizable: true }
   order_size:      { type: float, default: 1,  choices: [1, 2, 3], optimizable: false }
 
 series:

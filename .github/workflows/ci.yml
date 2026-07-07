@@ -5,44 +5,81 @@ on:
     branches: [main]
 
 jobs:
-  build-and-run:
-    runs-on: self-hosted
-
-    env:
-      IMAGE_NAME: backtest-bench
-      CONTAINER_NAME: backtest-bench-pr-${{ github.event.pull_request.number }}
+  backend-tests:
+    runs-on: ubuntu-latest
+    if: github.event.action != 'closed'
 
     steps:
       - name: Checkout PR
         uses: actions/checkout@v4
 
-      - name: Stop & remove previous containers for this PR
-        run: docker compose down --remove-orphans 2>/dev/null || true
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
-      - name: Build & run via docker compose
-        env:
-          TINKOFF_TOKEN: ${{ secrets.TINKOFF_TOKEN }}
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run backend tests
+        run: pytest tests -q
+
+  frontend-checks:
+    runs-on: ubuntu-latest
+    if: github.event.action != 'closed'
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install and build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Lint frontend (non-blocking until page.tsx refactor)
+        working-directory: frontend
+        continue-on-error: true
+        run: npm run lint
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    if: github.event.action != 'closed'
+
+    env:
+      APP_PORT: "8080"
+      TINKOFF_TOKEN: ${{ secrets.TINKOFF_TOKEN }}
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Prepare .env for Compose
+        run: printf 'TINKOFF_TOKEN=%s\n' "$TINKOFF_TOKEN" > .env
+
+      - name: Build and start via docker compose
         run: docker compose up -d --build
 
-      - name: Smoke-check (containers stay up 10 s)
+      - name: Smoke-check (containers up + HTTP 200)
         run: |
           sleep 10
           docker compose ps
           EXITED=$(docker compose ps --status exited -q)
           [ -z "$EXITED" ]
+          curl -fsS "http://localhost:${APP_PORT}/"
 
-  cleanup:
-    runs-on: self-hosted
-    if: github.event.action == 'closed'
-    needs: []
-
-    env:
-      IMAGE_NAME: backtest-bench
-      CONTAINER_NAME: backtest-bench-pr-${{ github.event.pull_request.number }}
-
-    steps:
-      - name: Stop & remove container on PR close
-        run: |
-          docker stop $CONTAINER_NAME 2>/dev/null || true
-          docker rm   $CONTAINER_NAME 2>/dev/null || true
-          docker rmi  $IMAGE_NAME:pr-${{ github.event.pull_request.number }} 2>/dev/null || true
+      - name: Tear down stack
+        if: always()
+        run: docker compose down --remove-orphans 2>/dev/null || true

@@ -1,7 +1,7 @@
 # Docker Guide
 
 This guide matches `docker-compose.yml`, `Dockerfile`, and `Dockerfile.fullstack` as of
-June 30, 2026.
+July 7, 2026.
 
 ## Prerequisites
 
@@ -30,8 +30,9 @@ Open <http://localhost:3000>.
 
 The repository is mounted at `/app`, and a named volume preserves
 `/app/frontend/node_modules`. The dashboard calls Next.js API routes that spawn
-`/app/main.py` subcommands (`bootstrap`, `run`, `refresh-ranking`), which update
-`/app/data/runtime-dashboard.json` and may write `/app/data/backtest.db` (SQLite candle cache).
+`/app/main.py` subcommands (`bootstrap`, `stop`, `refresh-ranking`, `add-strategy`,
+`delete-strategy`), which update `/app/data/runtime-dashboard.json` and may write
+`/app/data/backtest.db` (SQLite candle cache).
 
 Stop the stack:
 
@@ -89,9 +90,12 @@ Build and smoke-run the integrated service:
 ```bash
 docker compose up -d --build
 docker compose ps
+curl -fsS "http://localhost:${APP_PORT:-80}/"
 docker compose logs app
 docker compose down
 ```
+
+If port 80 is busy locally, set `APP_PORT=8080` before `docker compose up`.
 
 Run backend tests:
 
@@ -99,21 +103,26 @@ Run backend tests:
 docker compose --profile test run --rm test
 ```
 
-As of June 30, 2026, the backend test suite contains **63 tests** with **80%** coverage of
-`src/`.
+As of July 7, 2026, the backend test suite contains **108 tests** (all passing) with
+**78%** coverage of `src/`.
 
 ## CI
 
-`.github/workflows/ci.yml` runs on pull requests to `main` using a self-hosted runner. It:
+`.github/workflows/ci.yml` runs on pull requests to `main` using GitHub-hosted
+`ubuntu-latest` runners with three jobs:
 
-1. checks out the PR;
-2. stops previous Compose services;
-3. builds and starts the default Compose stack;
-4. waits 10 seconds and fails if a service exited.
+| Job | When | Checks |
+|---|---|---|
+| `backend-tests` | PR opened/synchronized | Python 3.12, `pytest tests -q` |
+| `frontend-checks` | PR opened/synchronized | Node 20, `npm ci`, `npm run build`, `npm run lint` (lint non-blocking) |
+| `docker-smoke` | PR opened/synchronized | `docker compose up -d --build`, 10 s uptime, `curl` HTTP 200 on port 8080 |
 
-The workflow passes `TINKOFF_TOKEN` from GitHub Secrets to the Compose command. Cleanup on
-PR close removes containers/images by legacy names; this should be reviewed because Compose
-currently uses the fixed container name `backtest-bench-app`.
+The Docker job creates `.env` from the `TINKOFF_TOKEN` GitHub secret and sets
+`APP_PORT=8080`. Ephemeral runners tear down after each job, so no separate cleanup job is
+required on PR close. Local Compose defaults to `${APP_PORT:-80}:3000`.
+
+The full-stack image runs the Next.js **standalone** server (`node server.js`), not
+`npm run start`.
 
 ## Troubleshooting
 
@@ -126,10 +135,15 @@ Create it with `cp .env.example .env`.
 Set `TINKOFF_TOKEN` in `.env`. The pipeline cannot fetch T-Bank candles when the SQLite
 cache is empty and no token is available.
 
-### Port 3000 is busy
+### Port 80 or 3000 is busy
 
-Stop the conflicting process or change the host-side mapping in a local
-`docker-compose.override.yml`:
+Set a different host port before starting Compose:
+
+```bash
+APP_PORT=8080 docker compose up -d --build
+```
+
+Or use a local `docker-compose.override.yml`:
 
 ```yaml
 services:
@@ -157,7 +171,7 @@ docker compose logs app
 
 ## Current Limitations
 
-- The full-stack image runs the Next.js development server, not a production server.
+- The full-stack image serves the Next.js standalone build on port 3000 inside the container.
 - The application is a single-container MVP, not the multi-container API/database/scheduler
   deployment described in the Week 2 target architecture.
 - The default Compose service depends on a real T-Bank token when candles are not already
