@@ -1,6 +1,6 @@
 # Analytics Data Model
 
-Last audited against `main`: **June 23, 2026**.
+Last audited against `main`: **July 7, 2026**.
 
 ## Implementation Status
 
@@ -13,7 +13,8 @@ Implemented:
 - validation metrics support that reuses the same formulas as backtests;
 - separate in-memory buckets for backtest metrics and validation metrics;
 - ranking review entries that can show Top-N backtest rows together with latest validation metrics;
-- serialization of the latest metrics into `data/runtime-dashboard.json`.
+- serialization of the latest metrics into `data/runtime-dashboard.json`;
+- optimization summary (top iterations per strategy) in runtime JSON when optimizer runs.
 
 Not implemented:
 

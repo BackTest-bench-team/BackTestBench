@@ -1,6 +1,6 @@
 # Broker Adapter
 
-Last audited against `main`: **June 30, 2026**.
+Last audited against `main`: **July 7, 2026**.
 
 ## Purpose
 
@@ -57,6 +57,26 @@ Implemented in `src/broker_adapter/tbank.py`:
 Supported timeframe keys:
 
 `1m`, `5m`, `15m`, `30m`, `1h`, `1d`, `1w`, `1M`.
+
+## TwelveData Adapter (examples only)
+
+Implemented in `src/broker_adapter/twelvedata.py` (PR #135):
+
+- REST `/time_series` endpoint;
+- token from `TWELVEDATA_TOKEN`;
+- returns engine `Candle` list.
+
+Used in `examples/` only. Not wired into `main.py` or the dashboard.
+
+## Bybit Adapter (examples only)
+
+Implemented in `src/broker_adapter/bybit.py` (PR #135):
+
+- V5 kline API with 200-candle pagination;
+- spot symbol list in `examples/List_of_spots_bybit.txt` (512 symbols);
+- returns engine `Candle` list.
+
+Used in `examples/` only. Not wired into `main.py` or the dashboard.
 
 The strategy configuration parser supports a smaller set:
 `1m`, `5m`, `15m`, `1h`, `4h`, `1d`. In particular, `4h` is accepted by strategy
@@ -124,4 +144,5 @@ main.py
   -> ExecutionEngine (per strategy)
 ```
 
-CSV fallback, multi-broker selection, order placement, and portfolio retrieval are future work.
+CSV fallback, multi-broker dashboard selection, order placement, and portfolio retrieval are
+future work. TwelveData and Bybit adapters are available for standalone examples.

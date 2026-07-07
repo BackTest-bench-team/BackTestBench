@@ -103,8 +103,8 @@ Run backend tests:
 docker compose --profile test run --rm test
 ```
 
-As of July 7, 2026, the backend test suite contains **108 tests** (all passing) with
-**78%** coverage of `src/`.
+As of July 7, 2026, the backend test suite contains **144 tests** (all passing) with
+**82%** coverage of `src/`.
 
 ## CI
 

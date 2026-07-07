@@ -1,6 +1,6 @@
 # Database Schema (MVP1)
 
-> **Status as of June 30, 2026:** hybrid implementation. The **`candles`** table is
+> **Status as of July 7, 2026:** hybrid implementation. The **`candles`** table is
 > operational in SQLite (`data/backtest.db`) via `src/db/models.py` (`CandleModel`) and
 > `src/data_loader/loader.py`. Relational tables for strategies, backtest runs, trades, and
 > metrics remain **target schema only**. The integrated pipeline stores the latest multi-strategy

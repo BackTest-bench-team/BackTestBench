@@ -1,6 +1,6 @@
 # BackTestBench API Reference
 
-Last audited against `main`: **June 30, 2026**.
+Last audited against `main`: **July 7, 2026**.
 
 This document separates the API that currently works from the target FastAPI contract.
 
@@ -142,7 +142,8 @@ Per-strategy status:
 - `error`.
 
 Legacy single-run pipeline fields (`run_id`, `pipeline`, `current_stage`) may appear in
-older runtime files but are not the primary Week 4 contract.
+older runtime files but are not the primary contract. The Week 4 `POST /api/run-strategy`
+route was removed in Week 5; use `POST /api/bootstrap` to run all strategies.
 
 ## Target FastAPI Contract
 

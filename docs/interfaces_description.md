@@ -1,6 +1,6 @@
 # Current Module Contracts
 
-Last audited against `main`: **June 30, 2026**.
+Last audited against `main`: **July 7, 2026**.
 
 The Week 2 design referred to a root-level `interfaces.py`. That file is not the current
 contract source. Current runtime models are split between `src/engine`, `src/strategy`, and
@@ -16,7 +16,10 @@ contract source. Current runtime models are split between `src/engine`, `src/str
 | Engine `Portfolio` | `src/engine/portfolio.py` | execution context and order executor |
 | `ExecutionContext` | `src/engine/context.py` | strategy |
 | `BaseStrategy` | `src/strategy/base.py` | strategy implementations |
+| `ComposableStrategy` / `CompiledStrategy` | `src/strategy/composable/` | YAML-defined composable strategies |
 | `ParameterSpec` | `src/strategy/schema.py` | dashboard parameter schemas |
+| `OptimizationResult` / `OptimizationIteration` | `src/engine/optimization_engine.py` | parameter optimizer |
+| `LoadedMarketData` | `src/data_loader/loader.py` | single-fetch candle + price series |
 | `CandleModel` | `src/db/models.py` | SQLite candle persistence |
 | `DataLoader` | `src/data_loader/loader.py` | candle validation, upsert, cache reuse |
 | `TopNEntry`, `RankingReviewEntry` | `src/analytics/ranking.py` | in-memory Top-N ranking |
