@@ -186,3 +186,60 @@ def test_optimization_returns_none_metrics_when_no_trades():
     assert result.best_metrics is None
     assert result.total_iterations_run == 0
     assert result.best_trade_log_report.trades == []
+
+
+def test_sample_mode_uses_all_combos_when_below_iteration_cap():
+    candles = _candles()
+    result = RandomSearchExecutionEngine(ExecutionEngine()).run_optimization(
+        strategy_id="ma_rsi_composable",
+        param_grid={
+            "fast": [10, 12],
+            "slow": [30],
+            "rsi_period": [14],
+            "rsi_buy_min": [40],
+            "rsi_overbought": [70],
+            "stop_loss_pct": [0.5],
+            "take_profit_pct": [1.0],
+            "order_size": 1,
+        },
+        candles=candles,
+        initial_capital=100_000.0,
+        run_context=_context(candles),
+        n_iterations=100,
+        mode="sample",
+    )
+    assert result.total_iterations_run == 2
+
+
+def test_optimization_skips_failed_iterations(monkeypatch):
+    candles = _candles()
+    engine = RandomSearchExecutionEngine(ExecutionEngine())
+    calls = {"count": 0}
+
+    def boom_strategy(strategy_id, params):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("compile failed")
+        from src.strategy import create_strategy as real_create
+        return real_create(strategy_id, params)
+
+    monkeypatch.setattr("src.engine.optimization_engine.create_strategy", boom_strategy)
+
+    result = engine.run_optimization(
+        strategy_id="ma_rsi_composable",
+        param_grid={
+            "fast": [10, 12],
+            "slow": [30],
+            "rsi_period": [14],
+            "rsi_buy_min": [40],
+            "rsi_overbought": [70],
+            "stop_loss_pct": [0.5],
+            "take_profit_pct": [1.0],
+            "order_size": 1,
+        },
+        candles=candles,
+        initial_capital=100_000.0,
+        run_context=_context(candles),
+        mode="grid",
+    )
+    assert result.total_iterations_run == 1

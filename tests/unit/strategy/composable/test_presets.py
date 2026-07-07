@@ -39,3 +39,15 @@ def test_resolve_choices_unknown_preset_raises():
 def test_resolve_choices_invalid_string_raises():
     with pytest.raises(CompileError, match="must be 'preset:<name>'"):
         resolve_choices("not-a-preset", {})
+
+
+def test_load_presets_rejects_non_mapping(tmp_path):
+    path = tmp_path / "bad.yaml"
+    path.write_text("- not-a-map\n", encoding="utf-8")
+    with pytest.raises(CompileError, match="must be a mapping"):
+        load_presets(path)
+
+
+def test_resolve_choices_rejects_unsupported_type():
+    with pytest.raises(CompileError, match="must be a list"):
+        resolve_choices(123, {})
