@@ -178,3 +178,60 @@ The planned schema includes:
 
 See [database_schema.md](database_schema.md). `src/db` is currently empty, so the target
 schema must not be treated as implemented.
+
+## Optimizer Result Ranking
+
+Optimizer ranking is separate from strategy Top-N ranking. `build_top_n()` ranks different
+strategies for the dashboard catalogue, while `rank_optimizer_results()` ranks parameter
+combinations for one strategy after a grid/random search.
+
+The optimizer output JSON schema is:
+
+```json
+{
+  "strategy_id": "ma_rsi_composable",
+  "instrument": "SBER",
+  "ranked": [
+    {
+      "rank": 1,
+      "params": { "fast": 12, "slow": 30 },
+      "metrics": {
+        "strategy_id": "ma_rsi_composable",
+        "instrument": "SBER",
+        "total_pnl": 1200.0,
+        "sharpe_ratio": 1.4,
+        "max_drawdown": 0.08,
+        "win_rate": 0.6,
+        "deposit_baseline_pnl": 250.0
+      }
+    }
+  ]
+}
+```
+
+`OptimizerRankedEntry` contains the ranked row used by this schema:
+
+| Field | Type | Notes |
+|---|---|---|
+| `rank` | `int` | 1-based rank inside one optimizer run |
+| `params` | `dict[str, Any]` | parameter combination evaluated by the optimizer |
+| `metrics` | `MetricsReport` | metrics for this parameter combination |
+
+`rank_optimizer_results()` accepts optimizer candidates shaped as `(params, metrics)` and
+returns `list[OptimizerRankedEntry]`. It deliberately does **not** call `build_top_n()` because
+optimizer rows are parameter combinations for one strategy, not separate strategies.
+
+The ranking criterion reuses the existing analytics ordering:
+
+1. higher `total_pnl` first;
+2. then lower `max_drawdown`;
+3. then higher `sharpe_ratio`;
+4. then higher `win_rate`;
+5. exact ties keep the input order for stable deterministic output.
+
+Invalid optimizer rows are skipped: `None` rows, non-finite metrics such as `NaN`, and runs
+explicitly marked with an empty trade log / `trade_count == 0`.
+
+`main.py` now serializes optimizer output under each strategy's `optimization` block using
+both the new canonical `ranked[]` field and the existing `top_iterations[]` field for backward
+compatibility with the current dashboard UI.

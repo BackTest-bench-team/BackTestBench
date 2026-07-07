@@ -216,3 +216,21 @@ planned, not implemented.
 - [Week 3 report](reports/Week%203%20report.md)
 - Week 1 and Week 2 PDFs are historical snapshots and intentionally retain statements that
   were true at the time.
+
+### Optimizer ranking schema
+
+The analytics module also exposes `rank_optimizer_results()` for ranking parameter
+combinations produced by the grid/random optimizer for a single strategy. This is separate
+from `build_top_n()`, which ranks different strategies. Optimizer rows are sorted by P&L,
+then drawdown, Sharpe ratio, and win rate, and are serialized as:
+
+```json
+{
+  "strategy_id": "ma_rsi_composable",
+  "instrument": "SBER",
+  "ranked": [{ "rank": 1, "params": {}, "metrics": {} }]
+}
+```
+
+The current dashboard keeps its existing `optimization.top_iterations[]` field, while also
+including the canonical `optimization.ranked[]` schema for future consumers.
