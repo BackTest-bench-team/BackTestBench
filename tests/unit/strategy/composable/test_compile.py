@@ -57,6 +57,45 @@ def test_get_optimize_spec_grid():
 def test_preset_resolution():
     d = StrategyDefinition.from_yaml("config/strategies/ma_rsi_composable.yaml")
     assert d.params["slow"].choices == [20, 30, 50, 100, 200]   # preset:ma_long
+    assert d.params["stop_loss_pct"].choices == [0.3, 0.5, 0.7, 1.0]
+    assert d.params["take_profit_pct"].choices == [0.5, 1.0, 1.5, 2.0]
+
+
+def test_ma_rsi_defaults_are_within_preset_choices():
+    d = StrategyDefinition.from_yaml("config/strategies/ma_rsi_composable.yaml")
+    compiled = compile_strategy(d)
+    assert compiled.params["stop_loss_pct"] == 0.5
+    assert compiled.params["take_profit_pct"] == 1.0
+    assert compiled.params["stop_loss_pct"] in d.params["stop_loss_pct"].choices
+    assert compiled.params["take_profit_pct"] in d.params["take_profit_pct"].choices
+
+
+def test_sma_cross_demo_compiles_with_preset_defaults():
+    d = StrategyDefinition.from_yaml("config/strategies/sma_cross_demo.yaml")
+    compiled = compile_strategy(d)
+    assert compiled.params["stop_loss_pct"] == 0.5
+    assert compiled.params["take_profit_pct"] == 1.0
+
+
+def test_get_optimize_spec_includes_tp_sl_from_presets():
+    d = StrategyDefinition.from_yaml("config/strategies/ma_rsi_composable.yaml")
+    spec = get_optimize_spec(d)
+    assert spec.params["stop_loss_pct"] == [0.3, 0.5, 0.7, 1.0]
+    assert spec.params["take_profit_pct"] == [0.5, 1.0, 1.5, 2.0]
+
+
+def test_param_bounds_enforced_at_compile_time():
+    bounded = {
+        "name": "bounded",
+        "params": {
+            "x": {"type": "float", "default": 1.0, "min": 0.5, "max": 1.5},
+        },
+        "series": {"ma": {"fn": "sma", "source": "price", "period": 3}},
+        "rules": [{"id": "e", "scope": "flat", "priority": 1,
+                   "when": {"gt": ["ma", 0]}, "then": {"action": "buy"}}],
+    }
+    with pytest.raises(CompileError, match="> max"):
+        compile_strategy(StrategyDefinition.from_dict(bounded), overrides={"x": 2.0})
 
 
 # ---- clear errors at compile time -----------------------------------------

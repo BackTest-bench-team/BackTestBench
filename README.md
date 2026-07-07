@@ -155,7 +155,7 @@ APP_PORT=8080 docker compose up -d --build && curl -fsS "http://localhost:8080/"
 
 As of July 7, 2026:
 
-- the backend suite contains **108 tests** (all passing) with **79%** coverage of `src/`;
+- the backend suite contains **124 tests** (all passing) with **79%** coverage of `src/`;
 - the frontend production build succeeds (Next.js 16);
 - frontend lint reports 5 errors in `page.tsx` (non-blocking in CI until refactor);
 - CI runs backend tests, frontend build, and Docker smoke on GitHub-hosted `ubuntu-latest` runners;
