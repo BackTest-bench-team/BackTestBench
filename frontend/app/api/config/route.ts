@@ -4,6 +4,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RuntimeSettings = {
+  data_source?: string;
   instrument?: string;
   timeframe?: string;
   lookback_days?: number;
@@ -26,7 +27,11 @@ export async function GET() {
       settings: Record<string, unknown>;
       schema: Record<string, unknown>;
     };
-    return Response.json({ ok: true, settings: payload.settings, schema: payload.schema });
+    return Response.json({
+      ok: true,
+      settings: payload.settings,
+      schema: payload.schema,
+    });
   } catch (error) {
     return Response.json(
       {

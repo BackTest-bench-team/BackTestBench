@@ -1,79 +1,168 @@
 services:
+
   app:
+
     build:
+
       context: .
+
       dockerfile: Dockerfile.fullstack
+
     container_name: backtest-bench-app
+
     ports:
+
       - "${APP_PORT:-80}:3000"
+
     env_file:
+
       - .env
+
     environment:
+
       PYTHON_BIN: python3
+
       PYTHONUNBUFFERED: "1"
+
       PYTHONDONTWRITEBYTECODE: "1"
+
       PYTHONPATH: /app
+
       NODE_ENV: production
+
+    volumes:
+
+      # Persist API tokens and runtime data on the host across container restarts.
+
+      - ./.env:/app/.env
+
+      - ./data:/app/data
+
+      - ./config:/app/config
+
     restart: unless-stopped
 
+
+
   backtest-app:
+
     build:
+
       context: .
+
       dockerfile: Dockerfile
+
     image: backtest-bench:latest
+
     container_name: backtest-bench
+
     env_file:
+
       - .env
+
     environment:
+
       PYTHONUNBUFFERED: "1"
+
       PYTHONDONTWRITEBYTECODE: "1"
+
       PYTHONPATH: /app
+
     volumes:
+
       - .:/app
+
     working_dir: /app
+
     command: python main.py
+
     profiles:
+
       - backend
 
+
+
   test:
+
     build:
+
       context: .
+
       dockerfile: Dockerfile
+
     image: backtest-bench:latest
+
     container_name: backtest-bench-test
+
     env_file:
+
       - .env
+
     environment:
+
       PYTHONUNBUFFERED: "1"
+
       PYTHONDONTWRITEBYTECODE: "1"
+
       PYTHONPATH: /app
+
     volumes:
+
       - .:/app
+
     working_dir: /app
+
     command: pytest tests -v
+
     profiles:
+
       - test
 
+
+
   dev:
+
     build:
+
       context: .
+
       dockerfile: Dockerfile
+
     image: backtest-bench:latest
+
     container_name: backtest-bench-dev
+
     env_file:
+
       - .env
+
     environment:
+
       PYTHONUNBUFFERED: "1"
+
       PYTHONDONTWRITEBYTECODE: "1"
+
       PYTHONPATH: /app
+
     volumes:
+
       - .:/app
+
     working_dir: /app
+
     stdin_open: true
+
     tty: true
+
     command: /bin/bash
+
     profiles:
+
       - dev
 
+
+
 volumes:
+
   frontend_node_modules:
+

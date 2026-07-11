@@ -200,6 +200,8 @@ class DataLoader:
         fetch: Callable[[datetime, datetime], Awaitable[list[Candle]]],
         *,
         min_ratio: float = 0.5,
+        broker_label: str = "T-Bank",
+        token_env: str = "TINKOFF_TOKEN",
     ) -> LoadedMarketData:
         """Load once from DB/cache or broker; reuse in-memory cache on later reads."""
         rows = self.load_candles(instrument, timeframe, start, end)
@@ -220,9 +222,13 @@ class DataLoader:
                 return LoadedMarketData(
                     candles=candles,
                     price_series=[candle_model_to_price_bar(row) for row in rows],
-                    source="T-Bank",
+                    source=broker_label,
                 )
-            return LoadedMarketData(candles=api_candles, price_series=_candles_to_price_series(api_candles), source="T-Bank")
+            return LoadedMarketData(
+                candles=api_candles,
+                price_series=_candles_to_price_series(api_candles),
+                source=broker_label,
+            )
         except Exception as exc:
             if len(rows) >= 10:
                 candles = [candle_model_to_engine(row) for row in rows]
@@ -232,7 +238,7 @@ class DataLoader:
                     source="database (offline)",
                 )
             raise RuntimeError(
-                "T-Bank API unavailable. Check internet/VPN/firewall and TINKOFF_TOKEN."
+                f"{broker_label} API unavailable. Check network and {token_env}."
             ) from exc
 
     @staticmethod

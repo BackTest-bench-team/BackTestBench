@@ -67,8 +67,8 @@ class TwelveDataAdapter(BrokerAdapter):
         self.token = token or os.getenv("TWELVEDATA_TOKEN")
         if not self.token:
             raise AuthenticationError(
-                "Twelve Data API token not provided. Set the TWELVEDATA_TOKEN "
-                "environment variable (e.g. in .env) or pass token= explicitly."
+                "Twelve Data API token not provided. Set TWELVEDATA_TOKEN in .env "
+                "(see .env.example) or pass token= explicitly."
             )
         self._session: Optional[aiohttp.ClientSession] = None
 

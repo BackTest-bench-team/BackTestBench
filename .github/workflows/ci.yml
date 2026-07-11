@@ -60,14 +60,17 @@ jobs:
 
     env:
       APP_PORT: "8080"
-      TINKOFF_TOKEN: ${{ secrets.TINKOFF_TOKEN }}
 
     steps:
       - name: Checkout PR
         uses: actions/checkout@v4
 
       - name: Prepare .env for Compose
-        run: printf 'TINKOFF_TOKEN=%s\n' "$TINKOFF_TOKEN" > .env
+        run: |
+          cat > .env <<EOF
+          TINKOFF_TOKEN=${{ secrets.TINKOFF_TOKEN }}
+          TWELVEDATA_TOKEN=${{ secrets.TWELVEDATA_TOKEN }}
+          EOF
 
       - name: Build and start via docker compose
         run: docker compose up -d --build

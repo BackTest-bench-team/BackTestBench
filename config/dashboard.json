@@ -1,8 +1,9 @@
 {
-  "instrument": "GAZP",
-  "timeframe": "1d",
+  "data_source": "twelvedata",
+  "instrument": "GOOGL",
+  "timeframe": "1h",
   "initial_capital": 10000000.0,
-  "lookback_days": 900,
+  "lookback_days": 30,
   "optimization_iterations": 16,
   "optimization_mode": "sample",
   "optimization_seed": 42,
@@ -11,17 +12,17 @@
       "order_size": 1,
       "fast": 5,
       "slow": 30,
-      "rsi_period": 14,
-      "rsi_buy_min": 60,
-      "rsi_overbought": 70,
+      "rsi_period": 20,
+      "rsi_buy_min": 50,
+      "rsi_overbought": 80,
       "stop_loss_pct": 0.7,
-      "take_profit_pct": 1.0
+      "take_profit_pct": 0.5
     },
     "rsi_bounce_demo": {
       "stop_loss_pct": 5,
       "order_size": 1,
-      "rsi_period": 14,
-      "rsi_oversold": 30,
+      "rsi_period": 7,
+      "rsi_oversold": 35,
       "rsi_overbought": 70
     },
     "sma_cross_demo": {
@@ -29,7 +30,7 @@
       "fast": 5,
       "slow": 20,
       "stop_loss_pct": 1.0,
-      "take_profit_pct": 0.5
+      "take_profit_pct": 2.0
     }
   }
 }

@@ -43,6 +43,10 @@ type TradePoint = {
 type ChartRow = ChartPoint & {
   action: "BUY" | "SELL" | null;
   alpha: number;
+  in_position: boolean;
+  strategy_solid: number | null;
+  strategy_flat: number | null;
+  trade_marker: number | null;
 };
 
 type OptimizationSummary = {
@@ -141,6 +145,30 @@ function formatMoney(v: number | null | undefined) {
   }).format(v);
 }
 
+function formatSignedPercent(fraction: number | null | undefined) {
+  if (fraction === null || fraction === undefined) return null;
+  const sign = fraction >= 0 ? "+" : "−";
+  const pct = new Intl.NumberFormat("ru-RU", {
+    style: "percent",
+    maximumFractionDigits: 1,
+  }).format(Math.abs(fraction));
+  return `${sign}${pct}`;
+}
+
+function formatSignedReturnPct(fraction: number | null | undefined) {
+  if (fraction === null || fraction === undefined) return "—";
+  return formatSignedPercent(fraction) ?? "—";
+}
+
+function formatReturnPct(
+  amountRub: number | null | undefined,
+  baseCapital: number | null | undefined
+) {
+  if (amountRub === null || amountRub === undefined) return "—";
+  if (!baseCapital) return "—";
+  return formatSignedReturnPct(amountRub / baseCapital);
+}
+
 function formatPercent(v: number | null | undefined) {
   if (v === null || v === undefined) return "—";
   return new Intl.NumberFormat("ru-RU", {
@@ -173,13 +201,51 @@ function formatAxisDate(value: string) {
 }
 
 
+function buildInPositionByDate(points: ChartPoint[], trades: TradePoint[]) {
+  const sortedTrades = [...trades].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  const inPositionByDate = new Map<string, boolean>();
+  let tradeIdx = 0;
+  let inPosition = false;
+
+  for (const point of points) {
+    while (tradeIdx < sortedTrades.length && sortedTrades[tradeIdx].timestamp <= point.date) {
+      inPosition = sortedTrades[tradeIdx].action === "BUY";
+      tradeIdx += 1;
+    }
+    inPositionByDate.set(point.date, inPosition);
+  }
+
+  return inPositionByDate;
+}
+
 function buildChartRows(points: ChartPoint[], trades: TradePoint[]): ChartRow[] {
   const actionByDate = new Map(trades.map((t) => [t.timestamp, t.action]));
-  return points.map((point) => ({
-    ...point,
-    action: actionByDate.get(point.date) ?? null,
-    alpha: point.strategy_index - point.benchmark_index,
-  }));
+  const inPositionByDate = buildInPositionByDate(points, trades);
+
+  const baseRows = points.map((point) => {
+    const inPosition = inPositionByDate.get(point.date) ?? false;
+    return {
+      ...point,
+      action: actionByDate.get(point.date) ?? null,
+      alpha: point.strategy_index - point.benchmark_index,
+      in_position: inPosition,
+      strategy_solid: null as number | null,
+      strategy_flat: null as number | null,
+    };
+  });
+
+  return baseRows.map((row, index) => {
+    const next = baseRows[index + 1];
+    const bridgeToFlat = row.in_position && next && !next.in_position;
+    const bridgeToHold = !row.in_position && next && next.in_position;
+
+    return {
+      ...row,
+      strategy_solid: row.in_position || bridgeToHold ? row.strategy_index : null,
+      strategy_flat: !row.in_position || bridgeToFlat ? row.strategy_index : null,
+      trade_marker: row.action ? row.strategy_index : null,
+    };
+  });
 }
 
 
@@ -446,7 +512,13 @@ function ParamSummary({ params }: { params: Record<string, number> }) {
   );
 }
 
-function OptimizationPanel({ summary }: { summary: OptimizationSummary }) {
+function OptimizationPanel({
+  summary,
+  initialCapital,
+}: {
+  summary: OptimizationSummary;
+  initialCapital: number;
+}) {
   const scopeLabel =
     summary.mode === "grid" || summary.exhaustive
       ? `Full grid search: ${summary.iterations_run} valid combinations evaluated (best by ${summary.target_metric})`
@@ -465,6 +537,7 @@ function OptimizationPanel({ summary }: { summary: OptimizationSummary }) {
               <tr>
                 <th>#</th>
                 <th>P&amp;L</th>
+                <th>Return %</th>
                 <th>Sharpe</th>
                 <th>Params</th>
               </tr>
@@ -474,6 +547,7 @@ function OptimizationPanel({ summary }: { summary: OptimizationSummary }) {
                 <tr key={index} className={index === 0 ? "is-best" : undefined}>
                   <td>{index + 1}</td>
                   <td>{formatMoney(row.total_pnl)}</td>
+                  <td>{formatReturnPct(row.total_pnl, initialCapital)}</td>
                   <td>{formatNumber(row.sharpe_ratio)}</td>
                   <td>
                     {Object.entries(row.params)
@@ -666,11 +740,30 @@ function PerformanceChart({ points, trades = [] }: { points: ChartPoint[]; trade
             />
             <Line
               type="monotone"
-              dataKey="strategy_index"
+              dataKey="strategy_flat"
               stroke={CHART.strategy}
               strokeWidth={2.5}
+              strokeDasharray="6 4"
+              strokeOpacity={0.9}
+              dot={false}
+              activeDot={false}
+              isAnimationActive={false}
+            />
+            <Line
+              type="monotone"
+              dataKey="strategy_solid"
+              stroke={CHART.strategy}
+              strokeWidth={2.5}
+              dot={false}
+              activeDot={false}
+              isAnimationActive={false}
+            />
+            <Line
+              type="monotone"
+              dataKey="trade_marker"
+              stroke="none"
               dot={TradeMarker}
-              activeDot={{ r: 4, fill: CHART.strategy }}
+              activeDot={false}
               isAnimationActive={false}
             />
           </ComposedChart>
@@ -678,7 +771,8 @@ function PerformanceChart({ points, trades = [] }: { points: ChartPoint[]; trade
       </div>
 
       <div className="chart-legend">
-        <span className="legend-strategy">Strategy index</span>
+        <span className="legend-strategy">Strategy (in market)</span>
+        <span className="legend-strategy-flat">out of market</span>
         <span className="legend-benchmark">Buy &amp; hold</span>
         <span className="legend-baseline">Baseline 100</span>
         <span className="buy-dot">BUY</span>
@@ -759,14 +853,23 @@ function StrategyCard({
           )}
           {isError && <span className="status-pill status-error">Error</span>}
           {!isBusy && strategy.final_portfolio.equity != null && (
-            <span className="strategy-final">{formatMoney(strategy.final_portfolio.equity)}</span>
+            <span className="strategy-final">
+              {formatSignedReturnPct(
+                strategy.initial_capital > 0
+                  ? (strategy.final_portfolio.equity - strategy.initial_capital) /
+                      strategy.initial_capital
+                  : null
+              )}
+            </span>
           )}
         </div>
       </header>
 
       <ParamSummary params={strategy.params} />
 
-      {!isBusy && strategy.optimization && <OptimizationPanel summary={strategy.optimization} />}
+      {!isBusy && strategy.optimization && (
+        <OptimizationPanel summary={strategy.optimization} initialCapital={strategy.initial_capital} />
+      )}
 
       {isError && strategy.error && (
         <div className="strategy-error">{formatStrategyError(strategy.error)}</div>
@@ -779,7 +882,13 @@ function StrategyCard({
           <div className="metrics-grid">
             <div className="metric-card">
               <span className="metric-title">P&amp;L</span>
-              <span className="metric-value">{formatMoney(strategy.metrics.total_pnl)}</span>
+              <span className="metric-value">
+                {formatSignedReturnPct(
+                  strategy.metrics.total_pnl != null && strategy.initial_capital > 0
+                    ? strategy.metrics.total_pnl / strategy.initial_capital
+                    : null
+                )}
+              </span>
             </div>
             <div className="metric-card">
               <span className="metric-title">Sharpe</span>
@@ -796,9 +905,10 @@ function StrategyCard({
             <div className="metric-card">
               <span className="metric-title">Deposit</span>
               <span className="metric-value">
-                {formatMoney(
-                  strategy.metrics.deposit_baseline_final ??
-                    strategy.initial_capital + (strategy.metrics.deposit_baseline_pnl ?? 0)
+                {formatSignedReturnPct(
+                  strategy.metrics.deposit_baseline_pnl != null && strategy.initial_capital > 0
+                    ? strategy.metrics.deposit_baseline_pnl / strategy.initial_capital
+                    : null
                 )}
               </span>
               <span className="metric-hint">Bank baseline</span>
@@ -840,7 +950,7 @@ export default function Page() {
     const saveRes = await fetch("/api/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(settings),
+      body: JSON.stringify({ ...settings, optimization_seed: 42 }),
     });
     const saveBody = (await saveRes.json().catch(() => null)) as { message?: string } | null;
     if (!saveRes.ok) {

@@ -14,10 +14,9 @@ venv/
 .coverage
 htmlcov/
 
-# Env / secrets
+# Env / secrets (never commit real tokens)
 .env
 .env.*
-!.env.example
 
 # Database (SQLite for MVP-1)
 *.db
