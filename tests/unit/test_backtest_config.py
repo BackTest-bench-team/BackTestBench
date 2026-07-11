@@ -4,6 +4,7 @@ from src.backtest_config import (
     ConfigValidationError,
     normalize_instrument,
     ui_schema,
+    validate_data_source,
     validate_initial_capital,
     validate_lookback_days,
     validate_optimization_iterations,
@@ -26,9 +27,13 @@ def test_validate_timeframe_rejects_empty_and_unknown():
         validate_timeframe("2h")
 
 
-def test_validate_lookback_days_respects_limit():
+def test_validate_lookback_days_respects_tbank_limit():
     with pytest.raises(ConfigValidationError):
-        validate_lookback_days("1h", 200)
+        validate_lookback_days("1h", 200, data_source="tbank")
+
+
+def test_validate_lookback_days_allows_wider_range_for_bybit():
+    assert validate_lookback_days("1h", 200, data_source="bybit") == 200
 
 
 def test_validate_lookback_days_rejects_non_positive():
@@ -38,12 +43,25 @@ def test_validate_lookback_days_rejects_non_positive():
         validate_lookback_days("1h", True)
 
 
-def test_normalize_instrument_uppercases_and_validates():
+def test_normalize_instrument_uppercases_and_validates_tbank():
     assert normalize_instrument("sber") == "SBER"
     with pytest.raises(ConfigValidationError):
         normalize_instrument("")
     with pytest.raises(ConfigValidationError):
         normalize_instrument("FAKE")
+
+
+def test_normalize_instrument_validates_per_source():
+    assert normalize_instrument("BTCUSDT", "bybit") == "BTCUSDT"
+    with pytest.raises(ConfigValidationError):
+        normalize_instrument("SBER", "bybit")
+    assert normalize_instrument("AAPL", "twelvedata") == "AAPL"
+
+
+def test_validate_data_source_rejects_unknown():
+    assert validate_data_source("tbank") == "tbank"
+    with pytest.raises(ConfigValidationError):
+        validate_data_source("alpaca")
 
 
 def test_validate_initial_capital_rejects_invalid_values():
@@ -70,10 +88,11 @@ def test_validate_optimization_seed_rejects_bool():
         validate_optimization_seed(True)
 
 
-def test_validate_runtime_settings_normalizes_instrument():
+def test_validate_runtime_settings_normalizes_instrument_and_source():
     result = validate_runtime_settings(
         {
-            "instrument": "sber",
+            "data_source": "bybit",
+            "instrument": "btcusdt",
             "timeframe": "1h",
             "lookback_days": 30,
             "initial_capital": 100_000,
@@ -82,12 +101,16 @@ def test_validate_runtime_settings_normalizes_instrument():
             "optimization_seed": 42,
         }
     )
-    assert result["instrument"] == "SBER"
+    assert result["instrument"] == "BTCUSDT"
+    assert result["data_source"] == "bybit"
     assert result["optimization_mode"] == "grid"
 
 
-def test_ui_schema_exposes_instruments_and_defaults():
+def test_ui_schema_exposes_data_sources_and_defaults():
     schema = ui_schema()
     assert "SBER" in schema["instruments"]
     assert schema["defaults"]["timeframe"] == "1h"
     assert any(item["value"] == "grid" for item in schema["optimization_modes"])
+    assert any(item["value"] == "tbank" for item in schema["data_sources"])
+    bybit = next(item for item in schema["data_sources"] if item["value"] == "bybit")
+    assert "BTCUSDT" in bybit["instruments"]

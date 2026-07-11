@@ -26,13 +26,16 @@ server:
 docker compose up --build
 ```
 
-Open <http://localhost:3000>.
+Open <http://localhost:3000> (or the host port from `APP_PORT`, default 80).
 
-The repository is mounted at `/app`, and a named volume preserves
-`/app/frontend/node_modules`. The dashboard calls Next.js API routes that spawn
-`/app/main.py` subcommands (`bootstrap`, `stop`, `refresh-ranking`, `add-strategy`,
-`delete-strategy`), which update `/app/data/runtime-dashboard.json` and may write
-`/app/data/backtest.db` (SQLite candle cache).
+The `app` service bind-mounts host `.env`, `data/`, and `config/` into the container so
+API tokens saved from the dashboard UI persist across `docker compose down` / `up`. Tokens
+are **not** cleared on restart — only the ephemeral container filesystem is recreated.
+
+The dashboard calls Next.js API routes that spawn `/app/main.py` subcommands (`bootstrap`,
+`stop`, `refresh-ranking`, `add-strategy`, `delete-strategy`), which update
+`/app/data/runtime-dashboard.json` and may write `/app/data/backtest.db` (SQLite candle
+cache).
 
 Stop the stack:
 

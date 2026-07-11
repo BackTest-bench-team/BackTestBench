@@ -9,8 +9,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
-
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
@@ -25,12 +23,10 @@ from src.analytics import (
     calculate_metrics_from_trade_log,
     rank_optimizer_results,
 )
-from src.backtest_config import (
-    ConfigValidationError,
-    ui_schema,
-    validate_runtime_settings,
-)
-from src.broker_adapter import TBankAdapter
+from src.backtest_config import ConfigValidationError, ui_schema, validate_runtime_settings
+from src.broker_adapter.factory import TOKEN_ENV_BY_SOURCE, build_adapter, source_display_name
+from src.env_file import load_env_file_into_process, mask_token, read_env_file, write_env_file
+from src.token_validation import validate_tokens_sync
 from src.data_loader import DataLoader, LoadedMarketData
 from src.db import init_db
 from src.engine import ExecutionEngine, RunContext
@@ -55,6 +51,7 @@ STOP_FILE = DATA_DIR / "backtest.stop"
 PID_FILE = DATA_DIR / "backtest.pid"
 
 RUNTIME_SETTING_KEYS = (
+    "data_source",
     "instrument",
     "timeframe",
     "lookback_days",
@@ -65,7 +62,6 @@ RUNTIME_SETTING_KEYS = (
 )
 
 DATA_DIR.mkdir(exist_ok=True)
-load_dotenv(BASE_DIR / ".env", override=False)
 
 
 def now_iso() -> str:
@@ -298,7 +294,7 @@ def default_dashboard() -> dict[str, Any]:
     dashboard = {
         "instrument": config.get("instrument", "SBER"),
         "timeframe": config.get("timeframe", "1h"),
-        "data_source": "T-Bank",
+        "data_source": source_display_name(config.get("data_source", "tbank")),
         "initial_capital": config.get("initial_capital", 100_000.0),
         "strategies": [],
         "ranking": empty_ranking(),
@@ -357,6 +353,8 @@ async def load_market_data(
             from_dt,
             to_dt,
             fetch,
+            broker_label=source_display_name(config.get("data_source", "tbank")),
+            token_env=TOKEN_ENV_BY_SOURCE.get(config.get("data_source", "tbank"), "TINKOFF_TOKEN"),
         )
         if not market_data.candles:
             raise RuntimeError("No candles available for backtest window")
@@ -383,11 +381,8 @@ async def fetch_candles_from_api(
     from_dt: datetime,
     to_dt: datetime,
 ) -> list[Candle]:
-    token = os.getenv("TINKOFF_TOKEN")
-    if not token:
-        raise RuntimeError("TINKOFF_TOKEN missing")
-
-    adapter = TBankAdapter(token=token, use_sandbox=False, verify_ssl=False)
+    source = str(config.get("data_source", "tbank"))
+    adapter = build_adapter(source, use_sandbox=False)
     async with adapter:
         candles = await adapter.get_candles(
             instrument=config["instrument"],
@@ -766,7 +761,7 @@ async def bootstrap_all() -> None:
         dashboard = {
             "instrument": config["instrument"],
             "timeframe": config["timeframe"],
-            "data_source": "T-Bank",
+            "data_source": source_display_name(config.get("data_source", "tbank")),
             "initial_capital": config.get("initial_capital", 100_000.0),
             "strategies": [
                 strategy_skeleton(item["id"], dict(item["params"]), status="running")
@@ -856,6 +851,70 @@ def delete_strategy_command(strategy_id: str) -> dict[str, Any]:
     return {"deleted": strategy_id, "file": deleted_file}
 
 
+def token_status_command() -> dict[str, Any]:
+    load_env_file_into_process(override=True)
+    stored = read_env_file()
+    tokens: dict[str, Any] = {}
+    for key in ("TINKOFF_TOKEN", "TWELVEDATA_TOKEN"):
+        value = os.getenv(key) or stored.get(key)
+        tokens[key] = {
+            "configured": bool(value and str(value).strip()),
+            "masked": mask_token(str(value).strip() if value else None),
+        }
+    return {"ok": True, "tokens": tokens}
+
+
+def save_tokens_command(payload_json: str) -> dict[str, Any]:
+    payload = json.loads(payload_json)
+    updates: dict[str, str] = {}
+    if payload.get("tinkoff_token"):
+        updates["TINKOFF_TOKEN"] = str(payload["tinkoff_token"]).strip()
+    if payload.get("twelvedata_token"):
+        updates["TWELVEDATA_TOKEN"] = str(payload["twelvedata_token"]).strip()
+    if not updates:
+        raise ValueError("Provide tinkoff_token and/or twelvedata_token")
+
+    verify = bool(payload.get("verify", True))
+    if verify:
+        validation = validate_tokens_sync(updates)
+        failed = {
+            key: {
+                "configured": False,
+                "valid": False,
+                "message": result["message"],
+                "masked": None,
+            }
+            for key, result in validation.items()
+            if not result.get("valid")
+        }
+        if failed:
+            return {"ok": False, "tokens": failed, "message": next(iter(failed.values()))["message"]}
+
+    write_env_file(updates)
+    load_env_file_into_process(override=True)
+
+    tokens: dict[str, Any] = {}
+    if verify:
+        validation = validate_tokens_sync(updates)
+        for key, result in validation.items():
+            tokens[key] = {
+                "configured": True,
+                "valid": True,
+                "message": result["message"],
+                "masked": mask_token(updates.get(key) or os.getenv(key)),
+            }
+    else:
+        for key, value in updates.items():
+            tokens[key] = {
+                "configured": True,
+                "valid": None,
+                "message": "Saved to .env",
+                "masked": mask_token(value),
+            }
+
+    return {"ok": True, "tokens": tokens}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="BackTestBench dashboard runner")
     sub = parser.add_subparsers(dest="command")
@@ -868,6 +927,11 @@ def parse_args() -> argparse.Namespace:
     save_parser = sub.add_parser("save-settings", help="Validate and save runtime settings")
     save_parser.add_argument("settings_json")
 
+    sub.add_parser("token-status", help="Print configured API token status from .env")
+
+    save_tokens_parser = sub.add_parser("save-tokens", help="Validate and save API tokens to .env")
+    save_tokens_parser.add_argument("payload_json")
+
     add_strategy_parser = sub.add_parser("add-strategy", help="Validate and save a composable strategy YAML")
     add_strategy_parser.add_argument("payload_json")
 
@@ -878,6 +942,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    load_env_file_into_process()
     sanitize_config()
     repair_runtime_dashboard()
     args = parse_args()
@@ -892,6 +957,21 @@ def main() -> None:
 
     if args.command == "config-schema":
         print(json.dumps({"settings": load_config(), "schema": ui_schema()}, ensure_ascii=False))
+        return
+
+    if args.command == "token-status":
+        print(json.dumps(token_status_command(), ensure_ascii=False))
+        return
+
+    if args.command == "save-tokens":
+        try:
+            result = save_tokens_command(args.payload_json)
+        except (ValueError, json.JSONDecodeError) as exc:
+            print(str(exc))
+            sys.exit(1)
+        print(json.dumps(result, ensure_ascii=False))
+        if not result.get("ok"):
+            sys.exit(1)
         return
 
     if args.command == "save-settings":

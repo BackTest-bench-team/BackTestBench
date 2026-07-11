@@ -12,7 +12,22 @@ type OptimizationModeOption = {
   description: string;
 };
 
+type DataSourceOption = {
+  value: string;
+  label: string;
+  description: string;
+  instrument_hint: string;
+  token_env: string;
+  token_required: boolean;
+  token_optional: boolean;
+  token_configured: boolean;
+  instruments: string[];
+  default_instrument: string;
+  timeframes: TimeframeOption[];
+};
+
 type ConfigSchema = {
+  data_sources: DataSourceOption[];
   instruments: string[];
   timeframes: TimeframeOption[];
   optimization_modes: OptimizationModeOption[];
@@ -20,13 +35,23 @@ type ConfigSchema = {
 };
 
 export type RuntimeSettings = {
+  data_source: string;
   instrument: string;
   timeframe: string;
   lookback_days: number;
   initial_capital: number;
   optimization_mode: string;
   optimization_iterations: number;
-  optimization_seed: number;
+};
+
+type TokenStatus = {
+  configured: boolean;
+  masked: string | null;
+};
+
+type TokenFeedback = {
+  status: "ok" | "error";
+  message: string;
 };
 
 type BacktestControlPanelProps = {
@@ -35,20 +60,147 @@ type BacktestControlPanelProps = {
   onStop: () => Promise<void>;
 };
 
+async function loadConfigPayload(): Promise<{
+  settings: Record<string, unknown>;
+  schema: ConfigSchema;
+}> {
+  const res = await fetch("/api/config", { cache: "no-store" });
+  const json = (await res.json()) as {
+    ok: boolean;
+    settings?: Record<string, unknown>;
+    schema?: ConfigSchema;
+    message?: string;
+  };
+  if (!res.ok || !json.ok || !json.settings || !json.schema) {
+    throw new Error(json.message ?? "Failed to load settings");
+  }
+  return { settings: json.settings, schema: json.schema };
+}
+
+async function loadTokenStatus(): Promise<Record<string, TokenStatus>> {
+  const res = await fetch("/api/tokens", { cache: "no-store" });
+  const json = (await res.json()) as {
+    ok: boolean;
+    tokens?: Record<string, TokenStatus>;
+    message?: string;
+  };
+  if (!res.ok || !json.ok || !json.tokens) {
+    throw new Error(json.message ?? "Failed to load token status");
+  }
+  return json.tokens;
+}
+
+function DeferredNumberInput({
+  value,
+  onCommit,
+  min = 1,
+  max,
+  step,
+  disabled,
+  className,
+}: {
+  value: number;
+  onCommit: (value: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const [text, setText] = useState(String(value));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) {
+      setText(String(value));
+    }
+  }, [focused, value]);
+
+  function commit(raw: string) {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      onCommit(min);
+      setText(String(min));
+      return;
+    }
+
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) {
+      setText(String(value));
+      return;
+    }
+
+    let next = parsed;
+    if (min != null) next = Math.max(min, next);
+    if (max != null) next = Math.min(max, next);
+    onCommit(next);
+    setText(String(next));
+  }
+
+  return (
+    <input
+      className={className}
+      type="text"
+      inputMode="numeric"
+      value={focused ? text : String(value)}
+      disabled={disabled}
+      onFocus={() => {
+        setFocused(true);
+        setText(String(value));
+      }}
+      onChange={(event) => setText(event.target.value)}
+      onBlur={() => {
+        setFocused(false);
+        commit(text);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.currentTarget.blur();
+        }
+      }}
+      step={step}
+    />
+  );
+}
+
+function resolveDataSource(schema: ConfigSchema, value: string): DataSourceOption {
+  return (
+    schema.data_sources.find((item) => item.value === value) ??
+    schema.data_sources[0] ?? {
+      value: "tbank",
+      label: "T-Bank",
+      description: "",
+      instrument_hint: "",
+      token_env: "TINKOFF_TOKEN",
+      token_required: true,
+      token_optional: false,
+      token_configured: false,
+      instruments: schema.instruments,
+      default_instrument: String(schema.defaults.instrument ?? "SBER"),
+      timeframes: schema.timeframes,
+    }
+  );
+}
+
 function settingsFromPayload(
   settings: Record<string, unknown>,
   schema: ConfigSchema
 ): RuntimeSettings {
-  const allowed = new Set(schema.instruments);
-  const rawInstrument = String(settings.instrument ?? schema.defaults.instrument ?? "SBER");
-  const instrument = allowed.has(rawInstrument)
-    ? rawInstrument
-    : String(schema.defaults.instrument ?? "SBER");
+  const dataSource = String(settings.data_source ?? schema.defaults.data_source ?? "tbank");
+  const source = resolveDataSource(schema, dataSource);
+  const allowed = new Set(source.instruments);
+  const rawInstrument = String(settings.instrument ?? source.default_instrument);
+  const instrument = allowed.has(rawInstrument) ? rawInstrument : source.default_instrument;
+  const timeframe = String(settings.timeframe ?? schema.defaults.timeframe ?? "1h");
+  const timeframeMeta = source.timeframes.find((item) => item.value === timeframe);
+  const maxLookback = timeframeMeta?.max_lookback_days ?? 30;
+  const lookbackRaw = Number(settings.lookback_days ?? schema.defaults.lookback_days ?? 30);
 
   return {
+    data_source: source.value,
     instrument,
-    timeframe: String(settings.timeframe ?? schema.defaults.timeframe ?? "1h"),
-    lookback_days: Number(settings.lookback_days ?? schema.defaults.lookback_days ?? 30),
+    timeframe,
+    lookback_days: Math.min(Math.max(lookbackRaw, 1), maxLookback),
     initial_capital: Number(settings.initial_capital ?? schema.defaults.initial_capital ?? 100_000),
     optimization_mode: String(
       settings.optimization_mode ?? schema.defaults.optimization_mode ?? "grid"
@@ -56,7 +208,6 @@ function settingsFromPayload(
     optimization_iterations: Number(
       settings.optimization_iterations ?? schema.defaults.optimization_iterations ?? 16
     ),
-    optimization_seed: Number(settings.optimization_seed ?? schema.defaults.optimization_seed ?? 42),
   };
 }
 
@@ -65,24 +216,29 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
   const [draft, setDraft] = useState<RuntimeSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tokenStatus, setTokenStatus] = useState<Record<string, TokenStatus>>({});
+  const [tokenDrafts, setTokenDrafts] = useState({ tinkoff: "", twelvedata: "" });
+  const [tokenFeedback, setTokenFeedback] = useState<Record<string, TokenFeedback>>({});
+  const [tokenBusy, setTokenBusy] = useState<"TINKOFF_TOKEN" | "TWELVEDATA_TOKEN" | null>(null);
+
+  const refreshPanel = useCallback(async () => {
+    const [configPayload, tokens] = await Promise.all([loadConfigPayload(), loadTokenStatus()]);
+    setSchema(configPayload.schema);
+    setTokenStatus(tokens);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/config", { cache: "no-store" });
-        const json = (await res.json()) as {
-          ok: boolean;
-          settings?: Record<string, unknown>;
-          schema?: ConfigSchema;
-          message?: string;
-        };
-        if (!res.ok || !json.ok || !json.settings || !json.schema) {
-          throw new Error(json.message ?? "Failed to load settings");
-        }
+        const [configPayload, tokens] = await Promise.all([
+          loadConfigPayload(),
+          loadTokenStatus(),
+        ]);
         if (!cancelled) {
-          setSchema(json.schema);
-          setDraft(settingsFromPayload(json.settings, json.schema));
+          setSchema(configPayload.schema);
+          setDraft(settingsFromPayload(configPayload.settings, configPayload.schema));
+          setTokenStatus(tokens);
         }
       } catch (err) {
         if (!cancelled) {
@@ -97,17 +253,111 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
     };
   }, []);
 
-  const selectedTimeframe = useMemo(
-    () => schema?.timeframes.find((item) => item.value === draft?.timeframe),
-    [schema, draft?.timeframe]
+  const verifyToken = useCallback(
+    async (envKey: "TINKOFF_TOKEN" | "TWELVEDATA_TOKEN") => {
+      const draftKey = envKey === "TINKOFF_TOKEN" ? "tinkoff" : "twelvedata";
+      const value = tokenDrafts[draftKey].trim();
+      if (!value) {
+        setTokenFeedback((prev) => ({
+          ...prev,
+          [envKey]: { status: "error", message: "Enter a token first" },
+        }));
+        return;
+      }
+
+      setTokenBusy(envKey);
+      setTokenFeedback((prev) => {
+        const next = { ...prev };
+        delete next[envKey];
+        return next;
+      });
+
+      try {
+        const body =
+          envKey === "TINKOFF_TOKEN"
+            ? { tinkoff_token: value, verify: true }
+            : { twelvedata_token: value, verify: true };
+        const res = await fetch("/api/tokens", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const json = (await res.json()) as {
+          ok: boolean;
+          tokens?: Record<string, TokenStatus & { valid?: boolean; message?: string }>;
+          message?: string;
+        };
+        const tokenResult = json.tokens?.[envKey];
+        if (!res.ok || !json.ok) {
+          setTokenFeedback((prev) => ({
+            ...prev,
+            [envKey]: {
+              status: "error",
+              message: tokenResult?.message ?? json.message ?? "Token verification failed",
+            },
+          }));
+          return;
+        }
+
+        setTokenDrafts((prev) => ({ ...prev, [draftKey]: "" }));
+        setTokenFeedback((prev) => ({
+          ...prev,
+          [envKey]: {
+            status: "ok",
+            message: tokenResult?.message ?? `${envKey} configured`,
+          },
+        }));
+        await refreshPanel();
+      } catch (err) {
+        setTokenFeedback((prev) => ({
+          ...prev,
+          [envKey]: {
+            status: "error",
+            message: err instanceof Error ? err.message : "Token verification failed",
+          },
+        }));
+      } finally {
+        setTokenBusy(null);
+      }
+    },
+    [refreshPanel, tokenDrafts]
   );
 
-  const sampleMode = draft?.optimization_mode === "sample";
+  const selectedSource = useMemo(
+    () => (schema && draft ? resolveDataSource(schema, draft.data_source) : null),
+    [schema, draft]
+  );
+
+  const selectedTimeframe = useMemo(
+    () => selectedSource?.timeframes.find((item) => item.value === draft?.timeframe),
+    [selectedSource, draft?.timeframe]
+  );
 
   const patch = useCallback((partial: Partial<RuntimeSettings>) => {
-    setDraft((prev) => (prev ? { ...prev, ...partial } : prev));
+    setDraft((prev) => {
+      if (!prev || !schema) return prev;
+      const next = { ...prev, ...partial };
+      if (partial.data_source && partial.data_source !== prev.data_source) {
+        const source = resolveDataSource(schema, partial.data_source);
+        const allowed = new Set(source.instruments);
+        if (!allowed.has(next.instrument)) {
+          next.instrument = source.default_instrument;
+        }
+        const tfMeta = source.timeframes.find((item) => item.value === next.timeframe);
+        if (tfMeta) {
+          next.lookback_days = Math.min(next.lookback_days, tfMeta.max_lookback_days);
+        }
+      }
+      if (partial.timeframe) {
+        const tfMeta = selectedSource?.timeframes.find((item) => item.value === partial.timeframe);
+        if (tfMeta) {
+          next.lookback_days = Math.min(next.lookback_days, tfMeta.max_lookback_days);
+        }
+      }
+      return next;
+    });
     setError(null);
-  }, []);
+  }, [schema, selectedSource]);
 
   const handleRun = useCallback(async () => {
     if (!draft) return;
@@ -128,7 +378,7 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
     }
   }, [onStop]);
 
-  if (loading || !draft || !schema) {
+  if (loading || !draft || !schema || !selectedSource) {
     return (
       <section className="control-panel control-panel-loading">
         <p className="control-panel-kicker">Backtest control</p>
@@ -136,6 +386,9 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
       </section>
     );
   }
+
+  const tokenReady = selectedSource.token_configured;
+  const runDisabled = busy || (selectedSource.token_required && !tokenReady);
 
   return (
     <section className="control-panel" aria-label="Backtest control panel">
@@ -145,7 +398,12 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
           <h2 className="control-panel-title">Run settings</h2>
         </div>
         <div className="control-panel-actions">
-          <button className="control-btn control-btn-run" type="button" disabled={busy} onClick={handleRun}>
+          <button
+            className="control-btn control-btn-run"
+            type="button"
+            disabled={runDisabled}
+            onClick={handleRun}
+          >
             {busy ? "Running…" : "Run backtest"}
           </button>
           <button className="control-btn control-btn-stop" type="button" disabled={!busy} onClick={handleStop}>
@@ -156,6 +414,118 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
 
       {error && <div className="control-panel-error">{error}</div>}
 
+      <div className="control-panel-section">
+        <p className="control-section-title">Data source</p>
+        <div className="data-source-list">
+          {schema.data_sources.map((source) => (
+            <button
+              key={source.value}
+              type="button"
+              className={`data-source-card${
+                draft.data_source === source.value ? " is-selected" : ""
+              }`}
+              disabled={busy}
+              onClick={() => patch({ data_source: source.value })}
+            >
+              <span className="data-source-name">{source.label}</span>
+              <span className="data-source-desc">{source.description}</span>
+              <span
+                className={`data-source-token${
+                  source.token_configured ? " is-ready" : " is-missing"
+                }`}
+              >
+                {source.token_optional
+                  ? "No token required"
+                  : source.token_configured
+                    ? `${source.token_env} configured`
+                    : `Set ${source.token_env} below`}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="control-panel-section">
+        <p className="control-section-title">API tokens</p>
+        <p className="control-section-hint">
+          Tokens are verified against the provider, then saved to <code>.env</code> in the
+          repository root.
+        </p>
+        <div className="api-token-list">
+          <div className="api-token-row">
+            <label className="control-field api-token-field">
+              <span className="control-label">T-Bank API token</span>
+              <input
+                className="control-input"
+                type="password"
+                autoComplete="off"
+                placeholder={
+                  tokenStatus.TINKOFF_TOKEN?.configured
+                    ? `Configured (${tokenStatus.TINKOFF_TOKEN.masked ?? "saved"})`
+                    : "Paste Tinkoff Invest API token"
+                }
+                value={tokenDrafts.tinkoff}
+                disabled={busy || tokenBusy === "TINKOFF_TOKEN"}
+                onChange={(event) =>
+                  setTokenDrafts((prev) => ({ ...prev, tinkoff: event.target.value }))
+                }
+              />
+            </label>
+            <button
+              className="control-btn control-btn-verify"
+              type="button"
+              disabled={busy || tokenBusy === "TINKOFF_TOKEN"}
+              onClick={() => verifyToken("TINKOFF_TOKEN")}
+            >
+              {tokenBusy === "TINKOFF_TOKEN" ? "Verifying…" : "Verify & save"}
+            </button>
+            {tokenFeedback.TINKOFF_TOKEN && (
+              <p
+                className={`api-token-feedback is-${tokenFeedback.TINKOFF_TOKEN.status}`}
+              >
+                {tokenFeedback.TINKOFF_TOKEN.message}
+              </p>
+            )}
+          </div>
+
+          <div className="api-token-row">
+            <label className="control-field api-token-field">
+              <span className="control-label">Twelve Data API token</span>
+              <input
+                className="control-input"
+                type="password"
+                autoComplete="off"
+                placeholder={
+                  tokenStatus.TWELVEDATA_TOKEN?.configured
+                    ? `Configured (${tokenStatus.TWELVEDATA_TOKEN.masked ?? "saved"})`
+                    : "Paste Twelve Data API key"
+                }
+                value={tokenDrafts.twelvedata}
+                disabled={busy || tokenBusy === "TWELVEDATA_TOKEN"}
+                onChange={(event) =>
+                  setTokenDrafts((prev) => ({ ...prev, twelvedata: event.target.value }))
+                }
+              />
+            </label>
+            <button
+              className="control-btn control-btn-verify"
+              type="button"
+              disabled={busy || tokenBusy === "TWELVEDATA_TOKEN"}
+              onClick={() => verifyToken("TWELVEDATA_TOKEN")}
+            >
+              {tokenBusy === "TWELVEDATA_TOKEN" ? "Verifying…" : "Verify & save"}
+            </button>
+            {tokenFeedback.TWELVEDATA_TOKEN && (
+              <p
+                className={`api-token-feedback is-${tokenFeedback.TWELVEDATA_TOKEN.status}`}
+              >
+                {tokenFeedback.TWELVEDATA_TOKEN.message}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
       <div className="control-panel-grid">
         <label className="control-field">
           <span className="control-label">Instrument</span>
@@ -165,13 +535,13 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
             disabled={busy}
             onChange={(event) => patch({ instrument: event.target.value })}
           >
-            {schema.instruments.map((ticker) => (
+            {selectedSource.instruments.map((ticker) => (
               <option key={ticker} value={ticker}>
                 {ticker}
               </option>
             ))}
           </select>
-          <span className="control-hint">MOEX TQBR shares supported by T-Bank adapter</span>
+          <span className="control-hint">{selectedSource.instrument_hint}</span>
         </label>
 
         <label className="control-field">
@@ -182,7 +552,7 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
             disabled={busy}
             onChange={(event) => patch({ timeframe: event.target.value })}
           >
-            {schema.timeframes.map((item) => (
+            {selectedSource.timeframes.map((item) => (
               <option key={item.value} value={item.value}>
                 {item.value}
               </option>
@@ -196,28 +566,26 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
 
         <label className="control-field">
           <span className="control-label">Lookback days</span>
-          <input
+          <DeferredNumberInput
             className="control-input"
-            type="number"
             min={1}
             max={selectedTimeframe?.max_lookback_days ?? 3600}
             value={draft.lookback_days}
             disabled={busy}
-            onChange={(event) => patch({ lookback_days: Number(event.target.value) })}
+            onCommit={(lookback_days) => patch({ lookback_days })}
           />
           <span className="control-hint">History window loaded for the backtest</span>
         </label>
 
         <label className="control-field">
           <span className="control-label">Initial capital (RUB)</span>
-          <input
+          <DeferredNumberInput
             className="control-input"
-            type="number"
             min={1000}
             step={1000}
             value={draft.initial_capital}
             disabled={busy}
-            onChange={(event) => patch({ initial_capital: Number(event.target.value) })}
+            onCommit={(initial_capital) => patch({ initial_capital })}
           />
           <span className="control-hint">Starting portfolio cash for each strategy</span>
         </label>
@@ -243,46 +611,24 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
               />
               <span className="optimization-mode-name">{mode.value}</span>
               <span className="optimization-mode-desc">{mode.description}</span>
+              {mode.value === "sample" && draft.optimization_mode === "sample" && (
+                <div
+                  className="optimization-trials-inline"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <span className="control-label">Trials</span>
+                  <DeferredNumberInput
+                    className="control-input"
+                    min={1}
+                    max={10000}
+                    value={draft.optimization_iterations}
+                    disabled={busy}
+                    onCommit={(optimization_iterations) => patch({ optimization_iterations })}
+                  />
+                </div>
+              )}
             </label>
           ))}
-        </div>
-
-        <div className="control-panel-grid control-panel-grid-compact">
-          <label className="control-field">
-            <span className="control-label">Optimization iterations</span>
-            <input
-              className="control-input"
-              type="number"
-              min={1}
-              max={10000}
-              value={draft.optimization_iterations}
-              disabled={busy || !sampleMode}
-              onChange={(event) =>
-                patch({ optimization_iterations: Number(event.target.value) })
-              }
-            />
-            <span className="control-hint">
-              {sampleMode
-                ? "Number of random combinations to evaluate"
-                : "Ignored in grid mode (all combinations are evaluated)"}
-            </span>
-          </label>
-
-          <label className="control-field">
-            <span className="control-label">Optimization seed</span>
-            <input
-              className="control-input"
-              type="number"
-              value={draft.optimization_seed}
-              disabled={busy || !sampleMode}
-              onChange={(event) => patch({ optimization_seed: Number(event.target.value) })}
-            />
-            <span className="control-hint">
-              {sampleMode
-                ? "Fixes the random sample for reproducible runs"
-                : "Used only in sample mode"}
-            </span>
-          </label>
         </div>
       </div>
     </section>

@@ -43,7 +43,7 @@ Usage:
         strategy_params={"fast": 10, "slow": 30, "order_size": 1.0},
     )
 
-Tokens are loaded from the .env file (TINKOFF_TOKEN / TWELVEDATA_TOKEN).
+Tokens are read from environment variables (e.g. GitHub repository secrets in CI/CD).
 """
 
 import asyncio
@@ -55,10 +55,6 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Load token from .env file
-from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent / ".env", override=False, verbose=True)
-
 from src.broker_adapter import TBankAdapter, TwelveDataAdapter, BybitAdapter
 from src.engine.models import Candle
 
@@ -69,7 +65,7 @@ TIMEFRAMES = ("1m", "5m", "15m", "30m", "1h", "1d", "1w", "1M")
 MIN_TIMEFRAME = "1m"
 
 # Supported data sources and the default used when `source` is not given.
-# The default can be overridden via the DATA_SOURCE env var in .env.
+# The default can be overridden via the DATA_SOURCE environment variable.
 SUPPORTED_SOURCES = ("tbank", "twelvedata", "bybit")
 DEFAULT_SOURCE = os.getenv("DATA_SOURCE", "tbank").strip().lower() or "tbank"
 
@@ -237,8 +233,8 @@ def get_token(source: str = DEFAULT_SOURCE) -> Optional[str]:
         if source in _OPTIONAL_TOKEN_SOURCES:
             return None
         raise ValueError(
-            f"{env_var} not found in .env file. "
-            f"Please add {env_var}=your_token_here to .env"
+            f"{env_var} is not set. Configure it as an environment variable "
+            f"(e.g. GitHub repository secret in CI/CD)."
         )
     return token
 
@@ -296,7 +292,7 @@ async def fetch_candles(
         from_date: Start date in format "YYYY-MM-DD" (optional, overrides days)
         to_date: End date in format "YYYY-MM-DD" (optional, defaults to now)
         use_sandbox: Use T-Bank sandbox environment (ignored by Twelve Data)
-        token: API token (optional, loads from .env if not provided)
+        token: API token (optional, reads from environment if not provided)
 
     Returns:
         List of Candle objects with real market data
@@ -387,7 +383,7 @@ def run_backtest(
         from_date: Start date "YYYY-MM-DD" (optional)
         to_date: End date "YYYY-MM-DD" (optional)
         use_sandbox: Use T-Bank sandbox environment (ignored by Twelve Data)
-        token: API token (optional, loads from .env if not provided)
+        token: API token (optional, reads from environment if not provided)
 
     Returns:
         Dict with "trade_log", "final_portfolio", "candles_count"
@@ -431,14 +427,14 @@ def run_backtest(
 
 if __name__ == "__main__":
     # The source can be set per-call via source=..., or globally through the
-    # DATA_SOURCE env var (see .env). Here we run both providers to show that
+    # DATA_SOURCE environment variable. Here we run both providers to show that
     # the call surface is identical regardless of the data source.
     print(f"Default data source: {DEFAULT_SOURCE!r} "
-          f"(override with DATA_SOURCE in .env or source=... per call)\n")
+          f"(override with DATA_SOURCE env var or source=... per call)\n")
 
     # ------------------------------------------------------------------
     # T-Bank (Tinkoff Investments) — Russian equities (SBER, GAZP, ...).
-    # Requires TINKOFF_TOKEN in .env.
+    # Requires TINKOFF_TOKEN in the environment.
     # ------------------------------------------------------------------
     print("Example 1: T-Bank — fetch weekly candles")
     try:
@@ -459,7 +455,7 @@ if __name__ == "__main__":
 
     # ------------------------------------------------------------------
     # Twelve Data — global equities / FX / crypto (AAPL, MSFT, ETH/BTC, ...).
-    # Requires TWELVEDATA_TOKEN in .env.
+    # Requires TWELVEDATA_TOKEN in the environment.
     # ------------------------------------------------------------------
     print("Example 2: Twelve Data — fetch daily candles")
     try:
