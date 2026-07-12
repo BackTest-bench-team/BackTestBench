@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from src.engine.models import Signal
 from src.engine.types import SignalType
 
-from .actions import Action, parse_action, run_action
+from .actions import Action, is_terminal, parse_action, run_action
 from .context import EvaluationContext
 from .errors import CompileError
 from .predicates import Predicate, compile_predicate
@@ -64,5 +64,8 @@ def evaluate_rules(rules: list[Rule], ctx: EvaluationContext) -> Signal:
         if rule.scope not in (scope_now, "always"):
             continue
         if rule.predicate(ctx):
-            return run_action(ctx, rule.action)
+            signal = run_action(ctx, rule.action)
+            if is_terminal(rule.action.type):
+                return signal
+            # non-terminal (e.g. move_stop): apply side effects, keep evaluating
     return Signal(type=SignalType.HOLD)

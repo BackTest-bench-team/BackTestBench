@@ -76,9 +76,24 @@ class ComposableStrategy(BaseStrategy):
             timestamp=getattr(context.current_candle, "timestamp", ""),
             portfolio=context.portfolio, state=self.state,
         )
+
+        long_now = ctx.is_long()
+        equity_now = ctx.equity()
+        self.state.peak_equity = max(self.state.peak_equity or equity_now, equity_now)
+        if long_now and not self.state.was_long:          # just entered
+            self.state.peak_price = ctx.price
+            self.state.trailing_stop_level = None
+        elif long_now:                                    # still in the trade
+            self.state.peak_price = max(self.state.peak_price or ctx.price, ctx.price)
+        elif self.state.was_long:                         # just exited -> reset
+            self.state.peak_price = None
+            self.state.trailing_stop_level = None
+            if hasattr(context.portfolio, "clear_effects"):
+                context.portfolio.clear_effects()
+        self.state.was_long = long_now
+
         signal = self.compiled.evaluate(ctx)
-        # minimal state upkeep
-        self.state.bars_in_trade = self.state.bars_in_trade + 1 if ctx.is_long() else 0
+        self.state.bars_in_trade = self.state.bars_in_trade + 1 if long_now else 0
         self.state.last_action = signal.type.value if hasattr(signal.type, "value") else str(signal.type)
         return signal
 

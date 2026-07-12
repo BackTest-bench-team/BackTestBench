@@ -1,0 +1,54 @@
+# MA-crossover entry with a trailing stop and a time-based forced close.
+# Shows the constraints block, a trailing stop (move_stop), and a time filter.
+name: ma_trailing_composable
+title: MA + trailing stop + session close
+
+params:
+  fast:              { type: int,   default: 10, choices: preset:ma_short, optimizable: true }
+  slow:              { type: int,   default: 30, choices: preset:ma_long,  optimizable: true }
+  trailing_stop_pct: { type: float, default: 3,  choices: [2, 3, 5, 7],    optimizable: true }
+  order_size:        { type: float, default: 1,  choices: [1, 2, 3],       optimizable: false }
+
+constraints:
+  - fast < slow
+
+series:
+  fast_ma: { fn: sma, source: price, period: "${fast}" }
+  slow_ma: { fn: sma, source: price, period: "${slow}" }
+
+rules:
+  # keep the trailing stop up to date every bar we are in a position
+  - id: update_trailing
+    scope: long
+    priority: 95
+    when: { has_position: true }
+    then: { action: move_stop, trailing_pct: "${trailing_stop_pct}" }
+
+  # exit if the trailing stop is breached
+  - id: trailing_exit
+    scope: long
+    priority: 94
+    when: { trailing_stop_hit: true }
+    then: { action: sell, size: all }
+
+  # forced close before the session ends
+  - id: session_close
+    scope: long
+    priority: 80
+    when: { time_gte: "17:00" }
+    then: { action: sell, size: all }
+
+  # signal exit on a downward cross
+  - id: signal_exit
+    scope: long
+    priority: 10
+    when: { cross_below: [fast_ma, slow_ma] }
+    then: { action: sell, size: all }
+
+  - id: entry
+    scope: flat
+    priority: 10
+    when: { cross_above: [fast_ma, slow_ma] }
+    then:
+      action: buy
+      size: "${order_size}"

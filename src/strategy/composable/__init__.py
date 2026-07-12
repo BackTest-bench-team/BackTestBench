@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from .actions import Action, PositionEffect, register_action, action_names
 from .compile import CompiledStrategy, OptimizeSpec, compile_strategy, get_optimize_spec
+from .constraints import check_constraints
 from .context import EvaluationContext, StrategyState
 from .definition import StrategyDefinition
 from .errors import CompileError
@@ -33,7 +34,7 @@ from .strategy import (
 
 __all__ = [
     "ComposableStrategy", "StrategyDefinition", "CompiledStrategy", "compile_strategy",
-    "OptimizeSpec", "get_optimize_spec", "register_composable_file",
+    "OptimizeSpec", "get_optimize_spec", "register_composable_file", "check_constraints",
     "discover_composable_strategies", "definition_to_specs",
     "register_series_fn", "series_fn_names", "precompute", "topological_order",
     "SeriesNode", "FloatSeries",
