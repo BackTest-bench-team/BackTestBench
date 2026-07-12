@@ -13,6 +13,11 @@ params:
   take_profit_pct: { type: float, default: 1.0, choices: preset:take_profit_pct, optimizable: true }
   order_size:      { type: float, default: 1,  choices: [1, 2, 3],             optimizable: false }
 
+constraints:
+  - fast < slow                       # a fast MA must be shorter than the slow MA
+  - take_profit_pct > stop_loss_pct   # reward must exceed risk
+  - rsi_buy_min < rsi_overbought
+
 series:
   fast_ma: { fn: sma, source: price, period: "${fast}" }
   slow_ma: { fn: sma, source: price, period: "${slow}" }

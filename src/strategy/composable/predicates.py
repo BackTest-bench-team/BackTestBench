@@ -117,6 +117,112 @@ register_predicate("loss_pct")(_pct("loss_pct"))
 register_predicate("profit_pct")(_pct("profit_pct"))
 
 
+# ---- time-of-day / weekday predicates --------------------------------------
+def _valid_hhmm(value) -> str:
+    if not isinstance(value, str) or len(value) != 5 or value[2] != ":":
+        raise CompileError(f"time must be 'HH:MM', got {value!r}")
+    hh, mm = value[:2], value[3:]
+    if not (hh.isdigit() and mm.isdigit() and 0 <= int(hh) <= 23 and 0 <= int(mm) <= 59):
+        raise CompileError(f"time must be a valid 'HH:MM', got {value!r}")
+    return value
+
+
+@register_predicate("time_gte")
+def _time_gte(arg, series_ids):
+    target = _valid_hhmm(arg)
+    return lambda ctx: (ctx.time_hhmm() or "") >= target
+
+
+@register_predicate("time_lte")
+def _time_lte(arg, series_ids):
+    target = _valid_hhmm(arg)
+    return lambda ctx: (t := ctx.time_hhmm()) is not None and t <= target
+
+
+@register_predicate("time_in_range")
+def _time_in_range(arg, series_ids):
+    if not (isinstance(arg, list) and len(arg) == 2):
+        raise CompileError(f"time_in_range needs ['HH:MM', 'HH:MM'], got {arg!r}")
+    start, end = _valid_hhmm(arg[0]), _valid_hhmm(arg[1])
+
+    def pred(ctx):
+        t = ctx.time_hhmm()
+        if t is None:
+            return False
+        return start <= t <= end if start <= end else (t >= start or t <= end)
+
+    return pred
+
+
+@register_predicate("weekday_in")
+def _weekday_in(arg, series_ids):
+    if not (isinstance(arg, list) and all(isinstance(d, int) and 0 <= d <= 6 for d in arg)):
+        raise CompileError(f"weekday_in needs a list of 0..6 ints, got {arg!r}")
+    days = set(arg)
+    return lambda ctx: ctx.weekday() in days
+
+
+# ---- trailing-stop breach --------------------------------------------------
+@register_predicate("trailing_stop_hit")
+def _trailing_stop_hit(arg, series_ids):
+    want = bool(arg)
+    def pred(ctx):
+        level = ctx.state.trailing_stop_level
+        hit = ctx.is_long() and level is not None and ctx.price <= level
+        return hit == want
+    return pred
+
+
+# ---- account drawdown guard ------------------------------------------------
+@register_predicate("equity_drawdown")
+def _equity_drawdown(arg, series_ids):
+    """True when equity is drawn down from its peak beyond a threshold.
+
+    Lets a strategy stop opening new positions after a bad run, e.g.
+    ``entry`` rule with ``when: { not: { equity_drawdown: { gte: 50 } } }``.
+    """
+    if not (isinstance(arg, dict) and len(arg) == 1):
+        raise CompileError(f"equity_drawdown needs a comparator like {{gte: 50}}, got {arg!r}")
+    (cmp_name, threshold), = arg.items()
+    if cmp_name not in ("gt", "lt", "gte", "lte"):
+        raise CompileError(f"equity_drawdown comparator must be gt/lt/gte/lte, got '{cmp_name}'")
+    thr = float(threshold)
+    ops = {"gt": lambda v: v > thr, "lt": lambda v: v < thr,
+           "gte": lambda v: v >= thr, "lte": lambda v: v <= thr}
+    op = ops[cmp_name]
+    return lambda ctx: op(ctx.equity_drawdown_pct())
+
+
+# ---- trend direction (a series rising / falling over a lookback) -----------
+def _trend(direction):
+    def build(arg, series_ids):
+        # accept `rising: series` or `rising: [series, lookback]`
+        if isinstance(arg, str):
+            sid, lookback = arg, 1
+        elif isinstance(arg, list) and len(arg) == 2:
+            sid, lookback = arg[0], int(arg[1])
+        else:
+            raise CompileError(f"{direction} needs a series id or [series, lookback], got {arg!r}")
+        if not (isinstance(sid, str) and (sid in series_ids or sid == "price")):
+            raise CompileError(f"{direction} operand must be a series id, got {sid!r}")
+        if lookback < 1:
+            raise CompileError(f"{direction} lookback must be >= 1, got {lookback}")
+
+        def pred(ctx):
+            i = ctx.index
+            if i < lookback:
+                return False
+            s = ctx.series[sid]
+            return s[i] > s[i - lookback] if direction == "rising" else s[i] < s[i - lookback]
+
+        return pred
+    return build
+
+
+register_predicate("rising")(_trend("rising"))
+register_predicate("falling")(_trend("falling"))
+
+
 # ---- combinators + compiler ------------------------------------------------
 def compile_predicate(when: dict, series_ids: set[str]) -> Predicate:
     if not isinstance(when, dict) or len(when) != 1:
