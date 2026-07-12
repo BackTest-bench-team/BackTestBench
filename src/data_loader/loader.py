@@ -202,10 +202,11 @@ class DataLoader:
         min_ratio: float = 0.5,
         broker_label: str = "T-Bank",
         token_env: str = "TINKOFF_TOKEN",
+        force_fetch: bool = False,
     ) -> LoadedMarketData:
         """Load once from DB/cache or broker; reuse in-memory cache on later reads."""
         rows = self.load_candles(instrument, timeframe, start, end)
-        if self._rows_cover_window(rows, start, end, timeframe, min_ratio):
+        if not force_fetch and self._rows_cover_window(rows, start, end, timeframe, min_ratio):
             candles = [candle_model_to_engine(row) for row in rows]
             return LoadedMarketData(
                 candles=candles,

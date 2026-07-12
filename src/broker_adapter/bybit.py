@@ -147,18 +147,17 @@ class BybitAdapter(BrokerAdapter):
 
         rows: List[list] = []
         seen: set = set()
-        cursor = start_ms
+        window_end = end_ms
 
-        # Windowed pagination: each request covers at most _PAGE_SIZE candles,
-        # so for wide ranges (e.g. years of 1m bars) we advance `cursor` past
-        # the last candle returned and repeat until we reach end_ms.
-        while cursor <= end_ms:
+        # Paginate backward from end_ms: each request returns up to _PAGE_SIZE candles
+        # newest-first; the next window ends just before the oldest candle received.
+        while window_end >= start_ms:
             params = {
                 "category": self.category,
                 "symbol": instrument,
                 "interval": interval,
-                "start": str(cursor),
-                "end": str(end_ms),
+                "start": str(start_ms),
+                "end": str(window_end),
                 "limit": str(_PAGE_SIZE),
             }
             async with self._session.get(
@@ -175,26 +174,21 @@ class BybitAdapter(BrokerAdapter):
             if not page:
                 break
 
-            # page is newest-first; append dedup'd rows in arrival order.
-            new_rows = []
+            oldest_ms = int(page[-1][0])
             for row in page:
                 ts_ms = int(row[0])
                 if ts_ms in seen:
                     continue
                 seen.add(ts_ms)
-                new_rows.append(row)
-            rows.extend(new_rows)
+                rows.append(row)
 
-            # Advance the cursor to just past the oldest candle in this page
-            # (page is newest-first, so the last element is the oldest).
-            oldest_ms = int(page[-1][0])
-            if len(page) < _PAGE_SIZE:
-                # Fewer than a full page means the window is exhausted.
+            if len(page) < _PAGE_SIZE or oldest_ms <= start_ms:
                 break
-            # +1 ms to avoid re-fetching the boundary candle.
-            cursor = oldest_ms + 1
-            if oldest_ms >= end_ms:
+
+            next_end = oldest_ms - 1
+            if next_end >= window_end:
                 break
+            window_end = next_end
 
         # Newest-first -> oldest-first (chronological, as the engine expects).
         rows.sort(key=lambda r: int(r[0]))

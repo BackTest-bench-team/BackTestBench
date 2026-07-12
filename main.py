@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import secrets
 import os
 import signal
 import subprocess
@@ -23,10 +24,17 @@ from src.analytics import (
     calculate_metrics_from_trade_log,
     rank_optimizer_results,
 )
-from src.backtest_config import ConfigValidationError, ui_schema, validate_runtime_settings
+from src.backtest_config import (
+    ConfigValidationError,
+    max_lookback_days,
+    ui_schema,
+    validate_runtime_settings,
+    validate_timeframe,
+)
 from src.broker_adapter.factory import TOKEN_ENV_BY_SOURCE, build_adapter, source_display_name
 from src.env_file import load_env_file_into_process, mask_token, read_env_file, write_env_file
 from src.token_validation import validate_tokens_sync
+from src.stability import compute_explore_stability
 from src.data_loader import DataLoader, LoadedMarketData
 from src.db import init_db
 from src.engine import ExecutionEngine, RunContext
@@ -49,6 +57,8 @@ CONFIG_FILE = BASE_DIR / "config" / "dashboard.json"
 DASHBOARD_FILE = DATA_DIR / "runtime-dashboard.json"
 STOP_FILE = DATA_DIR / "backtest.stop"
 PID_FILE = DATA_DIR / "backtest.pid"
+EXPLORE_JOBS_DIR = DATA_DIR / "explore-jobs"
+EXPLORE_TIMEFRAME = "1d"
 
 RUNTIME_SETTING_KEYS = (
     "data_source",
@@ -331,6 +341,8 @@ def get_candle_date_range(
 async def load_market_data(
     config: dict[str, Any],
     loader: DataLoader | None = None,
+    *,
+    force_fetch: bool = False,
 ) -> tuple[DataLoader, LoadedMarketData]:
     """Load candles once via DataLoader; reuse loader cache for in-process reads."""
     init_db()
@@ -355,6 +367,7 @@ async def load_market_data(
             fetch,
             broker_label=source_display_name(config.get("data_source", "tbank")),
             token_env=TOKEN_ENV_BY_SOURCE.get(config.get("data_source", "tbank"), "TINKOFF_TOKEN"),
+            force_fetch=force_fetch,
         )
         if not market_data.candles:
             raise RuntimeError("No candles available for backtest window")
@@ -612,7 +625,23 @@ def run_strategy_backtest(
         if stop_requested():
             raise RuntimeError("Stopped by user")
         if opt_result.best_metrics is None:
-            raise RuntimeError("Optimization found no valid parameter combination with trades")
+            strategy = create_strategy(strategy_id, params)
+            engine_result = ExecutionEngine().run(
+                strategy=strategy,
+                candles=candles,
+                initial_capital=initial_capital,
+            )
+            metrics = calculate_metrics_from_trade_log(engine_result["trade_log_report"], run_context)
+            return build_strategy_result(
+                strategy_id,
+                params,
+                metrics,
+                engine_result["equity_curve"],
+                engine_result["trade_log"],
+                engine_result["final_portfolio"],
+                candles,
+                config,
+            )
 
         best_params = normalize_order_size(dict(opt_result.best_params))
         update_config_params(strategy_id, best_params)
@@ -758,10 +787,18 @@ async def bootstrap_all() -> None:
     try:
         config = load_config()
         strategies = runtime_strategies(config)
+        prev_dashboard = load_dashboard() if DASHBOARD_FILE.exists() else {}
+        curr_source = str(config.get("data_source", "tbank"))
+        force_fetch = (
+            prev_dashboard.get("data_source_key") != curr_source
+            or prev_dashboard.get("instrument") != config.get("instrument")
+            or prev_dashboard.get("timeframe") != config.get("timeframe")
+        )
         dashboard = {
             "instrument": config["instrument"],
             "timeframe": config["timeframe"],
-            "data_source": source_display_name(config.get("data_source", "tbank")),
+            "data_source_key": curr_source,
+            "data_source": source_display_name(curr_source),
             "initial_capital": config.get("initial_capital", 100_000.0),
             "strategies": [
                 strategy_skeleton(item["id"], dict(item["params"]), status="running")
@@ -773,7 +810,7 @@ async def bootstrap_all() -> None:
 
         loader = DataLoader(use_cache=True)
         try:
-            _, market_data = await load_market_data(config, loader=loader)
+            _, market_data = await load_market_data(config, loader=loader, force_fetch=force_fetch)
             if stop_requested():
                 mark_strategies_stopped(dashboard)
                 save_dashboard(dashboard)
@@ -915,6 +952,228 @@ def save_tokens_command(payload_json: str) -> dict[str, Any]:
     return {"ok": True, "tokens": tokens}
 
 
+def _explore_job_path(job_id: str) -> Path:
+    return EXPLORE_JOBS_DIR / f"{job_id}.json"
+
+
+def _load_explore_job(job_id: str) -> dict[str, Any]:
+    path = _explore_job_path(job_id)
+    if not path.exists():
+        raise ValueError(f"Explore job {job_id!r} not found")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _save_explore_job(job: dict[str, Any]) -> None:
+    EXPLORE_JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    _explore_job_path(str(job["job_id"])).write_text(
+        json.dumps(job, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def parse_explore_dates(
+    config: dict[str, Any],
+    from_str: str,
+    to_str: str,
+    *,
+    timeframe: str | None = None,
+) -> tuple[datetime, datetime, int]:
+    now = datetime.now(timezone.utc)
+    from_dt = datetime.fromisoformat(from_str[:10]).replace(tzinfo=timezone.utc)
+    to_dt = datetime.fromisoformat(to_str[:10]).replace(
+        hour=23, minute=59, second=59, tzinfo=timezone.utc
+    )
+    to_dt = min(to_dt, now)
+    if from_dt >= to_dt:
+        raise ValueError("Start date must be before end date")
+    span_days = max((to_dt.date() - from_dt.date()).days, 1)
+    source = str(config.get("data_source", "tbank"))
+    tf = validate_timeframe(timeframe or EXPLORE_TIMEFRAME)
+    limit_days = max_lookback_days(source, tf)
+    if span_days > limit_days:
+        raise ValueError(f"Range exceeds {limit_days} days for {tf}")
+    earliest = now - timedelta(days=limit_days)
+    if from_dt < earliest:
+        raise ValueError(f"Start date cannot be earlier than {earliest.date().isoformat()}")
+    return from_dt, to_dt, span_days
+
+
+def explore_limits_command() -> dict[str, Any]:
+    config = load_config()
+    now = datetime.now(timezone.utc)
+    source = str(config.get("data_source", "tbank"))
+    limit_days = max_lookback_days(source, EXPLORE_TIMEFRAME)
+    earliest = now - timedelta(days=limit_days)
+    return {
+        "ok": True,
+        "min_date": earliest.date().isoformat(),
+        "max_date": now.date().isoformat(),
+        "max_days": limit_days,
+        "instrument": config.get("instrument"),
+        "explore_timeframe": EXPLORE_TIMEFRAME,
+        "data_source": source_display_name(source),
+    }
+
+
+def explore_list_command(limit: int = 30) -> dict[str, Any]:
+    EXPLORE_JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    jobs: list[dict[str, Any]] = []
+    for path in EXPLORE_JOBS_DIR.glob("*.json"):
+        try:
+            job = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(job, dict) and job.get("job_id"):
+            jobs.append(job)
+    jobs.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+    return {"ok": True, "jobs": jobs[: max(1, limit)]}
+
+
+def explore_delete_command(job_id: str) -> dict[str, Any]:
+    path = _explore_job_path(job_id)
+    if path.exists():
+        path.unlink()
+    return {"ok": True, "job_id": job_id}
+
+
+async def load_candles_for_range(
+    config: dict[str, Any],
+    from_dt: datetime,
+    to_dt: datetime,
+    *,
+    timeframe: str | None = None,
+) -> list[Candle]:
+    loader = DataLoader(use_cache=True)
+    source = str(config.get("data_source", "tbank"))
+    tf = validate_timeframe(timeframe or EXPLORE_TIMEFRAME)
+
+    async def fetch(start: datetime, end: datetime) -> list[Candle]:
+        return await fetch_candles_from_api(config, start, end)
+
+    try:
+        market_data = await loader.ensure_candles_loaded(
+            config["instrument"],
+            tf,
+            from_dt,
+            to_dt,
+            fetch,
+            broker_label=source_display_name(source),
+            token_env=TOKEN_ENV_BY_SOURCE.get(source, "TINKOFF_TOKEN"),
+        )
+        if not market_data.candles:
+            raise RuntimeError("No candles available for selected range")
+        return market_data.candles
+    finally:
+        loader.close()
+
+
+def run_fixed_params_backtest(
+    strategy_id: str,
+    params: dict[str, Any],
+    candles: list[Candle],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    initial_capital = float(config.get("initial_capital", 100_000.0))
+    run_context = RunContext(
+        run_id=now_iso(),
+        strategy_id=strategy_id,
+        strategy_version="1",
+        instrument=config["instrument"],
+        timeframe=config["timeframe"],
+        period_start=candles[0].timestamp,
+        period_end=candles[-1].timestamp,
+        initial_capital=initial_capital,
+    )
+    strategy = create_strategy(strategy_id, normalize_order_size(dict(params)))
+    engine_result = ExecutionEngine().run(
+        strategy=strategy,
+        candles=candles,
+        initial_capital=initial_capital,
+    )
+    metrics = calculate_metrics_from_trade_log(engine_result["trade_log_report"], run_context)
+    return build_strategy_result(
+        strategy_id,
+        normalize_order_size(dict(params)),
+        metrics,
+        engine_result["equity_curve"],
+        engine_result["trade_log"],
+        engine_result["final_portfolio"],
+        candles,
+        config,
+    )
+
+
+def explore_start_command(payload_json: str) -> dict[str, Any]:
+    payload = json.loads(payload_json)
+    config = load_config()
+    job_id = secrets.token_hex(8)
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "strategy_id": str(payload["strategy_id"]),
+        "title": str(payload.get("title") or payload["strategy_id"]),
+        "params": dict(payload.get("params") or {}),
+        "from_date": str(payload["from_date"])[:10],
+        "to_date": str(payload["to_date"])[:10],
+        "timeframe": EXPLORE_TIMEFRAME,
+        "initial_capital": float(payload.get("initial_capital") or config.get("initial_capital", 100_000.0)),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    _save_explore_job(job)
+    return {"ok": True, "job_id": job_id}
+
+
+def explore_get_command(job_id: str) -> dict[str, Any]:
+    job = _load_explore_job(job_id)
+    return {"ok": True, "job": job}
+
+
+async def explore_job_command(job_id: str) -> None:
+    job = _load_explore_job(job_id)
+    job["status"] = "running"
+    job["updated_at"] = now_iso()
+    _save_explore_job(job)
+    try:
+        config = load_config()
+        job_timeframe = str(job.get("timeframe") or EXPLORE_TIMEFRAME)
+        from_dt, to_dt, days = parse_explore_dates(
+            config,
+            job["from_date"],
+            job["to_date"],
+            timeframe=job_timeframe,
+        )
+        candles = await load_candles_for_range(
+            config,
+            from_dt,
+            to_dt,
+            timeframe=job_timeframe,
+        )
+        explore_config = {**config, "timeframe": job_timeframe}
+        result = run_fixed_params_backtest(job["strategy_id"], job["params"], candles, explore_config)
+
+        initial_capital = float(job.get("initial_capital") or config.get("initial_capital", 100_000.0))
+        total_pnl = float(result["metrics"]["total_pnl"])
+        explore_return = total_pnl / initial_capital
+        chart_points = result.get("chart_points") or []
+        stability = compute_explore_stability(chart_points)
+
+        job.update(
+            {
+                "status": "completed",
+                "updated_at": now_iso(),
+                "period_days": days,
+                "metrics": result["metrics"],
+                "chart_points": chart_points,
+                "return_pct": explore_return,
+                "stability": stability,
+            }
+        )
+    except Exception as exc:
+        job.update({"status": "error", "updated_at": now_iso(), "error": str(exc)})
+    _save_explore_job(job)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="BackTestBench dashboard runner")
     sub = parser.add_subparsers(dest="command")
@@ -937,6 +1196,23 @@ def parse_args() -> argparse.Namespace:
 
     delete_strategy_parser = sub.add_parser("delete-strategy", help="Delete a composable strategy YAML")
     delete_strategy_parser.add_argument("strategy_id")
+
+    sub.add_parser("explore-limits", help="Print allowed explore date range")
+
+    explore_list = sub.add_parser("explore-list", help="List recent explore jobs")
+    explore_list.add_argument("--limit", type=int, default=30)
+
+    explore_start = sub.add_parser("explore-start", help="Queue an explore job")
+    explore_start.add_argument("payload_json")
+
+    explore_get = sub.add_parser("explore-get", help="Get explore job status")
+    explore_get.add_argument("job_id")
+
+    explore_delete = sub.add_parser("explore-delete", help="Delete an explore job file")
+    explore_delete.add_argument("job_id")
+
+    explore_job = sub.add_parser("explore-job", help="Run a queued explore job")
+    explore_job.add_argument("job_id")
 
     return parser.parse_args()
 
@@ -1008,6 +1284,40 @@ def main() -> None:
 
     if args.command == "refresh-ranking":
         asyncio.run(refresh_ranking())
+        return
+
+    if args.command == "explore-limits":
+        print(json.dumps(explore_limits_command(), ensure_ascii=False))
+        return
+
+    if args.command == "explore-list":
+        print(json.dumps(explore_list_command(limit=args.limit), ensure_ascii=False))
+        return
+
+    if args.command == "explore-start":
+        try:
+            result = explore_start_command(args.payload_json)
+        except (ValueError, json.JSONDecodeError) as exc:
+            print(str(exc))
+            sys.exit(1)
+        print(json.dumps(result, ensure_ascii=False))
+        return
+
+    if args.command == "explore-get":
+        try:
+            result = explore_get_command(args.job_id)
+        except ValueError as exc:
+            print(str(exc))
+            sys.exit(1)
+        print(json.dumps(result, ensure_ascii=False))
+        return
+
+    if args.command == "explore-delete":
+        print(json.dumps(explore_delete_command(args.job_id), ensure_ascii=False))
+        return
+
+    if args.command == "explore-job":
+        asyncio.run(explore_job_command(args.job_id))
         return
 
     asyncio.run(bootstrap_all())
