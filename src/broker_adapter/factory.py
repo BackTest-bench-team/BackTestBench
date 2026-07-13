@@ -5,24 +5,32 @@ from __future__ import annotations
 import os
 from typing import Any, Optional
 
+from .binance import BinanceAdapter
 from .bybit import BybitAdapter
 from .tbank import TBankAdapter
 from .twelvedata import TwelveDataAdapter
 
-SUPPORTED_SOURCES: tuple[str, ...] = ("tbank", "twelvedata", "bybit")
+SUPPORTED_SOURCES: tuple[str, ...] = (
+    "tbank",
+    "twelvedata",
+    "bybit",
+    "binance",
+)
 
 TOKEN_ENV_BY_SOURCE: dict[str, str] = {
     "tbank": "TINKOFF_TOKEN",
     "twelvedata": "TWELVEDATA_TOKEN",
     "bybit": "BYBIT_TOKEN",
+    "binance": "BINANCE_TOKEN",
 }
 
-OPTIONAL_TOKEN_SOURCES: frozenset[str] = frozenset({"bybit"})
+OPTIONAL_TOKEN_SOURCES: frozenset[str] = frozenset({"bybit", "binance"})
 
 SOURCE_DISPLAY_NAMES: dict[str, str] = {
     "tbank": "T-Bank",
     "twelvedata": "Twelve Data",
     "bybit": "Bybit",
+    "binance": "Binance",
 }
 
 
@@ -70,4 +78,6 @@ def build_adapter(source: str, token: Optional[str] = None, **kwargs: Any) -> An
         return TBankAdapter(token=token, verify_ssl=False, **kwargs)
     if resolved == "bybit":
         return BybitAdapter(token=token)
+    if resolved == "binance":
+        return BinanceAdapter(token=token)
     return TwelveDataAdapter(token=token)

@@ -1,7 +1,7 @@
 ﻿"""
 Broker Adapter - Simple API for fetching real market data from multiple sources.
 
-This example supports three data providers:
+This example supports four data providers:
 
 * ``tbank``      — T-Bank (Tinkoff Investments) Invest API v2 (Russian market,
                    tickers like SBER/GAZP/LKOH). Token env var: ``TINKOFF_TOKEN``.
@@ -11,6 +11,10 @@ This example supports three data providers:
 * ``bybit``      — Bybit V5 public kline API (crypto spot pairs like
                    BTCUSDT/ETHUSDT). Token env var: ``BYBIT_TOKEN`` (**optional**
                    — the kline endpoint is public).
+* ``binance``    — Binance public kline API (crypto spot pairs like BTCUSDT /
+                   ETHBTC, plus fiat-quoted stablecoin pairs like EURUSDT).
+                   Token env var: ``BINANCE_TOKEN`` (**optional** — the kline
+                   endpoint is public).
 
 The source is chosen either per-call via ``source=...`` or globally through the
 ``DATA_SOURCE`` env var (defaults to ``tbank``). All adapters return the same
@@ -44,6 +48,9 @@ Usage:
     )
 
 Tokens are read from environment variables (e.g. GitHub repository secrets in CI/CD).
+The repository ``.env`` is loaded automatically on import via
+``src.env_file.load_env_file_into_process`` — so the example is self-contained
+and does not require running through ``python main.py`` to populate ``os.environ``.
 """
 
 import asyncio
@@ -55,7 +62,20 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.broker_adapter import TBankAdapter, TwelveDataAdapter, BybitAdapter
+# Load the repository .env into os.environ on import, so get_token()/os.getenv()
+# can see tokens the user placed in .env without having to run via main.py.
+# This mirrors the README's promise that ".env is loaded automatically on import".
+# Safe no-op if .env does not exist. Idempotent: existing os.environ values win.
+from src.env_file import load_env_file_into_process
+
+load_env_file_into_process()
+
+from src.broker_adapter import (
+    TBankAdapter,
+    TwelveDataAdapter,
+    BybitAdapter,
+    BinanceAdapter,
+)
 from src.engine.models import Candle
 
 # Supported timeframes (minimum resolution is 1 minute).
@@ -66,18 +86,19 @@ MIN_TIMEFRAME = "1m"
 
 # Supported data sources and the default used when `source` is not given.
 # The default can be overridden via the DATA_SOURCE environment variable.
-SUPPORTED_SOURCES = ("tbank", "twelvedata", "bybit")
+SUPPORTED_SOURCES = ("tbank", "twelvedata", "bybit", "binance")
 DEFAULT_SOURCE = os.getenv("DATA_SOURCE", "tbank").strip().lower() or "tbank"
 
-# Per-source token env-var names. For "bybit" the token is optional (the kline
-# endpoint is public), so a missing BYBIT_TOKEN does not raise.
+# Per-source token env-var names. For "bybit" and "binance" the token is
+# optional (the kline endpoint is public), so a missing token does not raise.
 TOKEN_ENV_BY_SOURCE = {
     "tbank": "TINKOFF_TOKEN",
     "twelvedata": "TWELVEDATA_TOKEN",
     "bybit": "BYBIT_TOKEN",
+    "binance": "BINANCE_TOKEN",
 }
 # Sources whose API token is optional for fetching candles.
-_OPTIONAL_TOKEN_SOURCES = frozenset({"bybit"})
+_OPTIONAL_TOKEN_SOURCES = frozenset({"bybit", "binance"})
 
 # T-Bank sandbox limits how many days of history it serves per timeframe —
 # wider ranges return empty. These caps apply only to source="tbank".
@@ -94,10 +115,12 @@ DAYS_LIMIT_BY_TIMEFRAME = {
 
 # Twelve Data does not share T-Bank's sandbox restriction, so we only apply a
 # generous sanity ceiling to guard against pathological requests. The same soft
-# cap applies to Bybit (its kline endpoint paginates past its per-request limit
-# transparently, so there is no per-timeframe cap either).
+# cap applies to Bybit and Binance (their kline endpoints paginate past their
+# per-request candle limit transparently, so there is no per-timeframe cap
+# either).
 _MAX_DAYS_TWELVEDATA = 3650
 _MAX_DAYS_BYBIT = 3650
+_MAX_DAYS_BINANCE = 3650
 
 
 def _resolve_source(source: Optional[str]) -> str:
@@ -167,12 +190,13 @@ def _validate_days(source: str, timeframe: str, days: int) -> int:
 
     * For ``tbank`` the sandbox only serves a bounded number of days per
       timeframe (see ``DAYS_LIMIT_BY_TIMEFRAME``); wider ranges return empty.
-    * For ``twelvedata`` and ``bybit`` there is no per-timeframe sandbox cap,
-      only a sanity ceiling (``_MAX_DAYS_TWELVEDATA`` / ``_MAX_DAYS_BYBIT``).
-      Bybit paginates past its per-request 200-candle limit transparently.
+    * For ``twelvedata``, ``bybit`` and ``binance`` there is no per-timeframe
+      sandbox cap, only a sanity ceiling (``_MAX_DAYS_TWELVEDATA`` /
+      ``_MAX_DAYS_BYBIT`` / ``_MAX_DAYS_BINANCE``). They paginate past their
+      per-request candle limit transparently.
 
     Args:
-        source: Already-resolved data source ("tbank"/"twelvedata"/"bybit").
+        source: Already-resolved data source ("tbank"/"twelvedata"/"bybit"/"binance").
         timeframe: Already-validated timeframe string.
         days: Number of days of history requested.
 
@@ -204,10 +228,15 @@ def _validate_days(source: str, timeframe: str, days: int) -> int:
             raise ValueError(
                 f"days={days} is too large (max {_MAX_DAYS_TWELVEDATA})."
             )
-    else:  # bybit
+    elif source == "bybit":
         if days > _MAX_DAYS_BYBIT:
             raise ValueError(
                 f"days={days} is too large (max {_MAX_DAYS_BYBIT})."
+            )
+    else:  # binance
+        if days > _MAX_DAYS_BINANCE:
+            raise ValueError(
+                f"days={days} is too large (max {_MAX_DAYS_BINANCE})."
             )
     return days
 
@@ -217,11 +246,11 @@ def get_token(source: str = DEFAULT_SOURCE) -> Optional[str]:
     Load the API token for the given source from the environment.
 
     Args:
-        source: Data source ("tbank"/"twelvedata"/"bybit").
+        source: Data source ("tbank"/"twelvedata"/"bybit"/"binance").
 
     Returns:
         The token read from the matching env var, or ``None`` for sources whose
-        token is optional (e.g. ``bybit``) when it is not set.
+        token is optional (e.g. ``bybit``/``binance``) when it is not set.
 
     Raises:
         ValueError: If the token is not set and is required for this source.
@@ -244,7 +273,7 @@ def _build_adapter(source: str, token: Optional[str] = None, **kwargs) -> Any:
     Construct the broker adapter for the requested source.
 
     Args:
-        source: Data source ("tbank" or "twelvedata").
+        source: Data source ("tbank"/"twelvedata"/"bybit"/"binance").
         token: API token. If None, loaded via :func:`get_token`.
         **kwargs: Source-specific options forwarded to the adapter
             constructor (e.g. ``use_sandbox`` for T-Bank).
@@ -260,6 +289,8 @@ def _build_adapter(source: str, token: Optional[str] = None, **kwargs) -> Any:
         return TBankAdapter(token=token, verify_ssl=False, **kwargs)
     if source == "bybit":
         return BybitAdapter(token=token)
+    if source == "binance":
+        return BinanceAdapter(token=token)
     return TwelveDataAdapter(token=token)
 
 
@@ -279,6 +310,7 @@ async def fetch_candles(
     Args:
         instrument: Ticker symbol. T-Bank: "SBER", "GAZP", "LKOH".
             Twelve Data: "AAPL", "MSFT", "ETH/BTC".
+            Bybit / Binance: "BTCUSDT", "ETHUSDT", "ETHBTC", "EURUSDT".
         timeframe: Candle timeframe ("1m", "5m", "15m", "30m", "1h", "1d", "1w", "1M").
             Minimum resolution is "1m" — sub-minute intervals ("1s", "30s", ...) are
             rejected. Validated before any network call. The same format is used for
@@ -287,11 +319,11 @@ async def fetch_candles(
             capped per timeframe — see DAYS_LIMIT_BY_TIMEFRAME (e.g. 1m<=1, 1h<=100).
             Validated up front; too large a value raises ValueError instead of an
             empty API response.
-        source: Data API to use: "tbank" or "twelvedata". Defaults to the
-            DATA_SOURCE env var, then "tbank".
+        source: Data API to use: "tbank", "twelvedata", "bybit" or "binance".
+            Defaults to the DATA_SOURCE env var, then "tbank".
         from_date: Start date in format "YYYY-MM-DD" (optional, overrides days)
         to_date: End date in format "YYYY-MM-DD" (optional, defaults to now)
-        use_sandbox: Use T-Bank sandbox environment (ignored by Twelve Data)
+        use_sandbox: Use T-Bank sandbox environment (ignored by other sources)
         token: API token (optional, reads from environment if not provided)
 
     Returns:
@@ -373,16 +405,16 @@ def run_backtest(
     Fetch candles and run backtest with MA Crossover strategy.
 
     Args:
-        instrument: Ticker symbol (e.g. "SBER", "AAPL")
+        instrument: Ticker symbol (e.g. "SBER", "AAPL", "BTCUSDT")
         timeframe: Candle timeframe ("1h", "1d", etc.)
         days: Number of days of history
         initial_capital: Starting capital for backtest
         strategy_params: Strategy parameters (default: fast=10, slow=30, order_size=1.0)
-        source: Data API to use: "tbank" or "twelvedata". Defaults to the
-            DATA_SOURCE env var, then "tbank".
+        source: Data API to use: "tbank", "twelvedata", "bybit" or "binance".
+            Defaults to the DATA_SOURCE env var, then "tbank".
         from_date: Start date "YYYY-MM-DD" (optional)
         to_date: End date "YYYY-MM-DD" (optional)
-        use_sandbox: Use T-Bank sandbox environment (ignored by Twelve Data)
+        use_sandbox: Use T-Bank sandbox environment (ignored by other sources)
         token: API token (optional, reads from environment if not provided)
 
     Returns:
@@ -402,33 +434,33 @@ def run_backtest(
         use_sandbox=use_sandbox,
         token=token,
     )
-    
+
     if not candles:
         return {"trade_log": [], "final_portfolio": None, "candles_count": 0}
-    
+
     # Default strategy params
     if strategy_params is None:
         strategy_params = {"fast": 10, "slow": 30, "order_size": 1.0}
-    
+
     # Create strategy and engine
     strategy = MACrossover(params=strategy_params)
     engine = ExecutionEngine()
-    
+
     # Run backtest
     result = engine.run(
         strategy=strategy,
         candles=candles,
         initial_capital=initial_capital,
     )
-    
+
     result["candles_count"] = len(candles)
     return result
 
 
 if __name__ == "__main__":
     # The source can be set per-call via source=..., or globally through the
-    # DATA_SOURCE environment variable. Here we run both providers to show that
-    # the call surface is identical regardless of the data source.
+    # DATA_SOURCE environment variable. Here we run every provider to show
+    # that the call surface is identical regardless of the data source.
     print(f"Default data source: {DEFAULT_SOURCE!r} "
           f"(override with DATA_SOURCE env var or source=... per call)\n")
 
@@ -480,7 +512,7 @@ if __name__ == "__main__":
     print("Example 3: Bybit — fetch daily candles (TKXUSDT spot)")
     try:
         candles = run_fetch_candles(
-            instrument="TKXUSDT",
+            instrument="BTCUSDT",
             source="bybit",
             timeframe="1d",
             days=60,
@@ -495,9 +527,30 @@ if __name__ == "__main__":
     print()
 
     # ------------------------------------------------------------------
+    # Binance — crypto spot pairs (BTCUSDT, ETHBTC, EURUSDT, ...).
+    # No token required (the kline endpoint is public).
+    # ------------------------------------------------------------------
+    print("Example 4: Binance — fetch daily candles for BTCUSDT")
+    try:
+        candles = run_fetch_candles(
+            instrument="BTCUSDT",
+            source="binance",
+            timeframe="1m",
+            days=3650,
+        )
+        print(f"Fetched {len(candles)} candles")
+        for c in candles[:5]:
+            print(f"  {c.timestamp}: O={c.open} H={c.high} L={c.low} "
+                  f"C={c.close} V={c.volume}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  skipped ({type(e).__name__}: {e})")
+
+    print()
+
+    # ------------------------------------------------------------------
     # Full backtest — uses DEFAULT_SOURCE (DATA_SOURCE / tbank).
     # ------------------------------------------------------------------
-    print(f"Example 4: Full backtest (source={DEFAULT_SOURCE!r})")
+    print(f"Example 5: Full backtest (source={DEFAULT_SOURCE!r})")
     try:
         result = run_backtest(
             instrument="SBER",
@@ -514,5 +567,3 @@ if __name__ == "__main__":
             print(f"Final equity: {result['final_portfolio'].equity:.2f}")
     except Exception as e:  # noqa: BLE001
         print(f"  skipped ({type(e).__name__}: {e})")
-
-

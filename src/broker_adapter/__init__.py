@@ -33,6 +33,7 @@ from .factory import (
 from .tbank import TBankAdapter
 from .twelvedata import TwelveDataAdapter
 from .bybit import BybitAdapter
+from .binance import BinanceAdapter
 __all__ = [
     # Base interface
     'BrokerAdapter',
@@ -40,6 +41,7 @@ __all__ = [
     'TBankAdapter',
     'TwelveDataAdapter',
     'BybitAdapter',
+    'BinanceAdapter',
     # Factory
     'SUPPORTED_SOURCES',
     'TOKEN_ENV_BY_SOURCE',
@@ -62,4 +64,3 @@ __all__ = [
     'Position',
     'Portfolio'
 ]
-
