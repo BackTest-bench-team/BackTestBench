@@ -7,6 +7,18 @@ import {
 } from "@/components/BacktestControlPanel";
 import { AddStrategyPanel } from "@/components/AddStrategyPanel";
 import {
+  ExploreDock,
+  applyExploreJobUpdate,
+  createExploreSession,
+  deleteExploreJob,
+  dismissExploreSession,
+  saveExploreSessions,
+  useExploreJobPolling,
+  useExploreLimits,
+  useExploreRestore,
+  type ExploreSession,
+} from "@/components/ExploreDock";
+import {
   CartesianGrid,
   ComposedChart,
   Line,
@@ -515,9 +527,11 @@ function ParamSummary({ params }: { params: Record<string, number> }) {
 function OptimizationPanel({
   summary,
   initialCapital,
+  onExplore,
 }: {
   summary: OptimizationSummary;
   initialCapital: number;
+  onExplore?: (params: Record<string, number>) => void;
 }) {
   const scopeLabel =
     summary.mode === "grid" || summary.exhaustive
@@ -540,6 +554,7 @@ function OptimizationPanel({
                 <th>Return %</th>
                 <th>Sharpe</th>
                 <th>Params</th>
+                {onExplore && <th />}
               </tr>
             </thead>
             <tbody>
@@ -555,6 +570,17 @@ function OptimizationPanel({
                       .map(([key, value]) => `${formatParamLabel(key)}=${value}`)
                       .join(", ")}
                   </td>
+                  {onExplore && (
+                    <td>
+                      <button
+                        className="strategy-action-btn"
+                        type="button"
+                        onClick={() => onExplore(row.params)}
+                      >
+                        Explore
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -794,19 +820,19 @@ function StrategyCard({
   strategy,
   rankEntry,
   highlighted,
-  forceLoading,
   busy,
   onDelete,
+  onExplore,
 }: {
   strategy: StrategyResult;
   rankEntry?: RankingEntry;
   highlighted?: boolean;
-  forceLoading?: boolean;
   busy?: boolean;
   onDelete?: (strategyId: string) => Promise<void>;
+  onExplore?: (params: Record<string, number>) => void;
 }) {
-  const isBusy = forceLoading || strategy.status === "running";
-  const isError = !forceLoading && strategy.status === "error";
+  const isBusy = strategy.status === "running";
+  const isError = strategy.status === "error";
   const [deleting, setDeleting] = useState(false);
 
   async function handleDelete() {
@@ -837,6 +863,16 @@ function StrategyCard({
           </div>
         </div>
         <div className="strategy-status">
+          {onExplore && !isBusy && (
+            <button
+              className="strategy-action-btn"
+              type="button"
+              disabled={busy}
+              onClick={() => onExplore(strategy.params)}
+            >
+              Explore
+            </button>
+          )}
           {onDelete && (
             <button
               className="strategy-delete-btn"
@@ -868,7 +904,11 @@ function StrategyCard({
       <ParamSummary params={strategy.params} />
 
       {!isBusy && strategy.optimization && (
-        <OptimizationPanel summary={strategy.optimization} initialCapital={strategy.initial_capital} />
+        <OptimizationPanel
+          summary={strategy.optimization}
+          initialCapital={strategy.initial_capital}
+          onExplore={onExplore}
+        />
       )}
 
       {isError && strategy.error && (
@@ -933,38 +973,204 @@ export default function Page() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [runRequested, setRunRequested] = useState(false);
   const runStartedRef = useRef(false);
+  const runStartedAtRef = useRef(0);
+  const runRequestedRef = useRef(false);
+  runRequestedRef.current = runRequested;
   const rankingRefreshRequested = useRef(false);
   const highlightTimerRef = useRef<number | null>(null);
   const [highlightedStrategyId, setHighlightedStrategyId] = useState<string | null>(null);
+  const exploreLimits = useExploreLimits();
+  const [exploreSessions, setExploreSessions] = useState<ExploreSession[]>([]);
+  const [activeExploreId, setActiveExploreId] = useState<string | null>(null);
+  const [exploreDockCollapsed, setExploreDockCollapsed] = useState(false);
+
+  const handleJobUpdate = useCallback((sessionId: string, job: Record<string, unknown>) => {
+    setExploreSessions((prev) =>
+      prev.map((session) =>
+        session.id === sessionId ? applyExploreJobUpdate(session, job) : session
+      )
+    );
+  }, []);
+
+  const handleExploreRestore = useCallback((sessions: ExploreSession[]) => {
+    setExploreSessions((prev) => {
+      const merged = new Map<string, ExploreSession>();
+      for (const session of sessions) {
+        merged.set(session.jobId ?? session.id, session);
+      }
+      for (const session of prev) {
+        const key = session.jobId ?? session.id;
+        if (!merged.has(key)) {
+          merged.set(key, session);
+        }
+      }
+      return Array.from(merged.values());
+    });
+    setActiveExploreId((current) => {
+      if (current) return current;
+      const running = sessions.find((session) => session.status === "running" || session.status === "queued");
+      return running?.id ?? sessions[0]?.id ?? null;
+    });
+    if (sessions.some((session) => session.status === "running" || session.status === "queued")) {
+      setExploreDockCollapsed(false);
+    }
+  }, []);
+
+  useExploreRestore(handleExploreRestore);
+  useExploreJobPolling(exploreSessions, handleJobUpdate);
+
+  useEffect(() => {
+    saveExploreSessions(exploreSessions);
+  }, [exploreSessions]);
+
+  const openExplore = useCallback(
+    (strategy: StrategyResult, params: Record<string, number>) => {
+      if (!exploreLimits) return;
+      const session = createExploreSession(
+        strategy.strategy_id,
+        strategy.title ?? strategy.strategy_id,
+        params,
+        strategy.initial_capital,
+        exploreLimits
+      );
+      setExploreSessions((prev) => [...prev, session]);
+      setActiveExploreId(session.id);
+      setExploreDockCollapsed(false);
+    },
+    [exploreLimits]
+  );
+
+  const runExploreSession = useCallback(async (sessionId: string) => {
+    const session = exploreSessions.find((s) => s.id === sessionId);
+    if (!session) return;
+    setExploreSessions((prev) =>
+      prev.map((s) => (s.id === sessionId ? { ...s, status: "queued", error: undefined } : s))
+    );
+    try {
+      const res = await fetch("/api/explore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          strategy_id: session.strategyId,
+          title: session.title,
+          params: session.params,
+          initial_capital: session.initialCapital,
+          from_date: session.fromDate,
+          to_date: session.toDate,
+        }),
+      });
+      const json = (await res.json()) as { ok?: boolean; job_id?: string; message?: string };
+      if (!res.ok || !json.job_id) {
+        throw new Error(json.message ?? "Failed to start explore");
+      }
+      setExploreSessions((prev) =>
+        prev.map((s) =>
+          s.id === sessionId ? { ...s, jobId: json.job_id, status: "running" } : s
+        )
+      );
+    } catch (err) {
+      setExploreSessions((prev) =>
+        prev.map((s) =>
+          s.id === sessionId
+            ? { ...s, status: "error", error: err instanceof Error ? err.message : "Failed" }
+            : s
+        )
+      );
+    }
+  }, [exploreSessions]);
 
   const loadDashboard = useCallback(async () => {
     const res = await fetch("/api/dashboard", { cache: "no-store" });
     const json = (await res.json()) as DashboardData;
-    setData(json);
+    setData((prev) => {
+      if (!runRequestedRef.current) {
+        return json;
+      }
+
+      const updatedAt = json.last_updated ? new Date(json.last_updated).getTime() : 0;
+      const runStartedAt = runStartedAtRef.current;
+      const serverRunning = json.strategies.some((strategy) => strategy.status === "running");
+
+      if (serverRunning || updatedAt >= runStartedAt - 2000) {
+        return json;
+      }
+
+      if (!prev) {
+        return {
+          ...json,
+          strategies: json.strategies.map((strategy) => ({
+            ...strategy,
+            status: "running" as const,
+            error: null,
+            chart_points: [],
+            trade_log: [],
+          })),
+        };
+      }
+
+      return {
+        ...json,
+        strategies: json.strategies.map((strategy) =>
+          strategy.status === "running"
+            ? strategy
+            : {
+                ...strategy,
+                status: "running" as const,
+                error: null,
+                chart_points: [],
+                trade_log: [],
+              }
+        ),
+      };
+    });
+  }, []);
+
+  const beginRun = useCallback((settings: RuntimeSettings) => {
+    runStartedAtRef.current = Date.now();
+    runStartedRef.current = true;
+    setRunRequested(true);
+
+    setData((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        instrument: settings.instrument,
+        timeframe: settings.timeframe,
+        strategies: prev.strategies.map((strategy) => ({
+          ...strategy,
+          status: "running" as const,
+          error: null,
+          chart_points: [],
+          trade_log: [],
+        })),
+      };
+    });
   }, []);
 
   const runBacktest = useCallback(async (settings: RuntimeSettings) => {
-    runStartedRef.current = false;
-    setRunRequested(true);
+    try {
+      const saveRes = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...settings, optimization_seed: 42 }),
+      });
+      const saveBody = (await saveRes.json().catch(() => null)) as { message?: string } | null;
+      if (!saveRes.ok) {
+        throw new Error(saveBody?.message ?? "Failed to save settings");
+      }
 
-    const saveRes = await fetch("/api/config", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...settings, optimization_seed: 42 }),
-    });
-    const saveBody = (await saveRes.json().catch(() => null)) as { message?: string } | null;
-    if (!saveRes.ok) {
+      const res = await fetch("/api/bootstrap", { method: "POST" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message ?? "Backtest run failed");
+      }
+    } catch (err) {
       setRunRequested(false);
-      throw new Error(saveBody?.message ?? "Failed to save settings");
+      runStartedRef.current = false;
+      await loadDashboard();
+      throw err;
     }
-
-    const res = await fetch("/api/bootstrap", { method: "POST" });
-    if (!res.ok) {
-      setRunRequested(false);
-      const body = (await res.json().catch(() => null)) as { message?: string } | null;
-      throw new Error(body?.message ?? "Backtest run failed");
-    }
-  }, []);
+  }, [loadDashboard]);
 
   const deleteStrategy = useCallback(
     async (strategyId: string) => {
@@ -1012,6 +1218,11 @@ export default function Page() {
   }, [loadDashboard]);
 
   useEffect(() => {
+    if (!runRequested) return;
+    void loadDashboard();
+  }, [loadDashboard, runRequested]);
+
+  useEffect(() => {
     if (!data || rankingRefreshRequested.current) return;
     if (!needsRankingRefresh(data.strategies, data.ranking)) return;
     rankingRefreshRequested.current = true;
@@ -1026,20 +1237,25 @@ export default function Page() {
   useEffect(() => {
     if (!data || !runRequested) return;
 
-    if (data.strategies.some((s) => s.status === "running")) {
-      runStartedRef.current = true;
-    }
+    const anyRunning = data.strategies.some((s) => s.status === "running");
+    if (anyRunning) return;
 
-    if (!runStartedRef.current) return;
-
-    const allSettled = data.strategies.every(
-      (s) => s.status === "completed" || s.status === "error" || s.status === "idle"
-    );
-    if (allSettled) {
+    const updatedAt = data.last_updated ? new Date(data.last_updated).getTime() : 0;
+    if (updatedAt >= runStartedAtRef.current - 2000) {
       setRunRequested(false);
       runStartedRef.current = false;
     }
   }, [data, runRequested]);
+
+  useEffect(() => {
+    if (!runRequested) return;
+    const timer = window.setTimeout(() => {
+      setRunRequested(false);
+      runStartedRef.current = false;
+      void loadDashboard();
+    }, 180_000);
+    return () => window.clearTimeout(timer);
+  }, [loadDashboard, runRequested]);
 
   useEffect(() => {
     const ms = anyBusy ? POLL_RUNNING_MS : POLL_IDLE_MS;
@@ -1077,7 +1293,7 @@ export default function Page() {
   }, []);
 
   return (
-    <div className="page-bg">
+    <div className={`page-bg${exploreSessions.length ? " has-explore-dock" : ""}`}>
       <main className="app-shell">
         <header className="hero">
           <div className="hero-top">
@@ -1097,7 +1313,12 @@ export default function Page() {
           </div>
         </header>
 
-        <BacktestControlPanel busy={anyBusy} onRun={runBacktest} onStop={stopBacktest} />
+        <BacktestControlPanel
+          busy={anyBusy}
+          onRunStart={beginRun}
+          onRun={runBacktest}
+          onStop={stopBacktest}
+        />
 
         <AddStrategyPanel busy={anyBusy} onAdded={loadDashboard} />
 
@@ -1108,9 +1329,9 @@ export default function Page() {
               strategy={strategy}
               rankEntry={rankMap.get(strategy.strategy_id)}
               highlighted={highlightedStrategyId === strategy.strategy_id}
-              forceLoading={runRequested}
               busy={anyBusy}
               onDelete={deleteStrategy}
+              onExplore={(params) => openExplore(strategy, params)}
             />
           ))}
 
@@ -1121,6 +1342,36 @@ export default function Page() {
           )}
         </section>
       </main>
+      <ExploreDock
+        sessions={exploreSessions}
+        activeId={activeExploreId}
+        limits={exploreLimits}
+        collapsed={exploreDockCollapsed}
+        onToggleCollapse={() => setExploreDockCollapsed((v) => !v)}
+        onSelect={setActiveExploreId}
+        onClose={(id) => {
+          const session = exploreSessions.find((s) => s.id === id);
+          if (session) {
+            dismissExploreSession(session);
+            if (session.jobId) {
+              void deleteExploreJob(session.jobId);
+            }
+          } else {
+            dismissExploreSession({ id });
+          }
+          setExploreSessions((prev) => {
+            const remaining = prev.filter((s) => s.id !== id);
+            setActiveExploreId((current) => (current === id ? remaining[0]?.id ?? null : current));
+            return remaining;
+          });
+        }}
+        onPatch={(id, patch) =>
+          setExploreSessions((prev) =>
+            prev.map((s) => (s.id === id ? { ...s, ...patch } : s))
+          )
+        }
+        onRun={runExploreSession}
+      />
     </div>
   );
 }

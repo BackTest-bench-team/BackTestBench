@@ -29,6 +29,7 @@ services:
       PYTHONPATH: /app
 
       NODE_ENV: production
+      REPO_ROOT: /app
 
     volumes:
 

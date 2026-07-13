@@ -24,7 +24,8 @@ ENV PYTHON_BIN=python3 \
     PYTHONPATH=/app \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    NODE_ENV=production
+    NODE_ENV=production \
+    REPO_ROOT=/app
 
 # Build Next.js app once during image build
 WORKDIR /app/frontend

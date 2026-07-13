@@ -56,6 +56,7 @@ type TokenFeedback = {
 
 type BacktestControlPanelProps = {
   busy: boolean;
+  onRunStart: (settings: RuntimeSettings) => void;
   onRun: (settings: RuntimeSettings) => Promise<void>;
   onStop: () => Promise<void>;
 };
@@ -211,7 +212,7 @@ function settingsFromPayload(
   };
 }
 
-export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPanelProps) {
+export function BacktestControlPanel({ busy, onRunStart, onRun, onStop }: BacktestControlPanelProps) {
   const [schema, setSchema] = useState<ConfigSchema | null>(null);
   const [draft, setDraft] = useState<RuntimeSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -360,14 +361,15 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
   }, [schema, selectedSource]);
 
   const handleRun = useCallback(async () => {
-    if (!draft) return;
+    if (!draft || busy) return;
     setError(null);
+    onRunStart(draft);
     try {
       await onRun(draft);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Run failed");
     }
-  }, [draft, onRun]);
+  }, [busy, draft, onRun, onRunStart]);
 
   const handleStop = useCallback(async () => {
     setError(null);
@@ -377,6 +379,8 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
       setError(err instanceof Error ? err.message : "Stop failed");
     }
   }, [onStop]);
+
+  const isRunning = busy;
 
   if (loading || !draft || !schema || !selectedSource) {
     return (
@@ -388,7 +392,7 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
   }
 
   const tokenReady = selectedSource.token_configured;
-  const runDisabled = busy || (selectedSource.token_required && !tokenReady);
+  const runDisabled = isRunning || (selectedSource.token_required && !tokenReady);
 
   return (
     <section className="control-panel" aria-label="Backtest control panel">
@@ -399,14 +403,27 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
         </div>
         <div className="control-panel-actions">
           <button
-            className="control-btn control-btn-run"
+            className={`control-btn control-btn-run${isRunning ? " is-running" : ""}`}
             type="button"
             disabled={runDisabled}
+            aria-busy={isRunning}
             onClick={handleRun}
           >
-            {busy ? "Running…" : "Run backtest"}
+            {isRunning ? (
+              <>
+                <span className="control-btn-spinner" aria-hidden="true" />
+                Running…
+              </>
+            ) : (
+              "Run backtest"
+            )}
           </button>
-          <button className="control-btn control-btn-stop" type="button" disabled={!busy} onClick={handleStop}>
+          <button
+            className="control-btn control-btn-stop"
+            type="button"
+            disabled={!isRunning}
+            onClick={handleStop}
+          >
             Stop
           </button>
         </div>
@@ -424,7 +441,7 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
               className={`data-source-card${
                 draft.data_source === source.value ? " is-selected" : ""
               }`}
-              disabled={busy}
+              disabled={isRunning}
               onClick={() => patch({ data_source: source.value })}
             >
               <span className="data-source-name">{source.label}</span>
@@ -465,7 +482,7 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
                     : "Paste Tinkoff Invest API token"
                 }
                 value={tokenDrafts.tinkoff}
-                disabled={busy || tokenBusy === "TINKOFF_TOKEN"}
+                disabled={isRunning || tokenBusy === "TINKOFF_TOKEN"}
                 onChange={(event) =>
                   setTokenDrafts((prev) => ({ ...prev, tinkoff: event.target.value }))
                 }
@@ -474,7 +491,7 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
             <button
               className="control-btn control-btn-verify"
               type="button"
-              disabled={busy || tokenBusy === "TINKOFF_TOKEN"}
+              disabled={isRunning || tokenBusy === "TINKOFF_TOKEN"}
               onClick={() => verifyToken("TINKOFF_TOKEN")}
             >
               {tokenBusy === "TINKOFF_TOKEN" ? "Verifying…" : "Verify & save"}
@@ -501,7 +518,7 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
                     : "Paste Twelve Data API key"
                 }
                 value={tokenDrafts.twelvedata}
-                disabled={busy || tokenBusy === "TWELVEDATA_TOKEN"}
+                disabled={isRunning || tokenBusy === "TWELVEDATA_TOKEN"}
                 onChange={(event) =>
                   setTokenDrafts((prev) => ({ ...prev, twelvedata: event.target.value }))
                 }
@@ -510,7 +527,7 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
             <button
               className="control-btn control-btn-verify"
               type="button"
-              disabled={busy || tokenBusy === "TWELVEDATA_TOKEN"}
+              disabled={isRunning || tokenBusy === "TWELVEDATA_TOKEN"}
               onClick={() => verifyToken("TWELVEDATA_TOKEN")}
             >
               {tokenBusy === "TWELVEDATA_TOKEN" ? "Verifying…" : "Verify & save"}
@@ -532,7 +549,7 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
           <select
             className="control-input"
             value={draft.instrument}
-            disabled={busy}
+            disabled={isRunning}
             onChange={(event) => patch({ instrument: event.target.value })}
           >
             {selectedSource.instruments.map((ticker) => (
@@ -549,7 +566,7 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
           <select
             className="control-input"
             value={draft.timeframe}
-            disabled={busy}
+            disabled={isRunning}
             onChange={(event) => patch({ timeframe: event.target.value })}
           >
             {selectedSource.timeframes.map((item) => (
@@ -571,7 +588,7 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
             min={1}
             max={selectedTimeframe?.max_lookback_days ?? 3600}
             value={draft.lookback_days}
-            disabled={busy}
+            disabled={isRunning}
             onCommit={(lookback_days) => patch({ lookback_days })}
           />
           <span className="control-hint">History window loaded for the backtest</span>
@@ -584,7 +601,7 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
             min={1000}
             step={1000}
             value={draft.initial_capital}
-            disabled={busy}
+            disabled={isRunning}
             onCommit={(initial_capital) => patch({ initial_capital })}
           />
           <span className="control-hint">Starting portfolio cash for each strategy</span>
@@ -606,7 +623,7 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
                 name="optimization_mode"
                 value={mode.value}
                 checked={draft.optimization_mode === mode.value}
-                disabled={busy}
+                disabled={isRunning}
                 onChange={() => patch({ optimization_mode: mode.value })}
               />
               <span className="optimization-mode-name">{mode.value}</span>
@@ -622,7 +639,7 @@ export function BacktestControlPanel({ busy, onRun, onStop }: BacktestControlPan
                     min={1}
                     max={10000}
                     value={draft.optimization_iterations}
-                    disabled={busy}
+                    disabled={isRunning}
                     onCommit={(optimization_iterations) => patch({ optimization_iterations })}
                   />
                 </div>
