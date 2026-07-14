@@ -13,6 +13,7 @@ def test_prepare_candles_filters_invalid_and_dedupes():
         Candle(timestamp="2025-01-01T11:00:00", open=None, high=2, low=1, close=1.5, volume=100),
         Candle(timestamp="2025-01-01T12:00:00", open=1, high=2, low=1, close=1.5, volume=-1),
         Candle(timestamp="2025-01-01T13:00:00", open=1, high=2, low=1, close=1.5, volume=None),
+        Candle(timestamp="2025-01-01T14:00:00", open=5, high=4, low=6, close=5, volume=10),
     ]
     cleaned = prepare_candles(candles)
     assert len(cleaned) == 2
@@ -20,6 +21,15 @@ def test_prepare_candles_filters_invalid_and_dedupes():
     assert cleaned[0].close == 9
     assert cleaned[1].timestamp == "2025-01-01T13:00:00"
     assert cleaned[1].volume == 0.0
+
+
+def test_validate_candles_returns_cleaned_rows():
+    candles = [
+        Candle(timestamp="2025-01-01T10:00:00", open=1, high=2, low=0.5, close=1.5, volume=100),
+    ]
+    cleaned = validate_candles(candles)
+    assert len(cleaned) == 1
+    assert cleaned[0].close == 1.5
 
 
 def test_normalize_candle_unifies_timezone_timestamp():

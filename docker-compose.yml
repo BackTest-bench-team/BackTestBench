@@ -30,6 +30,7 @@ services:
 
       NODE_ENV: production
       REPO_ROOT: /app
+      SQLITE_JOURNAL_MODE: DELETE
 
     volumes:
 

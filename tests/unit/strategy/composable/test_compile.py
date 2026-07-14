@@ -29,7 +29,7 @@ def test_composable_registered_and_example_compiles():
     assert "composable" in available_strategies()
     d = StrategyDefinition.from_yaml("config/strategies/ma_rsi_composable.yaml")
     compiled = compile_strategy(d)                      # design  example compiles
-    assert compiled.params["fast"] == 10
+    assert compiled.params["fast"] == 12
     assert any(n.id == "fast_ma" for n in compiled.nodes)
 
 
@@ -43,7 +43,7 @@ def test_param_substitution_resolves_choices():
 def test_describe_maps_to_schema_with_choices():
     d = describe_strategy("ma_rsi_composable")
     fast = next(p for p in d["parameters"] if p["name"] == "fast")
-    assert fast["choices"] == [5, 10, 12, 21, 30, 50]   # preset resolved
+    assert fast["choices"] == [8, 10, 12, 21, 30, 50]   # preset resolved
     assert fast["optimizable"] is True
 
 
@@ -56,15 +56,15 @@ def test_get_optimize_spec_grid():
 
 def test_preset_resolution():
     d = StrategyDefinition.from_yaml("config/strategies/ma_rsi_composable.yaml")
-    assert d.params["slow"].choices == [20, 30, 50, 100, 200]   # preset:ma_long
-    assert d.params["stop_loss_pct"].choices == [0.3, 0.5, 0.7, 1.0]
+    assert d.params["slow"].choices == [20, 30, 50, 100]   # preset:ma_long
+    assert d.params["stop_loss_pct"].choices == [0.5, 0.7, 1.0, 1.5]
     assert d.params["take_profit_pct"].choices == [0.5, 1.0, 1.5, 2.0]
 
 
 def test_ma_rsi_defaults_are_within_preset_choices():
     d = StrategyDefinition.from_yaml("config/strategies/ma_rsi_composable.yaml")
     compiled = compile_strategy(d)
-    assert compiled.params["stop_loss_pct"] == 0.5
+    assert compiled.params["stop_loss_pct"] == 0.7
     assert compiled.params["take_profit_pct"] == 1.0
     assert compiled.params["stop_loss_pct"] in d.params["stop_loss_pct"].choices
     assert compiled.params["take_profit_pct"] in d.params["take_profit_pct"].choices
@@ -73,14 +73,14 @@ def test_ma_rsi_defaults_are_within_preset_choices():
 def test_sma_cross_demo_compiles_with_preset_defaults():
     d = StrategyDefinition.from_yaml("config/strategies/sma_cross_demo.yaml")
     compiled = compile_strategy(d)
-    assert compiled.params["stop_loss_pct"] == 0.5
-    assert compiled.params["take_profit_pct"] == 1.0
+    assert compiled.params["stop_loss_pct"] == 0.7
+    assert compiled.params["take_profit_pct"] == 0.5
 
 
 def test_get_optimize_spec_includes_tp_sl_from_presets():
     d = StrategyDefinition.from_yaml("config/strategies/ma_rsi_composable.yaml")
     spec = get_optimize_spec(d)
-    assert spec.params["stop_loss_pct"] == [0.3, 0.5, 0.7, 1.0]
+    assert spec.params["stop_loss_pct"] == [0.5, 0.7, 1.0, 1.5]
     assert spec.params["take_profit_pct"] == [0.5, 1.0, 1.5, 2.0]
 
 

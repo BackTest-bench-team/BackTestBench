@@ -58,6 +58,7 @@ DASHBOARD_FILE = DATA_DIR / "runtime-dashboard.json"
 STOP_FILE = DATA_DIR / "backtest.stop"
 PID_FILE = DATA_DIR / "backtest.pid"
 EXPLORE_JOBS_DIR = DATA_DIR / "explore-jobs"
+BOT_JOBS_DIR = DATA_DIR / "bot-jobs"
 EXPLORE_TIMEFRAME = "1d"
 
 RUNTIME_SETTING_KEYS = (
@@ -1106,6 +1107,8 @@ def run_fixed_params_backtest(
 def explore_start_command(payload_json: str) -> dict[str, Any]:
     payload = json.loads(payload_json)
     config = load_config()
+    source = str(payload.get("broker_source") or config.get("data_source", "tbank"))
+    instrument = str(payload.get("instrument") or config.get("instrument", "SBER"))
     job_id = secrets.token_hex(8)
     job = {
         "job_id": job_id,
@@ -1116,6 +1119,8 @@ def explore_start_command(payload_json: str) -> dict[str, Any]:
         "from_date": str(payload["from_date"])[:10],
         "to_date": str(payload["to_date"])[:10],
         "timeframe": EXPLORE_TIMEFRAME,
+        "instrument": instrument,
+        "broker_source": source,
         "initial_capital": float(payload.get("initial_capital") or config.get("initial_capital", 100_000.0)),
         "created_at": now_iso(),
         "updated_at": now_iso(),
@@ -1136,20 +1141,27 @@ async def explore_job_command(job_id: str) -> None:
     _save_explore_job(job)
     try:
         config = load_config()
+        source = str(job.get("broker_source") or config.get("data_source", "tbank"))
+        instrument = str(job.get("instrument") or config.get("instrument", "SBER"))
         job_timeframe = str(job.get("timeframe") or EXPLORE_TIMEFRAME)
+        explore_config = {
+            **config,
+            "data_source": source,
+            "instrument": instrument,
+            "timeframe": job_timeframe,
+        }
         from_dt, to_dt, days = parse_explore_dates(
-            config,
+            explore_config,
             job["from_date"],
             job["to_date"],
             timeframe=job_timeframe,
         )
         candles = await load_candles_for_range(
-            config,
+            explore_config,
             from_dt,
             to_dt,
             timeframe=job_timeframe,
         )
-        explore_config = {**config, "timeframe": job_timeframe}
         result = run_fixed_params_backtest(job["strategy_id"], job["params"], candles, explore_config)
 
         initial_capital = float(job.get("initial_capital") or config.get("initial_capital", 100_000.0))
@@ -1172,6 +1184,218 @@ async def explore_job_command(job_id: str) -> None:
     except Exception as exc:
         job.update({"status": "error", "updated_at": now_iso(), "error": str(exc)})
     _save_explore_job(job)
+
+
+def _bot_job_path(job_id: str) -> Path:
+    return BOT_JOBS_DIR / f"{job_id}.json"
+
+
+def _load_bot_job(job_id: str) -> dict[str, Any]:
+    path = _bot_job_path(job_id)
+    if not path.exists():
+        raise ValueError(f"Bot job {job_id!r} not found")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _save_bot_job(job: dict[str, Any]) -> None:
+    BOT_JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    _bot_job_path(str(job["job_id"])).write_text(
+        json.dumps(job, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def bot_limits_command() -> dict[str, Any]:
+    config = load_config()
+    source = str(config.get("data_source", "tbank"))
+    timeframe = str(config.get("timeframe", "1h"))
+    max_days = max_lookback_days(source, timeframe)
+    from src.engine.trading_bot import poll_seconds_for_timeframe
+
+    return {
+        "ok": True,
+        "instrument": config.get("instrument"),
+        "timeframe": timeframe,
+        "data_source": source_display_name(source),
+        "broker_source": source,
+        "initial_capital": float(config.get("initial_capital", 100_000.0)),
+        "default_days": min(7, max_days),
+        "max_days": max_days,
+        "use_sandbox_default": source == "tbank",
+        "poll_seconds": poll_seconds_for_timeframe(timeframe),
+    }
+
+
+def bot_list_command(limit: int = 30) -> dict[str, Any]:
+    BOT_JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    jobs: list[dict[str, Any]] = []
+    for path in BOT_JOBS_DIR.glob("*.json"):
+        try:
+            job = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(job, dict) and job.get("job_id"):
+            jobs.append(job)
+    jobs.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+    return {"ok": True, "jobs": jobs[: max(1, limit)]}
+
+
+def bot_delete_command(job_id: str) -> dict[str, Any]:
+    path = _bot_job_path(job_id)
+    if path.exists():
+        path.unlink()
+    return {"ok": True, "job_id": job_id}
+
+
+def bot_start_command(payload_json: str) -> dict[str, Any]:
+    payload = json.loads(payload_json)
+    config = load_config()
+    source = str(payload.get("broker_source") or config.get("data_source", "tbank"))
+    job_id = secrets.token_hex(8)
+    job = {
+        "job_id": job_id,
+        "status": "running",
+        "mode": "validation",
+        "strategy_id": str(payload["strategy_id"]),
+        "title": str(payload.get("title") or payload["strategy_id"]),
+        "params": dict(payload.get("params") or {}),
+        "instrument": str(payload.get("instrument") or config.get("instrument", "SBER")),
+        "timeframe": str(payload.get("timeframe") or config.get("timeframe", "1h")),
+        "broker_source": source,
+        "days_to_fetch": int(payload.get("days_to_fetch") or 7),
+        "use_sandbox": bool(payload.get("use_sandbox", source == "tbank")),
+        "initial_capital": float(payload.get("initial_capital") or config.get("initial_capital", 100_000.0)),
+        "source_backtest_run_id": str(payload.get("source_backtest_run_id") or "dashboard"),
+        "tick": 0,
+        "chart_points": [],
+        "trade_log": [],
+        "started_at": now_iso(),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    _save_bot_job(job)
+    return {"ok": True, "job_id": job_id}
+
+
+def bot_stop_command(job_id: str) -> dict[str, Any]:
+    job = _load_bot_job(job_id)
+    job["status"] = "stopped"
+    job["updated_at"] = now_iso()
+    _save_bot_job(job)
+    return {"ok": True, "job_id": job_id, "status": "stopped"}
+
+
+def _bot_validation_payload(report: Any, initial_capital: float) -> dict[str, Any]:
+    metrics = report.metrics
+    return_pct = float(metrics.total_pnl) / initial_capital if initial_capital else 0.0
+    return {
+        "validation_run_id": report.validation_run_id,
+        "source_backtest_run_id": report.source_backtest_run_id,
+        "total_pnl": float(metrics.total_pnl),
+        "sharpe_ratio": float(metrics.sharpe_ratio),
+        "max_drawdown": float(metrics.max_drawdown),
+        "win_rate": float(metrics.win_rate),
+        "deposit_baseline_pnl": float(metrics.deposit_baseline_pnl),
+        "return_pct": return_pct,
+    }
+
+
+async def bot_job_command(job_id: str) -> None:
+    from src.engine.trading_bot import (
+        MinimalTradingBot,
+        fetch_recent_market_data_via_loader_async,
+        poll_seconds_for_timeframe,
+    )
+
+    job = _load_bot_job(job_id)
+    if job.get("status") == "stopped":
+        return
+
+    job["status"] = "running"
+    job["mode"] = "validation"
+    job.setdefault("tick", 0)
+    job.setdefault("chart_points", [])
+    job.setdefault("trade_log", [])
+    job["updated_at"] = now_iso()
+    _save_bot_job(job)
+
+    days = int(job.get("days_to_fetch") or 7)
+    source = str(job.get("broker_source") or "tbank")
+    instrument = str(job.get("instrument") or "SBER")
+    timeframe = str(job.get("timeframe") or "1h")
+    initial_capital = float(job.get("initial_capital") or 100_000.0)
+    use_sandbox = bool(job.get("use_sandbox", source == "tbank"))
+    poll_seconds = poll_seconds_for_timeframe(timeframe)
+    bot = MinimalTradingBot()
+
+    while True:
+        job = _load_bot_job(job_id)
+        if job.get("status") in {"stopped", "stopping"}:
+            job["status"] = "stopped"
+            job["updated_at"] = now_iso()
+            _save_bot_job(job)
+            return
+
+        try:
+            candles, candle_source = await fetch_recent_market_data_via_loader_async(
+                instrument=instrument,
+                timeframe=timeframe,
+                days=days,
+                source=source,
+                use_sandbox=use_sandbox,
+                force_fetch=True,
+            )
+            if not candles:
+                raise RuntimeError("No candles available for the selected period")
+
+            snapshot = bot.validation_snapshot(
+                strategy_id=str(job["strategy_id"]),
+                params=normalize_order_size(dict(job.get("params") or {})),
+                recent_candles=candles,
+                initial_capital=initial_capital,
+                instrument=instrument,
+                timeframe=timeframe,
+                source_backtest_run_id=str(job.get("source_backtest_run_id") or "dashboard"),
+                candle_source=candle_source,
+            )
+
+            job.update(
+                {
+                    "status": "running",
+                    "updated_at": now_iso(),
+                    "last_tick_at": now_iso(),
+                    "poll_seconds": poll_seconds,
+                    "tick": int(job.get("tick") or 0) + 1,
+                    "candle_count": snapshot.candles_loaded,
+                    "candle_source": snapshot.candle_source or candle_source,
+                    "period_start": snapshot.period_start,
+                    "period_end": snapshot.period_end,
+                    "trade_count": snapshot.trade_count,
+                    "paper_events": snapshot.paper_events[-6:],
+                    "last_trade": snapshot.last_trade,
+                    "chart_points": snapshot.chart_points,
+                    "trade_log": snapshot.trade_log,
+                    "validation": _bot_validation_payload(snapshot.report, initial_capital),
+                    "error": None,
+                }
+            )
+            _save_bot_job(job)
+        except Exception as exc:
+            job.update({"status": "error", "updated_at": now_iso(), "error": str(exc)})
+            _save_bot_job(job)
+            return
+
+        await asyncio.sleep(poll_seconds)
+
+
+async def bot_live_command(job_id: str) -> None:
+    """Backward-compatible alias for the validation job loop."""
+    await bot_job_command(job_id)
+
+
+def bot_get_command(job_id: str) -> dict[str, Any]:
+    job = _load_bot_job(job_id)
+    return {"ok": True, "job": job}
 
 
 def parse_args() -> argparse.Namespace:
@@ -1213,6 +1437,29 @@ def parse_args() -> argparse.Namespace:
 
     explore_job = sub.add_parser("explore-job", help="Run a queued explore job")
     explore_job.add_argument("job_id")
+
+    sub.add_parser("bot-limits", help="Print paper bot defaults from dashboard config")
+
+    bot_list = sub.add_parser("bot-list", help="List recent paper bot jobs")
+    bot_list.add_argument("--limit", type=int, default=30)
+
+    bot_start = sub.add_parser("bot-start", help="Queue a paper bot validation job")
+    bot_start.add_argument("payload_json")
+
+    bot_get = sub.add_parser("bot-get", help="Get paper bot job status")
+    bot_get.add_argument("job_id")
+
+    bot_delete = sub.add_parser("bot-delete", help="Delete a paper bot job file")
+    bot_delete.add_argument("job_id")
+
+    bot_stop = sub.add_parser("bot-stop", help="Stop a live trading bot job")
+    bot_stop.add_argument("job_id")
+
+    bot_job = sub.add_parser("bot-job", help="Run a trading bot validation loop")
+    bot_job.add_argument("job_id")
+
+    bot_live = sub.add_parser("bot-live", help="Alias for bot-job")
+    bot_live.add_argument("job_id")
 
     return parser.parse_args()
 
@@ -1318,6 +1565,53 @@ def main() -> None:
 
     if args.command == "explore-job":
         asyncio.run(explore_job_command(args.job_id))
+        return
+
+    if args.command == "bot-limits":
+        print(json.dumps(bot_limits_command(), ensure_ascii=False))
+        return
+
+    if args.command == "bot-list":
+        print(json.dumps(bot_list_command(limit=args.limit), ensure_ascii=False))
+        return
+
+    if args.command == "bot-start":
+        try:
+            result = bot_start_command(args.payload_json)
+        except (ValueError, json.JSONDecodeError) as exc:
+            print(str(exc))
+            sys.exit(1)
+        print(json.dumps(result, ensure_ascii=False))
+        return
+
+    if args.command == "bot-get":
+        try:
+            result = bot_get_command(args.job_id)
+        except ValueError as exc:
+            print(str(exc))
+            sys.exit(1)
+        print(json.dumps(result, ensure_ascii=False))
+        return
+
+    if args.command == "bot-delete":
+        print(json.dumps(bot_delete_command(args.job_id), ensure_ascii=False))
+        return
+
+    if args.command == "bot-stop":
+        try:
+            result = bot_stop_command(args.job_id)
+        except ValueError as exc:
+            print(str(exc))
+            sys.exit(1)
+        print(json.dumps(result, ensure_ascii=False))
+        return
+
+    if args.command == "bot-job":
+        asyncio.run(bot_job_command(args.job_id))
+        return
+
+    if args.command == "bot-live":
+        asyncio.run(bot_live_command(args.job_id))
         return
 
     asyncio.run(bootstrap_all())

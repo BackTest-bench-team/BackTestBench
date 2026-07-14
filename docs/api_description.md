@@ -1,6 +1,7 @@
 # BackTestBench API Reference
 
-Last audited against `main`: **July 7, 2026**.
+Last audited against `main`: **July 13, 2026** (workflow dock: independent market pickers,
+parallel trading bots, PR #144 bot pipeline).
 
 This document separates the API that currently works from the target FastAPI contract.
 
@@ -131,6 +132,81 @@ Launches `python main.py refresh-ranking`.
   "message": "Ranking refresh started"
 }
 ```
+
+### `GET /api/tokens` and `POST /api/tokens`
+
+Token status per provider; verify and persist API keys for broker adapters.
+
+### `GET /api/explore`
+
+| Query | Action |
+|-------|--------|
+| (none) | Returns `explore-limits` from **dashboard config** (CLI helper; UI uses config schema instead) |
+| `list=1` | List recent explore jobs |
+| `job_id=` | Poll one job |
+
+### `POST /api/explore`
+
+Queues an explore job. Body (JSON):
+
+```json
+{
+  "strategy_id": "sma_cross_demo",
+  "title": "SMA Cross",
+  "params": { "fast": 21, "slow": 50 },
+  "initial_capital": 100000,
+  "from_date": "2026-01-01",
+  "to_date": "2026-03-01",
+  "instrument": "SBER",
+  "broker_source": "tbank"
+}
+```
+
+`instrument` and `broker_source` come from the **Explore tab** pickers. If omitted, the job
+falls back to `config/dashboard.json`. Spawns `main.py explore-job {job_id}` in the background.
+
+**Response `202`:** `{ "ok": true, "job_id": "…" }`
+
+### `DELETE /api/explore?job_id=`
+
+Removes the job JSON file.
+
+### `GET /api/bot`
+
+| Query | Action |
+|-------|--------|
+| (none) | Returns `bot-limits` from dashboard config (legacy CLI helper) |
+| `list=1` | List recent bot jobs |
+| `job_id=` | Poll one job |
+
+### `POST /api/bot`
+
+**Start bot** (default): body includes strategy, params, and per-tab market fields:
+
+```json
+{
+  "strategy_id": "ma_rsi_composable",
+  "params": { "fast": 12, "slow": 50 },
+  "instrument": "AAPL",
+  "broker_source": "twelvedata",
+  "timeframe": "1h",
+  "days_to_fetch": 7,
+  "use_sandbox": false,
+  "initial_capital": 100000
+}
+```
+
+**Stop:** `{ "action": "stop", "job_id": "…" }`
+
+**Resume:** `{ "action": "resume", "job_id": "…" }` — respawns `bot-job` for a running job
+after page reload.
+
+Spawns detached `main.py bot-job {job_id}`. Multiple bots may run in parallel (separate
+processes; shared SQLite candle cache).
+
+### `DELETE /api/bot?job_id=`
+
+Calls `bot-stop` then deletes the job file.
 
 ### Dashboard Status Values
 

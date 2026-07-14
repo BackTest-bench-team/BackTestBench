@@ -33,6 +33,7 @@ class StrategyDefinition:
     params: dict[str, ParamDef] = field(default_factory=dict)
     series: dict = field(default_factory=dict)
     rules: list = field(default_factory=list)
+    constraints: list = field(default_factory=list)
     title: str | None = None
 
     @classmethod
@@ -62,6 +63,10 @@ class StrategyDefinition:
                 minimum=spec.get("min"), maximum=spec.get("max"),
             )
 
+        constraints = data.get("constraints") or []
+        if not isinstance(constraints, list) or any(not isinstance(c, str) for c in constraints):
+            raise CompileError("'constraints' must be a list of strings like 'fast < slow'")
+
         series = data.get("series") or {}
         rules = data.get("rules") or []
         if not series:
@@ -69,7 +74,7 @@ class StrategyDefinition:
         if not rules:
             raise CompileError("strategy definition needs a non-empty 'rules'")
         return cls(name=name, params=params, series=series, rules=rules,
-                   title=data.get("title"))
+                   constraints=constraints, title=data.get("title"))
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "StrategyDefinition":

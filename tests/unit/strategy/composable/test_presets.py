@@ -10,8 +10,15 @@ from src.strategy.composable.presets import load_presets, resolve_choices
 
 def test_load_presets_reads_stop_loss_and_take_profit():
     presets = load_presets()
-    assert presets["stop_loss_pct"] == [0.3, 0.5, 0.7, 1.0]
+    assert presets["stop_loss_pct"] == [0.5, 0.7, 1.0, 1.5]
     assert presets["take_profit_pct"] == [0.5, 1.0, 1.5, 2.0]
+
+
+def test_load_presets_reads_rsi_threshold_presets():
+    presets = load_presets()
+    assert presets["rsi_oversold"] == [20, 25, 30]
+    assert presets["rsi_overbought"] == [60, 65, 70]
+    assert presets["rsi_buy_min"] == [45, 50, 55]
 
 
 def test_load_presets_missing_file_returns_empty(tmp_path):
@@ -19,8 +26,8 @@ def test_load_presets_missing_file_returns_empty(tmp_path):
 
 
 def test_resolve_choices_expands_preset_reference():
-    presets = {"stop_loss_pct": [0.3, 0.5, 0.7, 1.0]}
-    assert resolve_choices("preset:stop_loss_pct", presets) == [0.3, 0.5, 0.7, 1.0]
+    presets = {"stop_loss_pct": [0.5, 0.7, 1.0, 1.5]}
+    assert resolve_choices("preset:stop_loss_pct", presets) == [0.5, 0.7, 1.0, 1.5]
 
 
 def test_resolve_choices_passes_through_literal_list():

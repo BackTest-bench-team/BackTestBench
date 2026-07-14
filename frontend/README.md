@@ -1,71 +1,105 @@
 # BackTestBench Frontend
 
-Next.js 16 dashboard for running, ranking, and viewing strategy backtests. The UI reads results
-from a JSON file written by the Python runner (`main.py` at the repository root). It does not run
-backtests itself.
+Next.js 16 dashboard for running, ranking, exploring, and validating strategy backtests. The UI
+does not run the engine itself — it spawns `main.py` at the repository root and polls JSON job
+files written by Python.
 
 ## How the pieces connect
 
-```
-Browser  →  Next.js API routes  →  spawn Python (main.py)  →  backtest + save JSON
-                ↑
-         poll GET /api/dashboard  ←  data/runtime-dashboard.json
+```text
+Browser
+   │
+   ├─ Run backtest ──► POST /api/config + POST /api/bootstrap ──► main.py bootstrap
+   │                                                      └──► data/runtime-dashboard.json
+   │
+   ├─ Explore ───────► POST /api/explore ──► main.py explore-start / explore-job
+   │                                                      └──► data/explore-jobs/*.json
+   │
+   ├─ Trading Bot ───► POST /api/bot ──────► main.py bot-start / bot-job
+   │                                                      └──► data/bot-jobs/*.json
+   │
+   └─ Poll results ──► GET /api/dashboard | /api/explore?job_id=… | /api/bot?job_id=…
 ```
 
-1. The user opens `/` and configures run settings in the control panel.
-2. **Run backtest** calls `POST /api/config` (save settings) then `POST /api/bootstrap`.
-3. If saved results exist but ranking is missing, it calls `POST /api/refresh-ranking`.
-4. Next.js starts `main.py` as a background process.
-6. Python loads candles (database first, T-Bank API if needed), runs the engine, recomputes
-   strategy ranking, and writes `data/runtime-dashboard.json`.
-7. The page polls `GET /api/dashboard` until each strategy status is `completed` or `error`.
+1. **Backtest control panel** saves runtime settings to `config/dashboard.json` and starts
+   `main.py bootstrap`.
+2. **Explore** and **Trading Bot** live in the bottom **Workflow dock** as independent tabs with
+   their own API/instrument pickers (not tied to the backtest settings after open).
+3. Python loads candles via `DataLoader`, runs strategies/optimizer, and writes results under
+   `data/`.
 
 ## Folder layout
 
-```
+```text
 frontend/
+├── AGENTS.md                        # Cursor/Next.js agent rules (keep)
 ├── app/
-│   ├── layout.tsx              # Root HTML shell; imports global CSS
-│   ├── page.tsx                # Dashboard UI (ranking, search, charts, polling)
-│   ├── globals.css             # Light trading-theme styles (CSS variables)
+│   ├── layout.tsx
+│   ├── page.tsx                     # Main dashboard: ranking, cards, workflow dock
+│   ├── globals.css                  # Light trading-terminal theme (CSS variables)
 │   └── api/
-│       ├── dashboard/route.ts       # GET — read runtime-dashboard.json
-│       ├── bootstrap/route.ts       # POST — run all strategies (main.py bootstrap)
+│       ├── bootstrap/route.ts       # POST — run all strategies
 │       ├── config/route.ts          # GET/POST — runtime settings schema + save
+│       ├── dashboard/route.ts       # GET — runtime-dashboard.json
 │       ├── stop/route.ts            # POST — stop running backtest
+│       ├── refresh-ranking/route.ts # POST — recompute ranking only
 │       ├── strategies/route.ts      # POST — add composable strategy YAML
-│       ├── strategies/[id]/route.ts # DELETE — remove strategy YAML + dashboard state
-│       └── refresh-ranking/route.ts # POST — recompute ranking only
+│       ├── strategies/[id]/route.ts # DELETE — remove strategy
+│       ├── tokens/route.ts          # GET/POST — token status + verify/save
+│       ├── explore/route.ts         # GET/POST/DELETE — explore jobs
+│       └── bot/route.ts             # GET/POST/DELETE — trading bot jobs
 ├── components/
-│   ├── BacktestControlPanel.tsx
-│   └── AddStrategyPanel.tsx
-├── lib/
-│   ├── spawn-python.ts         # Finds repo root, loads .env, spawns main.py
-│   └── backtest-paths.ts       # Paths for stop file, pid, dashboard JSON
-├── package.json
-└── README.md                   # This file
+│   ├── BacktestControlPanel.tsx     # Backtest settings, data source cards, API tokens
+│   ├── AddStrategyPanel.tsx         # Paste/upload composable strategy YAML
+│   ├── ExploreDock.tsx              # Explore session panel (date range + stability)
+│   ├── BotDock.tsx                  # Trading bot panel (rolling validation loop)
+│   ├── WorkflowDock.tsx             # Tabbed shell: Explore | Trading Bot
+│   └── WorkflowMarketPicker.tsx     # Shared data source + instrument selects
+└── lib/
+    ├── spawn-python.ts              # Find repo root, spawn main.py with env
+    ├── backtest-paths.ts            # Paths to dashboard JSON, stop/pid files
+    ├── env-file.ts                  # Optional local .env merge for dev
+    ├── session-fingerprint.ts       # Dedupe explore/bot tabs after reload
+    └── workflow-config.ts           # Config schema, per-workflow market defaults
 ```
 
 ### Key files outside `frontend/`
 
 | Path | Role |
 |------|------|
-| `main.py` | CLI entry point: `bootstrap`, `stop`, `config-schema`, `add-strategy`, `delete-strategy`, `refresh-ranking` |
-| `src/analytics/ranking.py` | Top-N ranking via `build_top_n()` (P&L, drawdown, Sharpe, win rate) |
-| `config/dashboard.json` | Runtime settings (instrument, timeframe, capital, optimization) and `strategy_overrides` |
-| `config/strategies/*.yaml` | Composable strategy definitions (source of truth for which strategies run) |
-| `data/runtime-dashboard.json` | Live dashboard state including ranking (gitignored) |
-| `data/backtest.db` | SQLite candle cache used by `src/data_loader` (gitignored) |
-| `.env` | `TINKOFF_TOKEN` for the first candle fetch; optional `DATABASE_URL` |
+| `main.py` | CLI: `bootstrap`, `explore-*`, `bot-*`, `config-schema`, … |
+| `config/dashboard.json` | **Backtest-only** runtime settings + `strategy_overrides` |
+| `config/strategies/*.yaml` | Composable strategy definitions |
+| `data/runtime-dashboard.json` | Bootstrap results + ranking (gitignored) |
+| `data/explore-jobs/*.json` | Explore job state (gitignored) |
+| `data/bot-jobs/*.json` | Trading bot job state (gitignored) |
+| `data/backtest.db` | Shared SQLite candle cache (gitignored) |
+| `src/engine/trading_bot.py` | PR #144 validation loop |
+| `src/data_loader/README.md` | Broker → loader → engine pipeline |
+
+## Configuration scopes
+
+Three separate configuration layers — they do not overwrite each other:
+
+| Scope | Controls | Storage |
+|-------|----------|---------|
+| **Backtest control** | Instrument, timeframe, lookback, optimization for `bootstrap` | `config/dashboard.json` via `POST /api/config` |
+| **Explore tab** | Data source, instrument, date range for one parameter set | Per-session state + `localStorage` |
+| **Trading Bot tab** | Data source, instrument, rolling window, sandbox flag | Per-session state + `localStorage` |
+
+**Priority:** backtest settings always apply only to **Run backtest**. Explore and Trading Bot
+use `WorkflowMarketPicker` and remember the last workflow choice in
+`localStorage` key `backtestbench.workflow.market.v1`. Changing backtest API/instrument does
+not change open explore/bot tabs.
+
+Instrument lists are filtered per data source (MOEX tickers for T-Bank, global equities for
+Twelve Data, crypto for Bybit) using the same schema as `GET /api/config`.
 
 ## Local development
 
 From the repository root:
 
 ```bash
-cp .env.example .env
-# set TINKOFF_TOKEN in .env
-
 pip install -r requirements.txt
 npm --prefix frontend ci
 npm --prefix frontend run dev
@@ -73,101 +107,116 @@ npm --prefix frontend run dev
 
 Open http://localhost:3000.
 
-The frontend resolves the repo root by walking up from `frontend/` until it finds `main.py`.
-Keep the standard monorepo layout.
+The frontend walks up from `frontend/` until it finds `main.py`, or uses `REPO_ROOT` if set.
 
-### Run Python manually (without the UI)
+### Environment variables / API tokens
+
+Python child processes receive `process.env` plus optional values from a local `.env` file
+(development only). In CI/Docker, set tokens as environment variables:
+
+| Variable | Provider |
+|----------|----------|
+| `TINKOFF_TOKEN` | T-Bank (MOEX) |
+| `TWELVEDATA_TOKEN` | Twelve Data |
+| `BYBIT_TOKEN` | Bybit (optional; public klines often work without it) |
+
+Token entry is on the **backtest** data-source cards (`POST /api/tokens`). Workflow tabs reuse
+those credentials when fetching candles.
+
+### Run Python manually
 
 ```bash
 python main.py bootstrap
-python main.py refresh-ranking
 python main.py config-schema
+python main.py explore-start '{"strategy_id":"sma_cross_demo",…}'
+python main.py bot-limits
 ```
 
 ## API routes
 
 | Method | Path | Action |
 |--------|------|--------|
-| `GET` | `/api/dashboard` | Returns merged dashboard JSON (idle defaults if file missing) |
-| `GET` / `POST` | `/api/config` | Load/save runtime settings (`instrument`, timeframe, optimization, …) |
-| `POST` | `/api/bootstrap` | Starts `python main.py bootstrap` (202 Accepted) |
-| `POST` | `/api/stop` | Requests stop of a running backtest |
-| `POST` | `/api/strategies` | Body: `{ yaml }` — save composable strategy to `config/strategies/` |
-| `DELETE` | `/api/strategies/{id}` | Remove strategy YAML and dashboard entries |
-| `POST` | `/api/refresh-ranking` | Starts `python main.py refresh-ranking` (202 Accepted) |
+| `GET` | `/api/dashboard` | Read `runtime-dashboard.json` |
+| `GET` / `POST` | `/api/config` | Load/save **backtest** settings + UI schema |
+| `POST` | `/api/bootstrap` | Start `main.py bootstrap` (202) |
+| `POST` | `/api/stop` | Request backtest stop |
+| `POST` | `/api/refresh-ranking` | Recompute ranking only (202) |
+| `POST` | `/api/strategies` | Body `{ yaml }` — add composable strategy |
+| `DELETE` | `/api/strategies/{id}` | Remove strategy YAML + dashboard state |
+| `GET` / `POST` | `/api/tokens` | Token status; verify/save tokens |
+| `GET` | `/api/explore?list=1` | List explore jobs |
+| `GET` | `/api/explore?job_id=` | Poll one explore job |
+| `POST` | `/api/explore` | Start explore (`instrument`, `broker_source`, dates, params) |
+| `DELETE` | `/api/explore?job_id=` | Delete explore job file |
+| `GET` | `/api/bot?list=1` | List bot jobs |
+| `GET` | `/api/bot?job_id=` | Poll one bot job |
+| `GET` | `/api/bot` | CLI helper: `bot-limits` from dashboard config |
+| `POST` | `/api/bot` | Start/stop/resume bot (`action`, `job_id`, market fields) |
+| `DELETE` | `/api/bot?job_id=` | Stop + delete bot job |
 
-All run endpoints return immediately; the UI polls until results appear.
+Long-running routes return **202 Accepted** immediately; the UI polls job endpoints every ~1.5–2s
+until `completed`, `stopped`, or `error`.
 
-## Dashboard features
+## UI features
 
-### Strategy ranking
+### Backtest control panel
 
-Completed strategies are sorted best-to-worst using `build_top_n()` from `src/analytics`.
-Each card shows a rank badge (`#1`, `#2`, …). When a parameter change moves a strategy up or
-down, green ↑ / red ↓ indicators show the shift.
+- **Data source** — T-Bank / Twelve Data / Bybit cards with inline API token on the selected
+  provider.
+- **Instrument / timeframe / lookback** — for the main bootstrap run only.
+- **Optimization** — mode and iteration count; Top-5 table on each strategy card.
 
-Ranking is persisted in `runtime-dashboard.json` and restored on the next page load. A full
-bootstrap recalculates all strategies and ranking from scratch.
+### Strategy cards
+
+- Rank badge, P&L / Sharpe / drawdown / win rate, equity chart (Recharts), trade log.
+- **Explore** and **Trading Bot** on the card and on each Top-5 parameter row.
+
+### Workflow dock (bottom panel)
+
+Unified tab strip; collapsible. Modes: **Explore** (`EXP`) and **Trading Bot** (`BOT`).
+
+- Multiple tabs per mode (deduped by strategy + params + market fingerprint).
+- Tabs restore after reload from `localStorage` + server job list.
+- Each tab has its own **Data source** and **Instrument** dropdowns (`WorkflowMarketPicker`).
+
+### Explore panel
+
+- Daily candles (`1d`); date range bounded by broker lookback for the tab's data source.
+- Sends `instrument` + `broker_source` with the job payload (not dashboard config).
+- Stability metrics after the run completes.
+
+### Trading Bot panel
+
+- Rolling window in days; optional T-Bank sandbox host for candle fetches.
+- Each tick: `force_fetch=True` → `MinimalTradingBot.run_validation()` → live chart update.
+- **Stop bot** sets job status `stopped`; orders are simulated only.
+- When **two or more** bots are running, a short notice appears: they share `data/backtest.db`.
+- Each bot runs in a separate Python subprocess with its own `BrokerAdapter`.
 
 ### Strategy search
 
-The header search box accepts a strategy **title** or **ID** (partial match). Press Enter or
-**Go to** to scroll the page to the matching card and highlight it briefly. Arrow keys navigate
-suggestions when the dropdown is open.
+Header search by title or ID; Enter scrolls to the card and highlights it briefly.
 
-## Dashboard JSON shape (simplified)
+## Session persistence
 
-```json
-{
-  "instrument": "SBER",
-  "timeframe": "1h",
-  "data_source": "database",
-  "initial_capital": 100000,
-  "strategies": [
-    {
-      "strategy_id": "ma_crossover",
-      "title": "MA Crossover",
-      "status": "completed",
-      "params": { "fast": 15, "slow": 20, "order_size": 1 },
-      "metrics": { "total_pnl": 0, "sharpe_ratio": 0, "max_drawdown": 0, "win_rate": 0, … },
-      "chart_points": [{ "date": "…", "strategy_index": 100, "benchmark_index": 100, … }],
-      "trade_log": [{ "timestamp": "…", "action": "BUY", "price": 0 }]
-    }
-  ],
-  "ranking": {
-    "computed_at": "2026-06-28T12:00:00+00:00",
-    "entries": [
-      {
-        "rank": 1,
-        "strategy_id": "ma_crossover",
-        "instrument": "SBER",
-        "total_pnl": 1200,
-        "sharpe_ratio": 1.2,
-        "max_drawdown": 0.05,
-        "win_rate": 0.55,
-        "previous_rank": 2,
-        "rank_delta": 1
-      }
-    ]
-  },
-  "last_updated": "2026-06-28T12:00:00+00:00"
-}
-```
+| Storage | Key | Content |
+|---------|-----|---------|
+| `localStorage` | `backtestbench.explore.sessions.v1` | Open explore tabs |
+| `localStorage` | `backtestbench.bot.sessions.v1` | Open bot tabs |
+| `localStorage` | `backtestbench.workflow.market.v1` | Last workflow data source + instrument |
+| `localStorage` | `backtestbench.*.dismissed.v1` | Closed tab ids |
+| `data/explore-jobs/` | `{job_id}.json` | Server-side explore results |
+| `data/bot-jobs/` | `{job_id}.json` | Server-side bot validation state |
 
-`data_source` is `"database"` when candles came from `DataLoader`, or `"T-Bank"` when freshly
-fetched from the broker.
+Fingerprints (`lib/session-fingerprint.ts`):
 
-`rank_delta` is positive when a strategy moved up (e.g. from rank 2 to rank 1).
+- **Explore:** strategy + params + instrument + broker + date range
+- **Bot:** strategy + params + instrument + broker + timeframe + rolling days
 
 ## Styling
 
-All visual styles live in `app/globals.css`. The UI uses a light trading-terminal theme:
-blue-slate page background, soft indigo accent, tabular numerals for metrics, and minimal
-shadows. There are no component-level CSS modules. Charts use [Recharts](https://recharts.org/)
-inside `page.tsx`.
-
-Design tokens are defined as CSS variables in `:root` (`--bg-page`, `--accent`, `--surface`,
-etc.) for easy tuning.
+All styles in `app/globals.css` — CSS variables, tabular numerals, Recharts charts. No CSS
+modules.
 
 ## npm scripts
 
@@ -180,22 +229,23 @@ npm run lint     # ESLint
 
 ## Known limitations
 
-- Parameter overrides after optimization are stored in `config/dashboard.json` → `strategy_overrides`.
-- No multi-period stability validation or percentage metrics in UI yet (Week 6 priorities).
-- Each bootstrap run is a separate Python subprocess.
-- Only the latest dashboard state is kept; there is no run history UI.
-- UI copy is English; currency values use `ru-RU` locale formatting for RUB.
+- Backtest overrides live in `config/dashboard.json` → `strategy_overrides`.
+- Trading bot does not place real broker orders.
+- Explore stability is per-window analysis, not full walk-forward ranking.
+- Each bootstrap/explore/bot run uses a separate Python subprocess.
+- Only the latest dashboard state is kept; no run-history browser.
+- UI copy is English; RUB values use `ru-RU` locale formatting.
 
 ## Verification
 
 ```bash
-# Backend (144 tests as of July 7, 2026)
 pytest tests -q
-
-# Frontend
 npm --prefix frontend ci
 npm --prefix frontend run build
 ```
 
-CI on pull requests: GitHub-hosted `ubuntu-latest` — `backend-tests`, `frontend-checks`,
-`docker-smoke` (see `DOCKER.md` and `.github/workflows/ci.yml`).
+## Related docs
+
+- [`../src/data_loader/README.md`](../src/data_loader/README.md) — candle load pipeline
+- [`../docs/api_description.md`](../docs/api_description.md) — route contracts
+- [`../docs/strategy_composable_engine_design.md`](../docs/strategy_composable_engine_design.md) — YAML strategies

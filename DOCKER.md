@@ -172,6 +172,40 @@ docker compose exec app ls -la /app/data/backtest.db
 docker compose logs app
 ```
 
+### SQLite `disk I/O error` on startup
+
+The candle cache uses SQLite at `data/backtest.db`. **WAL mode** (`-wal` / `-shm` sidecar files)
+often fails on Docker **bind-mounted** host folders (especially on Windows), which surfaces as:
+
+```text
+(sqlite3.OperationalError) disk I/O error
+```
+
+**Fix (built-in):** the `app` service sets `SQLITE_JOURNAL_MODE=DELETE`, and the Python layer
+auto-selects `DELETE` when `/.dockerenv` is present.
+
+If the error persists after an unclean shutdown, remove stale sidecars on the host and restart:
+
+```bash
+docker compose down
+rm -f data/backtest.db-wal data/backtest.db-shm data/backtest.db-journal
+docker compose up --build
+```
+
+To wipe the cache entirely (candles will be re-fetched from the broker):
+
+```bash
+docker compose down
+rm -f data/backtest.db data/backtest.db-*
+docker compose up
+```
+
+Ensure the host `data/` directory exists and is writable:
+
+```bash
+mkdir -p data
+```
+
 ## Current Limitations
 
 - The full-stack image serves the Next.js standalone build on port 3000 inside the container.

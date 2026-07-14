@@ -1,7 +1,4 @@
-"""
-Data Loader: receives List[Candle] from Broker Adapter and stores them in DB.
-Supports explicit date-range loading with optional in-memory caching.
-"""
+"""Load broker candles into SQLite and serve them to the engine."""
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,10 +10,19 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from src.data_loader.cache import CandleCache
 from src.data_loader.models import PriceBar
-from src.data_loader.validator import ValidationError, prepare_candles
+from src.data_loader.validator import validate_candles
 from src.db.models import CandleModel
 from src.db.session import SessionLocal
 from src.engine.models import Candle
+
+_TIMEFRAME_SECONDS = {
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
+    "4h": 14400,
+    "1d": 86400,
+}
 
 
 def utc_naive(dt: datetime) -> datetime:
@@ -27,16 +33,6 @@ def utc_naive(dt: datetime) -> datetime:
 
 def candle_to_db_timestamp(timestamp: str) -> datetime:
     return utc_naive(datetime.fromisoformat(timestamp))
-
-
-_TIMEFRAME_SECONDS = {
-    "1m": 60,
-    "5m": 300,
-    "15m": 900,
-    "1h": 3600,
-    "4h": 14400,
-    "1d": 86400,
-}
 
 
 def candle_model_to_engine(row: CandleModel) -> Candle:
@@ -58,7 +54,7 @@ def candle_model_to_price_bar(row: CandleModel) -> PriceBar:
 
 @dataclass(frozen=True, slots=True)
 class LoadedMarketData:
-    """Candles and composable price series for a single lookback window."""
+    """Candles and composable price series for one lookback window."""
 
     candles: list[Candle]
     price_series: list[PriceBar]
@@ -71,13 +67,13 @@ class DataLoader:
         self.use_cache = use_cache
         self.cache = CandleCache() if use_cache else None
 
+    def _release_db_transaction(self) -> None:
+        """End the implicit read transaction so parallel jobs can write to SQLite."""
+        self.session.commit()
+
     def store_candles(self, instrument: str, timeframe: str, candles: List[Candle]) -> int:
-        """Upsert candles by (instrument, timeframe, timestamp). Returns affected row count."""
-        if not candles:
-            return 0
-        candles = prepare_candles(candles)
-        if not candles:
-            raise ValidationError("No valid candles after filtering")
+        """Normalize, validate, and upsert candles by (instrument, timeframe, timestamp)."""
+        cleaned = validate_candles(candles)
 
         values = [
             {
@@ -90,7 +86,7 @@ class DataLoader:
                 "close": c.close,
                 "volume": int(c.volume) if c.volume else 0,
             }
-            for c in candles
+            for c in cleaned
         ]
 
         insert_fn = pg_insert if "postgresql" in str(self.session.bind.url) else sqlite_insert
@@ -120,6 +116,8 @@ class DataLoader:
         timeframe: str,
         start: datetime,
         end: datetime,
+        *,
+        last_n_bars: int | None = None,
     ) -> List[CandleModel]:
         start_naive = utc_naive(start)
         end_naive = utc_naive(end)
@@ -127,11 +125,12 @@ class DataLoader:
         if self.cache:
             cached = self.cache.get(instrument, timeframe)
             if cached:
-                return [
-                    c
-                    for c in cached
-                    if start_naive <= utc_naive(c.timestamp) <= end_naive
+                rows = [
+                    row
+                    for row in cached
+                    if start_naive <= utc_naive(row.timestamp) <= end_naive
                 ]
+                return rows[-last_n_bars:] if last_n_bars and last_n_bars > 0 else rows
 
         stmt = (
             select(CandleModel)
@@ -145,7 +144,9 @@ class DataLoader:
             )
             .order_by(CandleModel.timestamp.asc())
         )
-        rows = self.session.execute(stmt).scalars().all()
+        rows = list(self.session.execute(stmt).scalars().all())
+        if last_n_bars and last_n_bars > 0:
+            rows = rows[-last_n_bars:]
         if self.cache:
             self.cache.set(instrument, timeframe, rows)
         return rows
@@ -178,8 +179,13 @@ class DataLoader:
         timeframe: str,
         start: datetime,
         end: datetime,
+        *,
+        last_n_bars: int | None = None,
     ) -> List[Candle]:
-        return [candle_model_to_engine(row) for row in self.load_candles(instrument, timeframe, start, end)]
+        rows = self.load_candles(
+            instrument, timeframe, start, end, last_n_bars=last_n_bars
+        )
+        return [candle_model_to_engine(row) for row in rows]
 
     def load_price_series(
         self,
@@ -187,9 +193,14 @@ class DataLoader:
         timeframe: str,
         start: datetime,
         end: datetime,
+        *,
+        last_n_bars: int | None = None,
     ) -> list[PriceBar]:
-        """Export (timestamp, close) bars for the composable engine."""
-        return [candle_model_to_price_bar(row) for row in self.load_candles(instrument, timeframe, start, end)]
+        """Export (timestamp, close) bars for composable strategies."""
+        rows = self.load_candles(
+            instrument, timeframe, start, end, last_n_bars=last_n_bars
+        )
+        return [candle_model_to_price_bar(row) for row in rows]
 
     async def ensure_candles_loaded(
         self,
@@ -204,43 +215,54 @@ class DataLoader:
         token_env: str = "TINKOFF_TOKEN",
         force_fetch: bool = False,
     ) -> LoadedMarketData:
-        """Load once from DB/cache or broker; reuse in-memory cache on later reads."""
+        """Load from DB/cache or broker once; reuse cache for later reads in-process."""
         rows = self.load_candles(instrument, timeframe, start, end)
         if not force_fetch and self._rows_cover_window(rows, start, end, timeframe, min_ratio):
-            candles = [candle_model_to_engine(row) for row in rows]
-            return LoadedMarketData(
-                candles=candles,
-                price_series=[candle_model_to_price_bar(row) for row in rows],
-                source="database",
-            )
+            self._release_db_transaction()
+            return self._market_data_from_rows(rows, "database")
 
+        # Broker fetch can take seconds; release the read lock before awaiting.
+        self._release_db_transaction()
         try:
             api_candles = await fetch(start, end)
             self.store_candles(instrument, timeframe, api_candles)
             rows = self.load_candles(instrument, timeframe, start, end)
             if rows:
-                candles = [candle_model_to_engine(row) for row in rows]
-                return LoadedMarketData(
-                    candles=candles,
-                    price_series=[candle_model_to_price_bar(row) for row in rows],
-                    source=broker_label,
-                )
+                return self._market_data_from_rows(rows, broker_label)
+            cleaned = validate_candles(api_candles)
             return LoadedMarketData(
-                candles=api_candles,
-                price_series=_candles_to_price_series(api_candles),
+                candles=cleaned,
+                price_series=[PriceBar(timestamp=c.timestamp, price=float(c.close)) for c in cleaned],
                 source=broker_label,
             )
         except Exception as exc:
             if len(rows) >= 10:
-                candles = [candle_model_to_engine(row) for row in rows]
-                return LoadedMarketData(
-                    candles=candles,
-                    price_series=[candle_model_to_price_bar(row) for row in rows],
-                    source="database (offline)",
-                )
+                return self._market_data_from_rows(rows, "database (offline)")
             raise RuntimeError(
                 f"{broker_label} API unavailable. Check network and {token_env}."
             ) from exc
+
+    def has_sufficient_data(
+        self,
+        instrument: str,
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        min_ratio: float = 0.5,
+    ) -> bool:
+        rows = self.load_candles(instrument, timeframe, start, end)
+        return self._rows_cover_window(rows, start, end, timeframe, min_ratio)
+
+    def close(self):
+        self.session.close()
+
+    @staticmethod
+    def _market_data_from_rows(rows: list[CandleModel], source: str) -> LoadedMarketData:
+        return LoadedMarketData(
+            candles=[candle_model_to_engine(row) for row in rows],
+            price_series=[candle_model_to_price_bar(row) for row in rows],
+            source=source,
+        )
 
     @staticmethod
     def _rows_cover_window(
@@ -256,23 +278,3 @@ class DataLoader:
         span_seconds = (utc_naive(end) - utc_naive(start)).total_seconds()
         expected = max(span_seconds / bar_seconds, 1)
         return len(rows) >= expected * min_ratio
-
-    def has_sufficient_data(
-        self,
-        instrument: str,
-        timeframe: str,
-        start: datetime,
-        end: datetime,
-        min_ratio: float = 0.5,
-    ) -> bool:
-        """True when DB/cache already covers most of the requested range."""
-        rows = self.load_candles(instrument, timeframe, start, end)
-        return self._rows_cover_window(rows, start, end, timeframe, min_ratio)
-
-    def close(self):
-        self.session.close()
-
-
-def _candles_to_price_series(candles: list[Candle]) -> list[PriceBar]:
-    cleaned = prepare_candles(candles)
-    return [PriceBar(timestamp=c.timestamp, price=float(c.close)) for c in cleaned]

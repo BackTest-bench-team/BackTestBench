@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from .constraints import check_constraints
 from .definition import ParamDef, StrategyDefinition
 from .errors import CompileError
 from .rules import Rule, compile_rules, evaluate_rules
@@ -90,6 +91,7 @@ class CompiledStrategy:
 
 def compile_strategy(definition: StrategyDefinition, overrides: dict | None = None) -> CompiledStrategy:
     params = resolve_params(definition, overrides)
+    check_constraints(definition.constraints, params)
     series_cfg = _substitute(definition.series, params)
     rules_cfg = _substitute(definition.rules, params)
 

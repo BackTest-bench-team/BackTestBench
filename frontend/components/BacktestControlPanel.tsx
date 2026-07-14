@@ -54,6 +54,29 @@ type TokenFeedback = {
   message: string;
 };
 
+function tokenDraftKeyForEnv(envKey: "TINKOFF_TOKEN" | "TWELVEDATA_TOKEN") {
+  return envKey === "TINKOFF_TOKEN" ? "tinkoff" : "twelvedata";
+}
+
+function tokenEnvForSource(sourceValue: string): "TINKOFF_TOKEN" | "TWELVEDATA_TOKEN" | null {
+  if (sourceValue === "tbank") return "TINKOFF_TOKEN";
+  if (sourceValue === "twelvedata") return "TWELVEDATA_TOKEN";
+  return null;
+}
+
+function sourceBadge(source: DataSourceOption): {
+  label: string;
+  tone: "ready" | "missing" | "public";
+} {
+  if (source.token_optional) {
+    return { label: "Public API", tone: "public" };
+  }
+  if (source.token_configured) {
+    return { label: "Ready", tone: "ready" };
+  }
+  return { label: "Token required", tone: "missing" };
+}
+
 type BacktestControlPanelProps = {
   busy: boolean;
   onRunStart: (settings: RuntimeSettings) => void;
@@ -434,112 +457,99 @@ export function BacktestControlPanel({ busy, onRunStart, onRun, onStop }: Backte
       <div className="control-panel-section">
         <p className="control-section-title">Data source</p>
         <div className="data-source-list">
-          {schema.data_sources.map((source) => (
-            <button
-              key={source.value}
-              type="button"
-              className={`data-source-card${
-                draft.data_source === source.value ? " is-selected" : ""
-              }`}
-              disabled={isRunning}
-              onClick={() => patch({ data_source: source.value })}
-            >
-              <span className="data-source-name">{source.label}</span>
-              <span className="data-source-desc">{source.description}</span>
-              <span
-                className={`data-source-token${
-                  source.token_configured ? " is-ready" : " is-missing"
-                }`}
-              >
-                {source.token_optional
-                  ? "No token required"
-                  : source.token_configured
-                    ? `${source.token_env} configured`
-                    : `Set ${source.token_env} below`}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
+          {schema.data_sources.map((source) => {
+            const isSelected = draft.data_source === source.value;
+            const tokenEnv = tokenEnvForSource(source.value);
+            const draftKey = tokenEnv ? tokenDraftKeyForEnv(tokenEnv) : null;
+            const badge = sourceBadge(source);
+            const savedToken =
+              tokenEnv && tokenStatus[tokenEnv]?.configured
+                ? tokenStatus[tokenEnv].masked
+                : null;
 
-      <div className="control-panel-section">
-        <p className="control-section-title">API tokens</p>
-        <p className="control-section-hint">
-          Tokens are verified against the provider, then saved to <code>.env</code> in the
-          repository root.
-        </p>
-        <div className="api-token-list">
-          <div className="api-token-row">
-            <label className="control-field api-token-field">
-              <span className="control-label">T-Bank API token</span>
-              <input
-                className="control-input"
-                type="password"
-                autoComplete="off"
-                placeholder={
-                  tokenStatus.TINKOFF_TOKEN?.configured
-                    ? `Configured (${tokenStatus.TINKOFF_TOKEN.masked ?? "saved"})`
-                    : "Paste Tinkoff Invest API token"
-                }
-                value={tokenDrafts.tinkoff}
-                disabled={isRunning || tokenBusy === "TINKOFF_TOKEN"}
-                onChange={(event) =>
-                  setTokenDrafts((prev) => ({ ...prev, tinkoff: event.target.value }))
-                }
-              />
-            </label>
-            <button
-              className="control-btn control-btn-verify"
-              type="button"
-              disabled={isRunning || tokenBusy === "TINKOFF_TOKEN"}
-              onClick={() => verifyToken("TINKOFF_TOKEN")}
-            >
-              {tokenBusy === "TINKOFF_TOKEN" ? "Verifying…" : "Verify & save"}
-            </button>
-            {tokenFeedback.TINKOFF_TOKEN && (
-              <p
-                className={`api-token-feedback is-${tokenFeedback.TINKOFF_TOKEN.status}`}
+            return (
+              <div
+                key={source.value}
+                className={`data-source-card${isSelected ? " is-selected" : ""}`}
               >
-                {tokenFeedback.TINKOFF_TOKEN.message}
-              </p>
-            )}
-          </div>
+                <button
+                  type="button"
+                  className="data-source-card-select"
+                  disabled={isRunning}
+                  onClick={() => patch({ data_source: source.value })}
+                >
+                  <span className="data-source-indicator" aria-hidden="true" />
+                  <span className="data-source-card-body">
+                    <span className="data-source-card-top">
+                      <span className="data-source-name">{source.label}</span>
+                      <span className={`data-source-badge is-${badge.tone}`}>
+                        {badge.label}
+                      </span>
+                    </span>
+                    <span className="data-source-desc">{source.description}</span>
+                  </span>
+                </button>
 
-          <div className="api-token-row">
-            <label className="control-field api-token-field">
-              <span className="control-label">Twelve Data API token</span>
-              <input
-                className="control-input"
-                type="password"
-                autoComplete="off"
-                placeholder={
-                  tokenStatus.TWELVEDATA_TOKEN?.configured
-                    ? `Configured (${tokenStatus.TWELVEDATA_TOKEN.masked ?? "saved"})`
-                    : "Paste Twelve Data API key"
-                }
-                value={tokenDrafts.twelvedata}
-                disabled={isRunning || tokenBusy === "TWELVEDATA_TOKEN"}
-                onChange={(event) =>
-                  setTokenDrafts((prev) => ({ ...prev, twelvedata: event.target.value }))
-                }
-              />
-            </label>
-            <button
-              className="control-btn control-btn-verify"
-              type="button"
-              disabled={isRunning || tokenBusy === "TWELVEDATA_TOKEN"}
-              onClick={() => verifyToken("TWELVEDATA_TOKEN")}
-            >
-              {tokenBusy === "TWELVEDATA_TOKEN" ? "Verifying…" : "Verify & save"}
-            </button>
-            {tokenFeedback.TWELVEDATA_TOKEN && (
-              <p
-                className={`api-token-feedback is-${tokenFeedback.TWELVEDATA_TOKEN.status}`}
-              >
-                {tokenFeedback.TWELVEDATA_TOKEN.message}
-              </p>
-            )}
-          </div>
+                {source.token_optional ? (
+                  <div className="data-source-card-foot is-static">
+                    <p className="data-source-foot-note">No API key needed</p>
+                  </div>
+                ) : isSelected && tokenEnv && draftKey ? (
+                  <div
+                    className="data-source-card-foot"
+                    onClick={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => event.stopPropagation()}
+                  >
+                    <div className="data-source-token-group">
+                      <input
+                        className="data-source-token-input"
+                        type="password"
+                        autoComplete="off"
+                        aria-label={`${source.label} API token`}
+                        placeholder={
+                          savedToken
+                            ? "Paste new token to replace saved key"
+                            : tokenEnv === "TINKOFF_TOKEN"
+                              ? "Tinkoff Invest API token"
+                              : "Twelve Data API key"
+                        }
+                        value={tokenDrafts[draftKey]}
+                        disabled={isRunning || tokenBusy === tokenEnv}
+                        onChange={(event) =>
+                          setTokenDrafts((prev) => ({
+                            ...prev,
+                            [draftKey]: event.target.value,
+                          }))
+                        }
+                      />
+                      <button
+                        className="data-source-token-save"
+                        type="button"
+                        disabled={isRunning || tokenBusy === tokenEnv}
+                        onClick={() => verifyToken(tokenEnv)}
+                      >
+                        {tokenBusy === tokenEnv ? "…" : "Save"}
+                      </button>
+                    </div>
+                    {savedToken && !tokenFeedback[tokenEnv] && (
+                      <p className="data-source-token-meta">Saved as {savedToken}</p>
+                    )}
+                    {tokenFeedback[tokenEnv] && (
+                      <p className={`data-source-token-feedback is-${tokenFeedback[tokenEnv].status}`}>
+                        {tokenFeedback[tokenEnv].message}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="data-source-card-foot is-static">
+                    <p className="data-source-foot-note">
+                      {savedToken ? `Saved as ${savedToken}` : "Select to add API token"}
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 

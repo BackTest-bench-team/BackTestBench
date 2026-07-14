@@ -106,6 +106,19 @@ def test_load_price_series(loader: DataLoader):
     assert series[-1].price == pytest.approx(candles[-1].close)
 
 
+def test_load_price_series_last_n_bars(loader: DataLoader):
+    candles = _sample_candles(5)
+    loader.store_candles("SBER", "1h", candles)
+
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2025, 1, 2, tzinfo=timezone.utc)
+    series = loader.load_price_series("SBER", "1h", start, end, last_n_bars=2)
+
+    assert len(series) == 2
+    assert series[0].timestamp == candles[-2].timestamp
+    assert series[-1].price == pytest.approx(candles[-1].close)
+
+
 def test_load_candles_hits_in_memory_cache(loader: DataLoader, monkeypatch):
     candles = _sample_candles(50)
     loader.store_candles("SBER", "1h", candles)
@@ -121,3 +134,54 @@ def test_load_candles_hits_in_memory_cache(loader: DataLoader, monkeypatch):
     cached_rows = loader.load_candles("SBER", "1h", start, end)
     assert len(cached_rows) == len(first_rows)
     assert cached_rows[0].timestamp == first_rows[0].timestamp
+
+
+def test_ensure_candles_loaded_releases_db_before_broker_fetch(tmp_path, monkeypatch):
+    import asyncio
+
+    db_path = tmp_path / "parallel.db"
+    engine = create_engine(
+        f"sqlite:///{db_path.as_posix()}",
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(bind=engine)
+    test_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    monkeypatch.setattr("src.data_loader.loader.SessionLocal", test_session)
+
+    fetch_started = asyncio.Event()
+    allow_fetch_finish = asyncio.Event()
+
+    async def slow_fetch(_start: datetime, _end: datetime) -> list[Candle]:
+        fetch_started.set()
+        await allow_fetch_finish.wait()
+        return _sample_candles(3)
+
+    async def run() -> None:
+        loader1 = DataLoader(use_cache=False)
+        loader2 = DataLoader(use_cache=False)
+        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 1, 2, tzinfo=timezone.utc)
+
+        task = asyncio.create_task(
+            loader1.ensure_candles_loaded(
+                "SBER",
+                "1h",
+                start,
+                end,
+                slow_fetch,
+                force_fetch=True,
+            )
+        )
+        await fetch_started.wait()
+
+        stored = loader2.store_candles("GAZP", "1h", _sample_candles(2))
+        assert stored >= 2
+
+        allow_fetch_finish.set()
+        market = await task
+        assert len(market.candles) == 3
+
+        loader1.close()
+        loader2.close()
+
+    asyncio.run(run())

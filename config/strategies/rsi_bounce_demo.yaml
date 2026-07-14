@@ -2,11 +2,14 @@ name: rsi_bounce_demo
 title: RSI Bounce Demo
 
 params:
-  rsi_period:      { type: int,   default: 14, choices: preset:rsi_period, optimizable: true }
-  rsi_oversold:    { type: float, default: 30, choices: [25, 30, 35], optimizable: true }
-  rsi_overbought:  { type: float, default: 70, choices: [65, 70, 75], optimizable: true }
-  stop_loss_pct:   { type: float, default: 5,  choices: [5, 7, 10], optimizable: false }
-  order_size:      { type: float, default: 1,  choices: [1], optimizable: false }
+  rsi_period:      { type: int,   default: 7,  choices: preset:rsi_period,      optimizable: true }
+  rsi_oversold:    { type: float, default: 25, choices: preset:rsi_oversold,   optimizable: true }
+  rsi_overbought:  { type: float, default: 65, choices: preset:rsi_overbought, optimizable: true }
+  stop_loss_pct:   { type: float, default: 5,  choices: [3, 5, 7],            optimizable: true }
+  order_size:      { type: float, default: 1,  choices: [1],                   optimizable: false }
+
+constraints:
+  - rsi_oversold < rsi_overbought
 
 series:
   rsi: { fn: rsi, source: price, period: "${rsi_period}" }
