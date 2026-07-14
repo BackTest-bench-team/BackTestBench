@@ -1,9 +1,9 @@
 {
-  "data_source": "bybit",
-  "instrument": "BTCUSDT",
-  "timeframe": "1h",
+  "data_source": "tbank",
+  "instrument": "LKOH",
+  "timeframe": "15m",
   "initial_capital": 10000000.0,
-  "lookback_days": 30,
+  "lookback_days": 24,
   "optimization_iterations": 16,
   "optimization_mode": "sample",
   "optimization_seed": 42,
@@ -11,26 +11,39 @@
     "ma_rsi_composable": {
       "order_size": 1,
       "fast": 10,
-      "slow": 20,
+      "slow": 100,
       "rsi_period": 20,
-      "rsi_buy_min": 50,
-      "rsi_overbought": 80,
+      "rsi_buy_min": 45,
+      "rsi_overbought": 70,
       "stop_loss_pct": 1.0,
-      "take_profit_pct": 2.0
+      "take_profit_pct": 1.5
     },
     "rsi_bounce_demo": {
-      "stop_loss_pct": 5,
       "order_size": 1,
-      "rsi_period": 14,
-      "rsi_oversold": 30,
-      "rsi_overbought": 75
+      "rsi_period": 7,
+      "rsi_oversold": 25,
+      "rsi_overbought": 65,
+      "stop_loss_pct": 7
     },
     "sma_cross_demo": {
       "order_size": 1,
-      "fast": 5,
+      "fast": 12,
       "slow": 50,
-      "stop_loss_pct": 1.0,
-      "take_profit_pct": 0.5
+      "stop_loss_pct": 1.5,
+      "take_profit_pct": 2.0
+    },
+    "ma_trailing_composable": {
+      "order_size": 1,
+      "fast": 8,
+      "slow": 20,
+      "trailing_stop_pct": 7
+    },
+    "sma_cross_demo_the_best_final_1": {
+      "fast": 15,
+      "order_size": 1,
+      "slow": 100,
+      "stop_loss_pct": 0.5,
+      "take_profit_pct": 0.7
     }
   }
 }

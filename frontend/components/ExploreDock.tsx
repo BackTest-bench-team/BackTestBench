@@ -1,6 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { WorkflowMarketPicker } from "@/components/WorkflowMarketPicker";
+import { dedupeByFingerprint, exploreSessionFingerprint } from "@/lib/session-fingerprint";
+import {
+  EXPLORE_TIMEFRAME,
+  exploreDateLimits,
+  loadWorkflowMarketDefaults,
+  sourceDisplayName,
+  type WorkflowConfigSchema,
+  type WorkflowMarketSelection,
+} from "@/lib/workflow-config";
+
+import { useCallback, useEffect, useMemo } from "react";
 import {
   CartesianGrid,
   Line,
@@ -15,12 +26,10 @@ export type ExploreLimits = {
   min_date: string;
   max_date: string;
   max_days: number;
-  instrument?: string;
   explore_timeframe?: string;
   data_source?: string;
+  broker_source?: string;
 };
-
-export const EXPLORE_TIMEFRAME = "1d";
 
 export type ExploreStability = {
   stability: number | null;
@@ -41,6 +50,9 @@ export type ExploreSession = {
   title: string;
   params: Record<string, number>;
   initialCapital: number;
+  instrument: string;
+  brokerSource: string;
+  dataSource: string;
   fromDate: string;
   toDate: string;
   status: "idle" | "queued" | "running" | "completed" | "error";
@@ -71,6 +83,8 @@ type ExploreJob = {
   params?: Record<string, number>;
   from_date: string;
   to_date: string;
+  instrument?: string;
+  broker_source?: string;
   initial_capital?: number;
   status: string;
   error?: string;
@@ -111,6 +125,7 @@ export function jobToExploreSession(job: ExploreJob): ExploreSession {
       : job.metrics?.total_pnl != null && job.initial_capital
         ? job.metrics.total_pnl / job.initial_capital
         : null;
+  const brokerSource = job.broker_source ?? "tbank";
 
   return {
     id: job.job_id,
@@ -119,6 +134,9 @@ export function jobToExploreSession(job: ExploreJob): ExploreSession {
     title: job.title ?? job.strategy_id,
     params: job.params ?? {},
     initialCapital: job.initial_capital ?? 100_000,
+    instrument: job.instrument ?? "SBER",
+    brokerSource,
+    dataSource: sourceDisplayName(brokerSource),
     fromDate: toDateOnly(job.from_date),
     toDate: toDateOnly(job.to_date),
     status: mapJobStatus(job.status),
@@ -182,8 +200,9 @@ export function saveExploreSessions(sessions: ExploreSession[]) {
     (session) =>
       !dismissed.has(session.id) && !(session.jobId && dismissed.has(session.jobId))
   );
+  const deduped = dedupeByFingerprint(filtered, exploreSessionFingerprint);
   try {
-    window.localStorage.setItem(EXPLORE_STORAGE_KEY, JSON.stringify(filtered));
+    window.localStorage.setItem(EXPLORE_STORAGE_KEY, JSON.stringify(deduped));
   } catch {
     // ignore quota errors
   }
@@ -216,11 +235,25 @@ export function mergeExploreSessions(
     }
   }
 
-  return Array.from(merged.values()).sort((a, b) => {
-    const aKey = a.jobId ?? a.id;
-    const bKey = b.jobId ?? b.id;
-    return bKey.localeCompare(aKey);
-  });
+  return dedupeByFingerprint(
+    Array.from(merged.values()).sort((a, b) => {
+      const aKey = a.jobId ?? a.id;
+      const bKey = b.jobId ?? b.id;
+      return bKey.localeCompare(aKey);
+    }),
+    exploreSessionFingerprint
+  );
+}
+
+export function findExploreSessionByFingerprint(
+  sessions: ExploreSession[],
+  next: Pick<
+    ExploreSession,
+    "strategyId" | "params" | "fromDate" | "toDate" | "instrument" | "brokerSource"
+  >
+) {
+  const key = exploreSessionFingerprint(next);
+  return sessions.find((session) => exploreSessionFingerprint(session) === key) ?? null;
 }
 
 function formatPct(fraction: number | null | undefined) {
@@ -302,71 +335,58 @@ function ExploreChart({
 export function ExploreDock({
   sessions,
   activeId,
-  limits,
-  collapsed,
-  onToggleCollapse,
-  onSelect,
-  onClose,
+  schema,
   onPatch,
   onRun,
 }: {
   sessions: ExploreSession[];
   activeId: string | null;
-  limits: ExploreLimits | null;
-  collapsed: boolean;
-  onToggleCollapse: () => void;
-  onSelect: (id: string) => void;
-  onClose: (id: string) => void;
+  schema: WorkflowConfigSchema;
   onPatch: (id: string, patch: Partial<ExploreSession>) => void;
   onRun: (id: string) => Promise<void>;
 }) {
   const active = sessions.find((s) => s.id === activeId) ?? sessions[0];
-  const runningCount = sessions.filter((s) => s.status === "running" || s.status === "queued").length;
+  const dateLimits = useMemo(
+    () => exploreDateLimits(schema, active?.brokerSource ?? "tbank"),
+    [schema, active?.brokerSource]
+  );
+  const isBusy = active?.status === "running" || active?.status === "queued";
 
-  if (!sessions.length) return null;
+  if (!sessions.length || !active) return null;
+
+  const handleMarketChange = (selection: WorkflowMarketSelection) => {
+    const nextLimits = exploreDateLimits(schema, selection.brokerSource);
+    const range = defaultDateRange(nextLimits);
+    onPatch(active.id, {
+      brokerSource: selection.brokerSource,
+      instrument: selection.instrument,
+      dataSource: selection.dataSource,
+      fromDate: range.fromDate,
+      toDate: range.toDate,
+      jobId: undefined,
+      status: "idle",
+      error: undefined,
+      returnPct: undefined,
+      stability: undefined,
+      chartPoints: undefined,
+      periodDays: undefined,
+    });
+  };
 
   return (
-    <section className={`explore-dock${collapsed ? " is-collapsed" : ""}`} aria-label="Explore sessions">
-      <header className="explore-dock-bar">
-        <div className="explore-dock-bar-title">
-          <span className="explore-dock-label">Explore</span>
-          {runningCount > 0 && <span className="explore-dock-badge">{runningCount} active</span>}
-        </div>
-        <div className="explore-dock-tabs" role="tablist">
-          {sessions.map((session) => (
-            <button
-              key={session.id}
-              type="button"
-              role="tab"
-              aria-selected={session.id === active?.id}
-              className={`explore-dock-tab${session.id === active?.id ? " is-active" : ""}`}
-              onClick={() => onSelect(session.id)}
-            >
-              <span className={`explore-dock-tab-dot is-${session.status}`} />
-              <span className="explore-dock-tab-text">{session.title}</span>
-              <span
-                className="explore-dock-tab-close"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onClose(session.id);
-                }}
-              >
-                ×
-              </span>
-            </button>
-          ))}
-        </div>
-        <button className="explore-dock-toggle" type="button" onClick={onToggleCollapse}>
-          {collapsed ? "Expand" : "Collapse"}
-        </button>
-      </header>
-
-      {!collapsed && active && limits && (
-        <div className="explore-dock-body">
-          <div className="explore-dock-controls">
-            <p className="explore-dock-meta">
-              {active.strategyId} · {limits.data_source} · {limits.instrument}
-            </p>
+    <div className="explore-dock-body">
+        <div className="explore-dock-controls">
+          <p className="explore-dock-meta">
+            <span className="workflow-kind-badge is-explore">Explore</span>
+            {active.strategyId} · {active.dataSource} · {active.instrument}
+          </p>
+          <WorkflowMarketPicker
+            schema={schema}
+            brokerSource={active.brokerSource}
+            instrument={active.instrument}
+            disabled={isBusy}
+            onChange={handleMarketChange}
+          />
             <div className="explore-dock-params">
               {Object.entries(active.params)
                 .filter(([k]) => k !== "order_size")
@@ -381,10 +401,10 @@ export function ExploreDock({
                 From
                 <input
                   type="date"
-                  min={limits.min_date}
-                  max={limits.max_date}
+                  min={dateLimits.min_date}
+                  max={dateLimits.max_date}
                   value={active.fromDate}
-                  disabled={active.status === "running" || active.status === "queued"}
+                  disabled={isBusy}
                   onChange={(e) => onPatch(active.id, { fromDate: e.target.value })}
                 />
               </label>
@@ -392,24 +412,24 @@ export function ExploreDock({
                 To
                 <input
                   type="date"
-                  min={limits.min_date}
-                  max={limits.max_date}
+                  min={dateLimits.min_date}
+                  max={dateLimits.max_date}
                   value={active.toDate}
-                  disabled={active.status === "running" || active.status === "queued"}
+                  disabled={isBusy}
                   onChange={(e) => onPatch(active.id, { toDate: e.target.value })}
                 />
               </label>
             </div>
-            <p className="explore-dock-hint">Max {limits.max_days} days</p>
-            <p className="explore-dock-timeframe-note">Daily candles (1d)</p>
+            <p className="explore-dock-hint">Max {dateLimits.max_days} days for {active.dataSource}</p>
+            <p className="explore-dock-timeframe-note">Daily candles ({EXPLORE_TIMEFRAME})</p>
             <div className="explore-dock-actions">
               <button
                 className="control-btn control-btn-run"
                 type="button"
-                disabled={active.status === "running" || active.status === "queued"}
+                disabled={isBusy}
                 onClick={() => onRun(active.id)}
               >
-                {active.status === "running" || active.status === "queued" ? "Running…" : "Run explore"}
+                {isBusy ? "Running…" : "Run explore"}
               </button>
               <span className={`explore-dock-status is-${active.status}`}>{statusLabel(active.status)}</span>
             </div>
@@ -461,9 +481,7 @@ export function ExploreDock({
             </p>
           </div>
           <ExploreChart points={active.chartPoints ?? []} />
-        </div>
-      )}
-    </section>
+    </div>
   );
 }
 
@@ -472,8 +490,10 @@ export function createExploreSession(
   title: string,
   params: Record<string, number>,
   initialCapital: number,
-  limits: ExploreLimits
+  schema: WorkflowConfigSchema
 ): ExploreSession {
+  const market = loadWorkflowMarketDefaults(schema);
+  const limits = exploreDateLimits(schema, market.brokerSource);
   const range = defaultDateRange(limits);
   return {
     id: crypto.randomUUID(),
@@ -481,20 +501,12 @@ export function createExploreSession(
     title,
     params,
     initialCapital,
+    instrument: market.instrument,
+    brokerSource: market.brokerSource,
+    dataSource: market.dataSource,
     status: "idle",
     ...range,
   };
-}
-
-export function useExploreLimits() {
-  const [limits, setLimits] = useState<ExploreLimits | null>(null);
-  useEffect(() => {
-    fetch("/api/explore", { cache: "no-store" })
-      .then((res) => res.json())
-      .then((json: ExploreLimits & { ok?: boolean }) => setLimits(json))
-      .catch(() => setLimits(null));
-  }, []);
-  return limits;
 }
 
 export function useExploreRestore(onRestore: (sessions: ExploreSession[]) => void) {

@@ -1,6 +1,7 @@
 # Documentation Status
 
-Last audited against `main`: **July 7, 2026** (Week 5 milestone close; PR #137 CI baseline).
+Last audited against `main`: **July 13, 2026** (frontend workflow dock, trading bot, explore
+market pickers, DataLoader parallel-bot fix).
 
 Use this page to distinguish current implementation references from target architecture and
 historical course artifacts.
@@ -23,7 +24,7 @@ PR #137 (GitHub-hosted CI on `ubuntu-latest`). The audit baseline reflects that 
 |---|---|
 | [`../README.md`](../README.md) | MVP2 capabilities, quick start, repository layout, limitations |
 | [`../DOCKER.md`](../DOCKER.md) | Compose services, CI job matrix, container workflow |
-| [`../frontend/README.md`](../frontend/README.md) | MVP2 dashboard routes and frontend workflow |
+| [`../frontend/README.md`](../frontend/README.md) | Dashboard UI: bootstrap, workflow dock (explore + bot), independent market pickers |
 | [`api_description.md`](api_description.md) | Implemented Next.js routes plus separately labeled target FastAPI API |
 | [`interfaces_description.md`](interfaces_description.md) | Engine, strategy, composable, optimization, and broker-facing dataclasses |
 | [`strategy_module_architecture.md`](strategy_module_architecture.md) | Strategy contract, plugin strategies, composable engine overview |
@@ -40,19 +41,22 @@ PR #137 (GitHub-hosted CI on `ubuntu-latest`). The audit baseline reflects that 
 | Composable YAML strategies (`config/strategies/*.yaml`) | Implemented |
 | Trigger/action rules with TP/SL and priority ordering | Implemented |
 | Parameter optimizer (grid + random sample) | Implemented |
-| MVP2 dashboard with Run/Stop, optimization panel | Implemented |
+| MVP2 dashboard with Run/Stop, optimization panel, explore + trading bot workflow dock | Implemented |
+| Multi-API data sources (T-Bank, Twelve Data, Bybit) + token UI | Implemented |
 | Instrument dropdown (19 MOEX tickers, single-instrument) | Partial |
 | GitHub Actions CI (`backend-tests`, `frontend-checks`, `docker-smoke` on `ubuntu-latest`) | Implemented |
 | Plugin strategies (`ma_crossover`, `ma_rsi`, `rsi_threshold`) | Implemented (codebase; dashboard uses composable YAML) |
 | Data Loader single-fetch reuse for optimizer | Implemented |
 | In-memory Top-N ranking and validation metrics library | Implemented |
-| TwelveData / Bybit example adapters | Implemented (examples only; dashboard uses T-Bank) |
+| TwelveData / Bybit adapters | Implemented (dashboard + trading bot) |
+| Explore dock (custom date range, stability, per-tab API/instrument) | Implemented |
+| Trading bot (PR #144 validation on fresh data, parallel jobs, shared SQLite cache) | Implemented |
 | Multi-period stability validation | Planned (Week 6 customer priority) |
 | End-to-end validation workflow (holdout second stage) | Not integrated |
 | FastAPI service (`src/api`) | Planned |
 | Relational run/trade/metrics persistence | Planned |
 | Multi-instrument portfolio UI | Planned |
-| CSV adapter, order placement, scheduler, notifications, trading bot | Planned |
+| CSV adapter, order placement, scheduler, notifications | Planned |
 
 ## Target Architecture / Historical Design
 

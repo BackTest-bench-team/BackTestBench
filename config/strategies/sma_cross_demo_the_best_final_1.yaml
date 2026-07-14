@@ -1,12 +1,12 @@
-name: sma_cross_demo
+name: sma_cross_demo_the_best_final_1
 title: SMA Cross Demo
 
 params:
-  fast:            { type: int,   default: 21, choices: [10, 12, 21, 30], optimizable: true }
-  slow:            { type: int,   default: 30, choices: preset:ma_long, optimizable: true }
-  stop_loss_pct:   { type: float, default: 0.7, choices: preset:stop_loss_pct, optimizable: true }
-  take_profit_pct: { type: float, default: 0.5, choices: preset:take_profit_pct, optimizable: true }
-  order_size:      { type: float, default: 1,  choices: [1, 2, 3], optimizable: false }
+  fast:            { type: int,   default: 15, choices: [10, 15, 21, 30], optimizable: false }
+  slow:            { type: int,   default: 20, choices: preset:ma_long, optimizable: fasle }
+  stop_loss_pct:   { type: float, default: 0.7, choices: [0.5,0.7,1.0,1.5], optimizable: true }
+  take_profit_pct: { type: float, default: 0.5, choices:  [0.3,0.5,0.7,], optimizable: true }
+  order_size:      { type: float, default: 1,  choices: [1], optimizable: false }
 
 constraints:
   - fast < slow
