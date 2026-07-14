@@ -1,0 +1,261 @@
+BackTestBench — Customer Meeting (Innopolis University)
+Date: ~13-07-2026 (Week 6 of 7)
+
+==============================================================
+ENGLISH SUMMARY — Composable engine demo & stability focus
+==============================================================
+
+1. COMPOSABLE ENGINE DEMO (POSITIVE PROGRESS)
+   - Rules-based strategies work end-to-end: triggers (when/cross/above), actions
+     (buy/sell), sizing, take-profit and stop-loss derived from rules.
+   - Strategies live in config files; new definitions can be added and parsed without
+     rewriting the engine.
+   - Parameter model explained and accepted: defaults vs optimizable ranges, series
+     for indicators (RSI, SMA), nested functions (RSI → SMA).
+   - Exit rules with priority ordering demonstrated (stop-loss 100, take-profit 90,
+     exit signals lower). Entry blocked when already in a position.
+   - Grid and random optimization both available; random uses seed + batch for
+     reproducible sampling from the full combinatorial space (~8000 combos).
+
+2. PARAMETER / PRESET WIRING BUGS (HIGH PRIORITY)
+   - Changing values in param_presets.yaml does not always affect the active
+     backtest — some strategies read presets only for UI display, not execution
+     (ma_rsi uses the file; others may be hardwired).
+   - Customer changed stop-loss from 5% to 1.5% but result did not update until
+     reload/rerun; unclear whether the new value was applied at all.
+   - Percent semantics confusing: is "5" five percent or 0.05? Locale shows 5%,
+     but with 20% margin leverage a 5% stop implies only ~0.15% price move — too
+     tight / unrealistic for some instruments.
+   - Customer prefers risk/reward ratio thinking (e.g. 1:2 between stop and TP)
+     over isolated absolute stop percentages.
+   - Action: audit which strategies read presets at runtime vs display-only; ensure
+     one source of truth; surface active TP/SL in sidebar so user sees what runs.
+
+3. OPTIMIZER UX (MEDIUM PRIORITY)
+   - Grid mode is exhaustive but slow; random mode samples a batch — good for speed.
+   - Seed/batch controls are technically correct but confusing for non-technical users.
+   - Consider hiding seed mechanics or offering a simpler "N random trials" control.
+   - Optimization table updates only after the full strategy run completes (all combos
+     in one batch), not per-iteration — customer noticed the delay.
+   - Future: optimize by risk/reward or composite score, not only single-metric P&L.
+
+4. STABILITY VALIDATION — MAIN CUSTOMER ASK FOR FINAL WEEK
+   - Single-month P&L (e.g. +58K on 1M capital for one month) is insufficient to
+     trust a strategy. Customer explicitly asked: "what if I use the previous month?"
+   - Need walk-forward / multi-period validation: same params on prior months,
+     compare consistency month-over-month.
+   - Add a stability metric column alongside P&L in the ranking table (based on
+     historical slices, not only the selected window).
+   - Optional deeper view: "Investigate" button opening trade history and
+     year-over-year comparison for one strategy.
+   - Customer would prefer smaller but steadier returns over volatile monthly swings
+     (e.g. +46 then −30 vs +20 each month).
+   - Bottom line for final week: move from "find best params for one period" to
+     "show how stable those params are across time."
+
+5. METRICS & DISPLAY IMPROVEMENTS
+   - Do not rank strategies by P&L alone — stability and risk/reward matter.
+   - Customer will not use strategies with risk/reward < 1 (potential loss larger
+     than potential gain).
+   - Show relative (percentage) metrics, not only absolute ruble amounts: return %,
+     capital used %, drawdown %, position size % (e.g. 13% of capital per batch).
+   - Drawdown and win rate discussed (example: 75% win rate, 6% drawdown looks good
+     but stability unproven).
+   - Chart: distinguish in-market vs flat periods — dashed/empty line when no
+     position, solid when in a trade (easier to read than flat equity curve).
+   - Magnit showed erratic results; SBER one-day window produced only one trade —
+     instrument and period choice strongly affect perceived quality.
+
+6. EXIT SIGNALS & FILTERS (DESIGN CLARITY)
+   - Exit signals (MA cross down, RSI overbought, time filter) complement stop-loss;
+     time-based forced close before session end is a valid use case.
+   - Priority model understood: highest priority rule fires first.
+   - Higher-timeframe trend filter discussed: when trading 5m, filter with 1h/2h/4h
+     trend — do not short against a bullish higher-TF trend.
+   - Market regime idea: pick strategy by current conditions (trending vs sideways);
+     scalping in range, different params in quiet trends. Stretch goal, not P0.
+
+7. SHORT POSITIONS & INSTRUMENT SCOPE
+   - Engine currently supports long-only strategies.
+   - Short selling on MOEX stocks = borrow shares from broker; intraday close avoids
+     overnight carry fees; different from futures.
+   - Futures: expiration dates, rolling liquidity (near contract vs far month) —
+     would require separate logic; explicitly out of current scope but noted.
+   - Customer OK with long-only for now; short support is desirable with trend filters.
+
+8. RUNTIME / FRONTEND BEHAVIOR
+   - Frontend polls dashboard state from runtime JSON log; interaction is chatty.
+   - Stop/run controls had issues during live demo (button state, stale output).
+   - Customer suggests moving key parameters to sidebar for always-visible context.
+   - AI-generated "bonus" strategy included in demo — useful as smoke test, not benchmark.
+
+9. TRADING BOT & DSL (POST-COURSE / RESEARCH)
+   - Live trading bot executing the same rules as backtest — not built yet; can be
+     framed as investigation topic for final report.
+   - Customer met someone at a MIBT defense who implemented a domain-specific
+     language for strategies (describe strategy ↔ generate code). Interesting
+     parallel to composable engine; out of sprint scope.
+
+10. TIMELINE
+    - One week left in the course.
+    - Customer wants enough information to make an informed decision before applying
+      optimized parameters to real usage — stability data is the missing piece.
+
+11. RECOMMENDED BACKLOG (FINAL WEEK)
+    P0 — Must have
+      - Fix preset → runtime wiring so TP/SL and strategy params actually apply.
+      - Multi-period stability check for top-N optimized configs (at least 2–3 prior
+        months or rolling windows on same instrument).
+      - Stability column (or score) in optimization ranking table.
+      - Show percentage-based metrics alongside absolute P&L.
+    P1 — Should have
+      - Sidebar or persistent panel for active strategy parameters.
+      - Chart: visual gap/dash when flat vs in position.
+      - Simplify optimizer UX (reduce seed/batch exposure for end users).
+      - Risk/reward ratio in metrics; optional sort/filter by it.
+    P2 — Stretch / post-course
+      - "Investigate" drill-down with trade list and YoY comparison.
+      - Short strategies + higher-TF trend filters.
+      - Market-regime-based strategy switching.
+      - Trading bot mirroring backtest rules.
+      - Futures support with expiry/liquidity handling.
+
+12. OPEN QUESTIONS
+    - Which strategies still ignore param_presets.yaml at execution time?
+    - Minimal stability metric: std dev of monthly returns, worst-month P&L, or
+      walk-forward win rate?
+    - How many historical slices to run by default without killing performance?
+    - Can stability checks run only for top-5 ranked configs (customer suggestion)?
+
+13. BOTTOM LINE
+    Engine abstraction and optimizer delivered real progress — customer sees it.
+    Value shift for the last week: from "best params on one month" to "prove those
+    params are stable over time." Fix param wiring first; then stability validation
+    is the headline feature for the final demo.
+
+
+==============================================================
+РУССКИЙ SUMMARY — Разбор демо и фокус на стабильности
+==============================================================
+
+1. ДЕМО COMPOSABLE ENGINE (ПРОГРЕСС)
+   - Rules-стратегии работают: триггеры (when/cross/above), экшены (buy/sell),
+     размер позиции, TP/SL из rules.
+   - Стратегии в конфиг-файлах; новые определения парсятся без переписывания ядра.
+   - Модель параметров объяснена: дефолты vs оптимизируемые диапазоны, series для
+     индикаторов, вложенные функции (RSI → SMA).
+   - Приоритеты exit rules: stop-loss 100, take-profit 90, exit-сигналы ниже.
+     Повторный вход заблокирован при открытой позиции.
+   - Grid и random-оптимизация; random с seed + batch для воспроизводимой выборки
+     из ~8000 комбинаций.
+
+2. БАГИ СВЯЗКИ ПАРАМЕТРОВ (ВЫСОКИЙ ПРИОРИТЕТ)
+   - Изменения в param_presets.yaml не всегда попадают в бэктест — часть стратегий
+     читает пресеты только для отображения в UI (ma_rsi использует файл; остальные
+     могут быть захардкожены).
+   - Заказчик менял stop-loss с 5% на 1.5%, но результат не обновился без
+     перезагрузки; неясно, применилось ли значение.
+   - Путаница с процентами: «5» — это 5% или 0.05? При плече 20% стоп 5% означает
+     движение цены ~0.15% — слишком агрессивно для части инструментов.
+   - Заказчик предпочитает мыслить через risk/reward (например 1:2 между стопом и TP).
+   - Действие: аудит preset → runtime; единый источник правды; TP/SL в сайдбаре.
+
+3. UX ОПТИМИЗАТОРА (СРЕДНИЙ ПРИОРИТЕТ)
+   - Grid — полный перебор, медленно; random — батч, быстрее.
+   - Seed/batch технически верны, но непонятны обычному пользователю.
+   - Упростить: скрыть seed или дать «N случайных прогонов».
+   - Таблица обновляется после завершения всего прогона, не по итерациям.
+   - В перспективе: оптимизация по risk/reward или составной метрике, не только P&L.
+
+4. ВАЛИДАЦИЯ СТАБИЛЬНОСТИ — ГЛАВНЫЙ ЗАПРОС НА ФИНАЛЬНУЮ НЕДЕЛЮ
+   - P&L за один месяц (например +58K с капитала 1M) недостаточен для доверия.
+   - Нужна проверка на предыдущих периодах: те же параметры на прошлых месяцах,
+     сравнение стабильности month-over-month.
+   - Колонка стабильности в таблице ранжирования (на исторических срезах).
+   - Опционально: кнопка «Investigate» с историей сделок и сравнением с прошлым годом.
+   - Лучше меньше, но стабильнее (+20 каждый месяц), чем +46 / −30 по месяцам.
+   - Итог недели: от «лучшие параметры на один период» к «насколько они стабильны».
+
+5. МЕТРИКИ И ОТОБРАЖЕНИЕ
+   - Не ранжировать только по P&L — важны стабильность и risk/reward.
+   - Заказчик не будет использовать стратегии с risk/reward < 1.
+   - Показывать относительные метрики (%): доходность, доля капитала, просадка,
+     размер позиции (например 13% на батч).
+   - Пример: win rate 75%, drawdown 6% — хорошо, но стабильность не доказана.
+   - График: пунктир/разрыв вне позиции, сплошная линия в сделке.
+   - Магнит дал нестабильные результаты; SBER за один день — одна сделка.
+
+6. EXIT-СИГНАЛЫ И ФИЛЬТРЫ
+   - Exit-сигналы (пересечение MA, RSI, time filter) дополняют stop-loss;
+     принудительное закрытие перед концом сессии — валидный кейс.
+   - Модель приоритетов понятна.
+   - Фильтр тренда старшего ТФ: на 5m торговать с учётом 1h/2h/4h — не шортить
+     против бычьего тренда на старшем ТФ.
+   - Идея режима рынка: выбор стратегии по условиям (тренд vs боковик). Stretch.
+
+7. ШОРТЫ И ИНСТРУМЕНТЫ
+   - Сейчас только long.
+   - Шорт на MOEX = заём акций у брокера; внутри дня без overnight-комиссии.
+   - Фьючерсы: экспирация, ликвидность контрактов — отдельная логика, вне скоупа.
+   - Long-only OK на сейчас; шорты желательны вместе с трендовыми фильтрами.
+
+8. RUNTIME / ФРОНТЕНД
+   - Фронт читает состояние из runtime JSON; частый polling.
+   - Кнопки stop/run глючили на демо; устаревший вывод.
+   - Параметры лучше вынести в сайдбар.
+   - AI-стратегия «bonus» — smoke test, не эталон.
+
+9. ТОРГОВЫЙ БОТ И DSL (ПОСЛЕ КУРСА)
+   - Бот с теми же rules, что бэктест — не сделан; можно оформить как research.
+   - Упоминание DSL с защиты в МИБТ — интересный параллель composable engine.
+
+10. СРОКИ
+    - Осталась 1 неделя курса.
+    - Заказчик хочет данных для осознанного решения перед применением параметров —
+      не хватает анализа стабильности.
+
+11. РЕКОМЕНДУЕМЫЙ BACKLOG (ФИНАЛЬНАЯ НЕДЕЛЯ)
+    P0 — Must have
+      - Исправить preset → runtime для TP/SL и параметров стратегий.
+      - Мультипериодная проверка стабильности для top-N конфигов (2–3 прошлых месяца).
+      - Колонка/скор стабильности в таблице оптимизации.
+      - Процентные метрики рядом с абсолютным P&L.
+    P1 — Should have
+      - Сайдбар с активными параметрами стратегии.
+      - График: визуальное отличие «в рынке» / «вне рынка».
+      - Упростить UX оптимизатора (меньше seed/batch для пользователя).
+      - Risk/reward в метриках; сортировка/фильтр.
+    P2 — Stretch / после курса
+      - Drill-down «Investigate» с YoY-сравнением.
+      - Шорты + фильтры старшего ТФ.
+      - Переключение стратегии по режиму рынка.
+      - Торговый бот = rules бэктеста.
+      - Поддержка фьючерсов.
+
+12. ОТКРЫТЫЕ ВОПРОСЫ
+    - Какие стратегии ещё игнорируют param_presets.yaml при исполнении?
+    - Метрика стабильности: std dev месячной доходности, worst-month, walk-forward?
+    - Сколько исторических срезов по умолчанию без убийства производительности?
+    - Стабильность только для top-5 (предложение заказчика)?
+
+13. ИТОГ
+    Абстракция движка и оптимизатор — реальный прогресс, заказчик это видит.
+    Фокус финальной недели: не «лучшие параметры на месяц», а «доказать стабильность
+    во времени». Сначала починить wiring параметров, затем — валидация стабильности
+    как главная фича финального демо.
+
+
+==============================================================
+ACTION ITEMS (shared)
+==============================================================
+
+- Audit and fix param_presets.yaml → backtest runtime wiring for all strategies.
+- Expose active TP/SL and key params in sidebar (always visible during run).
+- Implement multi-period stability check for top ranked optimization results.
+- Add stability metric column to optimization ranking table.
+- Show percentage return, drawdown %, capital usage %, risk/reward alongside P&L.
+- Chart: dashed/gap segments when flat; solid when in position.
+- Simplify optimizer UX — reduce exposure of seed/batch to end users.
+- Investigate stop/run button and stale dashboard polling issues.
+- Document long-only limitation; note short/futures as post-course scope.
+- Frame trading-bot parity and DSL as investigation topics for final report.
