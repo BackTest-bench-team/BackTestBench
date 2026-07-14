@@ -18,7 +18,7 @@ def test_load_presets_reads_rsi_threshold_presets():
     presets = load_presets()
     assert presets["rsi_oversold"] == [20, 25, 30]
     assert presets["rsi_overbought"] == [60, 65, 70]
-    assert presets["rsi_buy_min"] == [45, 50, 55]
+    assert presets["rsi_buy_min"] == [40, 45, 50, 55]
 
 
 def test_load_presets_missing_file_returns_empty(tmp_path):

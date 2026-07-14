@@ -43,7 +43,7 @@ def test_param_substitution_resolves_choices():
 def test_describe_maps_to_schema_with_choices():
     d = describe_strategy("ma_rsi_composable")
     fast = next(p for p in d["parameters"] if p["name"] == "fast")
-    assert fast["choices"] == [8, 10, 12, 21, 30, 50]   # preset resolved
+    assert fast["choices"] == [5, 8, 10, 12, 21, 30, 50]   # preset resolved
     assert fast["optimizable"] is True
 
 
