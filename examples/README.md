@@ -4,8 +4,9 @@ This folder contains ready-to-run examples for the **broker adapter** layer. The
 main entry point is [`tbank_adapter_usage.py`](./tbank_adapter_usage.py), which
 provides a thin, friendly wrapper around the low-level adapters
 ([`TBankAdapter`](../src/broker_adapter/tbank.py),
-[`TwelveDataAdapter`](../src/broker_adapter/twelvedata.py), and
-[`BybitAdapter`](../src/broker_adapter/bybit.py)) for fetching historical
+[`TwelveDataAdapter`](../src/broker_adapter/twelvedata.py),
+[`BybitAdapter`](../src/broker_adapter/bybit.py), and
+[`BinanceAdapter`](../src/broker_adapter/binance.py)) for fetching historical
 market candles (OHLC/V) and running simple backtests.
 
 > The file's primary purpose is **parsing/fetching data from a data API**.
@@ -19,13 +20,14 @@ market candles (OHLC/V) and running simple backtests.
 
 ## Data sources
 
-The example supports three data providers:
+The example supports four data providers:
 
 | `source`     | Provider                            | Markets                                 | Token env var      | Token required? |
 |--------------|-------------------------------------|-----------------------------------------|--------------------|-----------------|
 | `"tbank"`     | T-Bank (Tinkoff Investments) API v2 | Russian equities (MOEX TQBR: SBER, GAZP, LKOH, …) | `TINKOFF_TOKEN`    | Yes             |
 | `"twelvedata"` | [twelvedata.com](https://twelvedata.com) REST API | Global equities, FX, crypto (AAPL, MSFT, ETH/BTC, …) | `TWELVEDATA_TOKEN` | Yes             |
 | `"bybit"`     | [Bybit](https://bybit-exchange.github.io/docs/v5/market/kline) V5 kline API | Crypto spot pairs (BTCUSDT, ETHUSDT, …) | `BYBIT_TOKEN`      | **No** (endpoint is public) |
+| `"binance"`   | [Binance](https://developers.binance.com/docs/binance-spot-api-docs/rest-api/market-data-endpoints) Spot kline API (`/api/v3/klines`) | Crypto spot pairs & fiat-quoted stablecoin pairs (BTCUSDT, ETHBTC, EURUSDT, …) | `BINANCE_TOKEN`    | **No** (endpoint is public) |
 
 The source is chosen either **per-call** via the `source=...` argument, or
 **globally** via the `DATA_SOURCE` environment variable (defaults to `tbank`):
@@ -40,6 +42,7 @@ DATA_SOURCE=bybit
 run_fetch_candles(instrument="AAPL", source="twelvedata", timeframe="1d", days=60)
 run_fetch_candles(instrument="SBER", source="tbank", timeframe="1h", days=7)
 run_fetch_candles(instrument="BTCUSDT", source="bybit", timeframe="1d", days=60)
+run_fetch_candles(instrument="ETHBTC", source="binance", timeframe="1d", days=60)
 ```
 
 The **timeframe format is shared** across all sources (`1m`, `5m`, `1h`, `1d`,
@@ -82,6 +85,9 @@ use identical parameters either way.
    - **Bybit** — *no token required* for historical candle data (the V5
      `market/kline` endpoint is public). You can still set `BYBIT_TOKEN`; it is
      accepted for parity but not sent with kline requests.
+   - **Binance** — *no token required* for historical candle data (the Spot
+     `/api/v3/klines` endpoint is public). You can still set `BINANCE_TOKEN`;
+     it is accepted for parity but not sent with kline requests.
 
 2. **A `.env` file** in the project root with the token(s) you want to use:
 
@@ -94,6 +100,9 @@ use identical parameters either way.
 
    # Bybit (use source="bybit") — optional, the kline endpoint is public
    # BYBIT_TOKEN=your_bybit_key_here
+
+   # Binance (use source="binance") — optional, the kline endpoint is public
+   # BINANCE_TOKEN=your_binance_key_here
 
    # Optional default source. Omit to default to "tbank".
    # DATA_SOURCE=tbank
@@ -131,19 +140,28 @@ candles = run_fetch_candles(
     days=60,
 )
 
+# Binance explicitly — last 60 days of daily candles for ETHBTC (no token needed)
+candles = run_fetch_candles(
+    instrument="ETHBTC",
+    source="binance",
+    timeframe="1d",
+    days=60,
+)
+
 print(f"Fetched {len(candles)} candles")
 for c in candles[:3]:
     print(f"  {c.timestamp}: O={c.open} H={c.high} L={c.low} C={c.close} V={c.volume}")
 ```
 
-Running the file directly executes built-in demos for all three providers:
+Running the file directly executes built-in demos for all four providers:
 
 ```bash
 python examples/tbank_adapter_usage.py
 ```
 
 Each demo skips gracefully (with a clear message) if its token isn't set (or, for
-Bybit, if the request fails), so the file runs cleanly with any subset of tokens.
+Bybit/Binance, if the request fails), so the file runs cleanly with any subset of
+tokens.
 
 ---
 
@@ -154,7 +172,7 @@ Bybit, if the request fails), so the file runs cleanly with any subset of tokens
 | `run_fetch_candles` | sync   | Fetch historical candles. **Main entry point for data parsing.**       |
 | `fetch_candles`     | async  | Underlying coroutine awaited by `run_fetch_candles`.                   |
 | `run_backtest`      | sync   | Fetch candles and run the MA-Crossover backtest on them.               |
-| `get_token`         | sync   | Helper that reads the right token (`TINKOFF_TOKEN` / `TWELVEDATA_TOKEN`) for the given source. |
+| `get_token`         | sync   | Helper that reads the right token (`TINKOFF_TOKEN` / `TWELVEDATA_TOKEN` / `BYBIT_TOKEN` / `BINANCE_TOKEN`) for the given source. |
 
 ---
 
@@ -177,10 +195,10 @@ run_fetch_candles(
 
 | Parameter     | Type             | Default            | Description                                                                                       |
 |---------------|------------------|--------------------|---------------------------------------------------------------------------------------------------|
-| `instrument`  | `str`            | `"SBER"`           | Ticker. T-Bank: `SBER`, `GAZP`, `LKOH` or a FIGI. Twelve Data: `AAPL`, `MSFT`, `ETH/BTC`. See [tickers](#instrument-tickers). |
+| `instrument`  | `str`            | `"SBER"`           | Ticker. T-Bank: `SBER`, `GAZP`, `LKOH` or a FIGI. Twelve Data: `AAPL`, `MSFT`, `ETH/BTC`. Bybit / Binance: `BTCUSDT`, `ETHUSDT`, `ETHBTC`, `EURUSDT`. See [tickers](#instrument-tickers). |
 | `timeframe`   | `str`            | `"1h"`             | Candle granularity, **same format for all sources**. Minimum resolution is `1m`. See [timeframes](#timeframe). |
 | `days`        | `int`            | `7`                | History depth in days, counting back from `to_date`/now. Ignored if `from_date` is given. Caps differ per source — see [history limits](#history-limits-days). |
-| `source`      | `Optional[str]`  | `DATA_SOURCE`/`"tbank"` | Data API: `"tbank"` or `"twelvedata"`. See [choosing a data source](#choosing-a-data-source). |
+| `source`      | `Optional[str]`  | `DATA_SOURCE`/`"tbank"` | Data API: `"tbank"`, `"twelvedata"`, `"bybit"`, or `"binance"`. See [choosing a data source](#choosing-a-data-source). |
 | `from_date`   | `Optional[str]`  | `None`             | Start date `YYYY-MM-DD`. Overrides `days`.                                                         |
 | `to_date`     | `Optional[str]`  | `None`             | End date `YYYY-MM-DD`. Defaults to *now*.                                                          |
 | `use_sandbox` | `bool`           | `False`            | T-Bank **sandbox** host (ignored by Twelve Data).                                                  |
@@ -197,9 +215,10 @@ The `source` parameter selects the adapter. It is resolved as follows:
 2. Otherwise the `DATA_SOURCE` env var is read.
 3. Otherwise it defaults to `"tbank"`.
 
-Anything other than `"tbank"` / `"twelvedata"` raises `ValueError`. The chosen
-source determines which token env var is read (`TINKOFF_TOKEN` or
-`TWELVEDATA_TOKEN`) and which history-depth caps apply.
+Anything other than `"tbank"` / `"twelvedata"` / `"bybit"` / `"binance"` raises
+`ValueError`. The chosen source determines which token env var is read
+(`TINKOFF_TOKEN`, `TWELVEDATA_TOKEN`, `BYBIT_TOKEN`, or `BINANCE_TOKEN`) and
+which history-depth caps apply.
 
 ```python
 # Explicit per call
@@ -211,7 +230,7 @@ fetch_candles(instrument="AAPL", timeframe="1d", days=30)
 
 ### Instrument (tickers)
 
-The `instrument` value you pass depends on the chosen `source`. Both adapters
+The `instrument` value you pass depends on the chosen `source`. All adapters
 return the same `Candle` model regardless of the underlying symbol.
 
 #### T-Bank (`source="tbank"`)
@@ -346,20 +365,72 @@ public. The full instrument list is available via the
 [`instruments-info`](https://bybit-exchange.github.io/docs/v5/market/instrument)
 endpoint or the Bybit UI.
 
+#### Binance (`source="binance"`)
+
+Binance is a crypto exchange. Like Bybit, symbols are **base+quote concatenated
+without a separator** (no slash). The adapter targets the **spot** market only
+(`/api/v3/klines`); Binance Futures, Options, and other derivatives are not
+exposed.
+
+| Asset class                  | `instrument` format  | Examples                              | Notes                                            |
+|------------------------------|----------------------|---------------------------------------|--------------------------------------------------|
+| Spot crypto pairs            | `BASEQUOTE`          | `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `XRPUSDT`, `DOGEUSDT` | Default (and only) category. Quote is typically `USDT`/`USDC`/`BTC`/`ETH`/`BNB`. |
+| Crypto-to-crypto             | `BASEQUOTE`          | `ETHBTC`, `LTCBTC`, `ADABNB`          | Same `BASEQUOTE` shape; useful for relative-value views. |
+| Fiat-quoted stablecoin pairs | `BASEQUOTE`          | `EURUSDT`, `GBPUSDT`, `JPYUSDT`, `BRLUSDT` | Binance lists a number of fiat-quoted stablecoin pairs that behave like FX. |
+
+**Spot only.** This example wires `BinanceAdapter(token=token)` in
+`_build_adapter`, so all symbols resolve to spot. Binance Spot does not have a
+`category=` parameter — for futures/derivatives you would need a separate
+adapter (Binance Futures, `/fapi/v1/klines`), which is not implemented here.
+
+```python
+import asyncio
+from datetime import datetime
+from src.broker_adapter import BinanceAdapter
+
+async def main():
+    async with BinanceAdapter(token=None) as adapter:
+        return await adapter.get_candles(
+            instrument="BTCUSDT",
+            timeframe="1h",
+            from_dt=datetime(2024, 1, 1),
+            to_dt=datetime(2024, 2, 1),
+        )
+
+candles = asyncio.run(main())
+```
+
+Common spot pairs (illustrative — Binance lists thousands):
+
+| Symbol      | Pair              | Symbol      | Pair              |
+|-------------|-------------------|-------------|-------------------|
+| `BTCUSDT`   | Bitcoin / Tether  | `SOLUSDT`   | Solana / Tether   |
+| `ETHUSDT`   | Ethereum / Tether | `XRPUSDT`   | XRP / Tether      |
+| `BTCUSDC`   | Bitcoin / USD Coin| `DOGEUSDT`  | Dogecoin / Tether |
+| `ETHBTC`    | Ethereum / Bitcoin| `ADAUSDT`   | Cardano / Tether  |
+| `BNBUSDT`   | BNB / Tether      | `EURUSDT`   | Euro / Tether     |
+
+A symbol Binance doesn't recognise returns HTTP `400` with a body like
+`{"code": -1121, "msg": "Invalid symbol."}` and is raised as
+`InvalidInstrumentError`. **No token is required** — the kline endpoint is
+public. The full instrument list is available via the
+[`exchangeInfo`](https://developers.binance.com/docs/binance-spot-api-docs/rest-api/market-data-endpoints)
+endpoint or the Binance UI.
+
 ### Timeframe
 
-The same set of timeframe values works for **all three** sources:
+The same set of timeframe values works for **all four** sources:
 
-| Value  | Meaning   | Max `days` — T-Bank sandbox | Max `days` — Twelve Data | Max `days` — Bybit |
-|--------|-----------|-----------------------------|--------------------------|--------------------|
-| `1m`   | 1 minute  | 1                           | 3650 (soft cap)          | 3650 (soft cap)    |
-| `5m`   | 5 minutes | 7                           | 3650 (soft cap)          | 3650 (soft cap)    |
-| `15m`  | 15 minutes| 24                          | 3650 (soft cap)          | 3650 (soft cap)    |
-| `30m`  | 30 minutes| 25                          | 3650 (soft cap)          | 3650 (soft cap)    |
-| `1h`   | 1 hour    | 100                         | 3650 (soft cap)          | 3650 (soft cap)    |
-| `1d`   | 1 day     | 2400                        | 3650 (soft cap)          | 3650 (soft cap)    |
-| `1w`   | 1 week    | 2100                        | 3650 (soft cap)          | 3650 (soft cap)    |
-| `1M`   | 1 month   | 3600                        | 3650 (soft cap)          | 3650 (soft cap)    |
+| Value  | Meaning   | Max `days` — T-Bank sandbox | Max `days` — Twelve Data | Max `days` — Bybit | Max `days` — Binance |
+|--------|-----------|-----------------------------|--------------------------|--------------------|----------------------|
+| `1m`   | 1 minute  | 1                           | 3650 (soft cap)          | 3650 (soft cap)    | 3650 (soft cap)      |
+| `5m`   | 5 minutes | 7                           | 3650 (soft cap)          | 3650 (soft cap)    | 3650 (soft cap)      |
+| `15m`  | 15 minutes| 24                          | 3650 (soft cap)          | 3650 (soft cap)    | 3650 (soft cap)      |
+| `30m`  | 30 minutes| 25                          | 3650 (soft cap)          | 3650 (soft cap)    | 3650 (soft cap)      |
+| `1h`   | 1 hour    | 100                         | 3650 (soft cap)          | 3650 (soft cap)    | 3650 (soft cap)      |
+| `1d`   | 1 day     | 2400                        | 3650 (soft cap)          | 3650 (soft cap)    | 3650 (soft cap)      |
+| `1w`   | 1 week    | 2100                        | 3650 (soft cap)          | 3650 (soft cap)    | 3650 (soft cap)      |
+| `1M`   | 1 month   | 3600                        | 3650 (soft cap)          | 3650 (soft cap)    | 3650 (soft cap)      |
 
 - **Minimum timeframe is `1m`.** Sub-minute intervals (`1s`, `30s`, `15s`, …)
   are **rejected** with a `ValueError` before any network call — no provider
@@ -370,8 +441,9 @@ The same set of timeframe values works for **all three** sources:
 - Surrounding whitespace is tolerated and stripped.
 
 Internally, each adapter maps these onto its interval names (Twelve Data:
-`1min`/`5min`/`1h`/`1day`/`1week`/`1month`; Bybit: `1`/`5`/`15`/`30`/`60`/`D`/`W`/`M`);
-you never need to use those names yourself.
+`1min`/`5min`/`1h`/`1day`/`1week`/`1month`; Bybit: `1`/`5`/`15`/`30`/`60`/`D`/`W`/`M`;
+Binance uses the same labels as this module — `1m`/`5m`/`15m`/`30m`/`1h`/`1d`/`1w`/`1M`,
+so the mapping is identity); you never need to use those names yourself.
 
 ### History limits (`days`)
 
@@ -403,6 +475,13 @@ pathological requests. Use `from_date`/`to_date` for very long histories.
 single `fetch_candles` call returns the whole range. Only the soft ceiling
 (`_MAX_DAYS_BYBIT = 3650`) applies.
 
+**Binance (`source="binance"`).** No per-timeframe cap. Binance caps each kline
+request at **1000 candles**, but the adapter **paginates transparently** — wide
+windows are split into 1000-candle pages internally (forward from `startTime`,
+skipping past the last received open time to avoid duplicates), so a single
+`fetch_candles` call returns the whole range. Only the soft ceiling
+(`_MAX_DAYS_BINANCE = 3650`) applies.
+
 > **Note:** `days` is only validated when `from_date` is *not* supplied (i.e.
 > when the window is derived from `days`). If you pass explicit `from_date` /
 > `to_date`, the window is sent to the API as-is, and an overly wide T-Bank
@@ -433,6 +512,11 @@ single `fetch_candles` call returns the whole range. Only the soft ceiling
   - `token=None` (default) → `BYBIT_TOKEN` is **optional**; if unset,
     `get_token("bybit")` returns `None` (the kline endpoint is public).
   - The token is **not** sent with kline requests.
+- `source="binance"`:
+  - `https://api.binance.com` is always used (no sandbox).
+  - `token=None` (default) → `BINANCE_TOKEN` is **optional**; if unset,
+    `get_token("binance")` returns `None` (the kline endpoint is public).
+  - The token is **not** sent with kline requests.
 - `DATA_SOURCE` (env) sets the default source when `source=` isn't passed;
   defaults to `"tbank"` if unset.
 
@@ -456,13 +540,13 @@ class Candle:
 ```
 
 - **`timestamp`** is a string in `"YYYY-MM-DDTHH:MM:SS"` format. T-Bank returns
-  UTC; Twelve Data returns the exchange's timezone; **Bybit returns UTC**. For
-  daily/weekly/monthly intervals the time component is `00:00:00`.
+  UTC; Twelve Data returns the exchange's timezone; **Bybit and Binance return
+  UTC**. For daily/weekly/monthly intervals the time component is `00:00:00`.
 - **`open/high/low/close`** are floats. T-Bank values come from the API's
-  `Quotation` (units + nano) with full precision; Twelve Data and Bybit values
-  come as decimal strings.
+  `Quotation` (units + nano) with full precision; Twelve Data, Bybit, and
+  Binance values come as decimal strings.
 - **`volume`** is a float. If Twelve Data omits it (e.g. for some FX pairs), it
-  defaults to `0.0`. Bybit always provides volume (in base units).
+  defaults to `0.0`. Bybit and Binance always provide volume (in base units).
 - The list is returned oldest-first. You can iterate it directly, or hand it to
   any component that expects `List[Candle]` — e.g. `ExecutionEngine.run(...)`.
 
@@ -474,7 +558,7 @@ The module validates user **inputs** before any network call. The following
 raise `ValueError` with a descriptive message:
 
 1. **Source** (`_resolve_source`)
-   - Must be one of `("tbank", "twelvedata", "bybit")`. Anything else is rejected.
+   - Must be one of `("tbank", "twelvedata", "bybit", "binance")`. Anything else is rejected.
 2. **Timeframe** (`_validate_timeframe`)
    - Must be one of `TIMEFRAMES`.
    - Sub-minute intervals (`*s`) are explicitly rejected — minimum is `1m`.
@@ -483,7 +567,7 @@ raise `ValueError` with a descriptive message:
    - `days` must be a positive integer.
    - For `source="tbank"`: must not exceed the per-timeframe cap in
      `DAYS_LIMIT_BY_TIMEFRAME`.
-   - For `source="twelvedata"`/`"bybit"`: must not exceed the soft cap (3650).
+   - For `source="twelvedata"`/`"bybit"`/`"binance"`: must not exceed the soft cap (3650).
 
 No validation is performed on the candles themselves — the adapter returns
 whatever the API delivers. An empty result set (no candles in range) is returned
@@ -531,10 +615,10 @@ rules apply as for fetching.
 | Exception                     | When it is raised                                                                 |
 |-------------------------------|-----------------------------------------------------------------------------------|
 | `ValueError`                  | Unsupported `source`, unsupported/`sub-1m` `timeframe`, or `days` larger than the source's cap. |
-| `ValueError` (from `get_token`)| The token env var for a source that *requires* it (`tbank`/`twelvedata`) is not set and no `token=` was passed. Not raised for `bybit` (token optional).  |
-| `AuthenticationError`         | The token is invalid/expired (T-Bank gRPC status 16; Twelve Data HTTP 401/403). Not raised by Bybit kline (public).  |
-| `InvalidInstrumentError`      | The ticker/symbol cannot be resolved by the API (T-Bank lookup, Twelve Data 400/404, Bybit `retCode 10001`).  |
-| `RateLimitError`              | A rate limit is hit (T-Bank gRPC status 8; Twelve Data HTTP 429; Bybit `retCode 10006`).                 |
+| `ValueError` (from `get_token`)| The token env var for a source that *requires* it (`tbank`/`twelvedata`) is not set and no `token=` was passed. Not raised for `bybit`/`binance` (token optional).  |
+| `AuthenticationError`         | The token is invalid/expired (T-Bank gRPC status 16; Twelve Data HTTP 401/403). Not raised by Bybit/Binance kline (public).  |
+| `InvalidInstrumentError`      | The ticker/symbol cannot be resolved by the API (T-Bank lookup, Twelve Data 400/404, Bybit `retCode 10001`, Binance HTTP 400 `code -1121`).  |
+| `RateLimitError`              | A rate limit is hit (T-Bank gRPC status 8; Twelve Data HTTP 429; Bybit `retCode 10006`; Binance HTTP 429/418).                 |
 | `BrokerError`                 | Any other adapter-level/transport error (e.g. gRPC `30014` for an overly wide explicit T-Bank intraday window). |
 
 All of these except `ValueError` come from
@@ -596,7 +680,37 @@ candles = run_fetch_candles(
 )
 ```
 
-### 4. Set the default source via `.env`
+### 4. Binance explicitly
+
+```python
+from examples.tbank_adapter_usage import run_fetch_candles
+
+# Daily candles for ETH/BTC (spot). No token required.
+candles = run_fetch_candles(
+    instrument="ETHBTC",
+    source="binance",
+    timeframe="1d",
+    days=60,
+)
+
+# Fiat-quoted stablecoin pair (FX-like)
+candles = run_fetch_candles(
+    instrument="EURUSDT",
+    source="binance",
+    timeframe="1h",
+    days=7,
+)
+
+# Intraday — the adapter paginates past Binance's 1000-candle cap automatically
+candles = run_fetch_candles(
+    instrument="BTCUSDT",
+    source="binance",
+    timeframe="1m",
+    days=1,  # ~1440 one-minute candles
+)
+```
+
+### 5. Set the default source via `.env`
 
 ```dotenv
 # .env
@@ -609,7 +723,7 @@ DATA_SOURCE=twelvedata
 candles = run_fetch_candles(instrument="AAPL", timeframe="1d", days=30)
 ```
 
-### 4. Fetch an explicit window
+### 6. Fetch an explicit window
 
 ```python
 candles = run_fetch_candles(
@@ -620,7 +734,7 @@ candles = run_fetch_candles(
 )
 ```
 
-### 5. Use the T-Bank sandbox
+### 7. Use the T-Bank sandbox
 
 ```python
 candles = run_fetch_candles(
@@ -632,7 +746,7 @@ candles = run_fetch_candles(
 )
 ```
 
-### 6. Async usage
+### 8. Async usage
 
 ```python
 import asyncio
@@ -646,7 +760,7 @@ async def main():
 candles = asyncio.run(main())
 ```
 
-### 7. Run a backtest
+### 9. Run a backtest
 
 ```python
 from examples.tbank_adapter_usage import run_backtest
@@ -662,7 +776,7 @@ result = run_backtest(
 print(result["candles_count"], "candles ->", len(result["trade_log"]), "trades")
 ```
 
-### 8. Minimum timeframe (1 minute)
+### 10. Minimum timeframe (1 minute)
 
 ```python
 candles = run_fetch_candles(instrument="SBER", timeframe="1m", days=1)
@@ -686,12 +800,19 @@ candles = run_fetch_candles(instrument="SBER", timeframe="1m", days=1)
   intraday range will return an empty list (no exception).
 - **Twelve Data rate limits** depend on your plan (free tier is ~8 requests/min,
   with a daily credit allowance). For bulk fetches, throttle your calls.
-- **No real orders / portfolio access.** Both adapters' `place_order()` and
+- **Binance rate limits** apply per-IP and per-API-key (a request-weight budget
+  per rolling minute). Hitting the limit returns HTTP `429`; continuing past
+  it can trigger an automatic IP ban (HTTP `418`) lasting from a few minutes
+  to several days. For bulk fetches, throttle your calls. The kline endpoint is
+  comparatively cheap (weight 1–2 per request) — see the
+  [Binance docs](https://developers.binance.com/docs/binance-spot-api-docs/rest-api)
+  for current weights.
+- **No real orders / portfolio access.** All adapters' `place_order()` and
   `get_portfolio()` raise `NotImplementedError` — this module is read-only for
   market data.
 - **SSL verification is disabled** (`verify_ssl=False`) for the T-Bank adapter
   in the example for convenience in dev/test. Re-enable certificate
-  verification before any production use. (Twelve Data uses plain HTTPS and
-  does not disable verification.)
+  verification before any production use. (Twelve Data, Bybit, and Binance use
+  plain HTTPS and do not disable verification.)
 - Results are **historical market data**, not financial advice and not evidence
   of future profitability.
