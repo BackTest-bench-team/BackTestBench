@@ -1,6 +1,7 @@
 "use client";
 
 import { WorkflowMarketPicker } from "@/components/WorkflowMarketPicker";
+import { createId } from "@/lib/create-id";
 import { botSessionFingerprint, dedupeByFingerprint } from "@/lib/session-fingerprint";
 import {
   botRollingWindowMaxDays,
@@ -600,7 +601,7 @@ export function createBotSession(
   const timeframe = String(schema.defaults.timeframe ?? "1h");
   const maxDays = botRollingWindowMaxDays(schema, market.brokerSource, timeframe);
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     strategyId,
     title,
     params,

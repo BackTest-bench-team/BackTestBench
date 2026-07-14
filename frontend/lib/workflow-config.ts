@@ -37,6 +37,109 @@ export type WorkflowMarketSelection = {
 export const WORKFLOW_MARKET_DEFAULTS_KEY = "backtestbench.workflow.market.v1";
 export const EXPLORE_TIMEFRAME = "1d";
 
+const REMOTE_MAX_LOOKBACK_DAYS = 3650;
+const TBANK_MAX_BY_TF: Record<string, number> = {
+  "1m": 1,
+  "5m": 7,
+  "15m": 24,
+  "30m": 25,
+  "1h": 100,
+  "1d": 2400,
+  "1w": 2100,
+  "1M": 3600,
+};
+
+function timeframesForSource(source: string): WorkflowTimeframeOption[] {
+  const values = ["1m", "5m", "15m", "30m", "1h", "1d", "1w", "1M"];
+  return values.map((value) => ({
+    value,
+    max_lookback_days: source === "tbank" ? (TBANK_MAX_BY_TF[value] ?? 30) : REMOTE_MAX_LOOKBACK_DAYS,
+  }));
+}
+
+const CRYPTO_INSTRUMENTS = [
+  "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT",
+  "BNBUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT",
+];
+
+/** Used when /api/config is unavailable so Explore/Bot buttons still work on the VM. */
+export function workflowSchemaFallback(): WorkflowConfigSchema {
+  const timeframes = timeframesForSource("tbank");
+  return {
+    data_sources: [
+      {
+        value: "tbank",
+        label: "T-Bank",
+        description: "MOEX TQBR shares via Tinkoff Invest API",
+        instrument_hint: "Russian equities on MOEX (SBER, GAZP, …)",
+        token_env: "TINKOFF_TOKEN",
+        token_required: true,
+        token_optional: false,
+        token_configured: false,
+        instruments: [
+          "SBER", "GAZP", "LKOH", "ROSN", "GMKN", "NVTK", "TATN", "VTBR",
+          "YDEX", "OZON", "MGNT", "MTSS", "CHMF", "NLMK", "ALRS", "PLZL",
+        ],
+        default_instrument: "SBER",
+        timeframes,
+      },
+      {
+        value: "twelvedata",
+        label: "Twelve Data",
+        description: "Global equities, FX and crypto via Twelve Data API",
+        instrument_hint: "US stocks, FX and crypto (AAPL, BTC/USD, …)",
+        token_env: "TWELVEDATA_TOKEN",
+        token_required: true,
+        token_optional: false,
+        token_configured: false,
+        instruments: ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "SPY", "BTC/USD", "ETH/USD"],
+        default_instrument: "AAPL",
+        timeframes: timeframesForSource("twelvedata"),
+      },
+      {
+        value: "bybit",
+        label: "Bybit",
+        description: "Crypto spot pairs via Bybit public kline API",
+        instrument_hint: "Crypto spot pairs (BTCUSDT, ETHUSDT, …)",
+        token_env: "BYBIT_TOKEN",
+        token_required: false,
+        token_optional: true,
+        token_configured: true,
+        instruments: CRYPTO_INSTRUMENTS,
+        default_instrument: "BTCUSDT",
+        timeframes: timeframesForSource("bybit"),
+      },
+      {
+        value: "binance",
+        label: "Binance",
+        description: "Crypto spot pairs via Binance public kline API",
+        instrument_hint: "Crypto spot pairs (BTCUSDT, ETHUSDT, …)",
+        token_env: "BINANCE_TOKEN",
+        token_required: false,
+        token_optional: true,
+        token_configured: true,
+        instruments: CRYPTO_INSTRUMENTS,
+        default_instrument: "BTCUSDT",
+        timeframes: timeframesForSource("binance"),
+      },
+    ],
+    instruments: [
+      "SBER", "GAZP", "LKOH", "ROSN", "GMKN", "NVTK", "TATN", "VTBR",
+      "YDEX", "OZON", "MGNT", "MTSS", "CHMF", "NLMK", "ALRS", "PLZL",
+    ],
+    timeframes,
+    defaults: {
+      data_source: "tbank",
+      instrument: "SBER",
+      timeframe: "1h",
+      lookback_days: 30,
+      initial_capital: 100_000,
+      optimization_mode: "grid",
+      optimization_iterations: 16,
+    },
+  };
+}
+
 export const BOT_POLL_SECONDS: Record<string, number> = {
   "1m": 30,
   "5m": 60,
@@ -183,8 +286,9 @@ export function useWorkflowConfig() {
       setSchema(next);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load workflow config");
-      setSchema(null);
+      const message = err instanceof Error ? err.message : "Failed to load workflow config";
+      setSchema(workflowSchemaFallback());
+      setError(`Using offline workflow defaults (${message})`);
     } finally {
       setLoading(false);
     }

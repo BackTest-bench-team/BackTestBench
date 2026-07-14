@@ -1,6 +1,7 @@
 "use client";
 
 import { WorkflowMarketPicker } from "@/components/WorkflowMarketPicker";
+import { createId } from "@/lib/create-id";
 import { dedupeByFingerprint, exploreSessionFingerprint } from "@/lib/session-fingerprint";
 import {
   EXPLORE_TIMEFRAME,
@@ -496,7 +497,7 @@ export function createExploreSession(
   const limits = exploreDateLimits(schema, market.brokerSource);
   const range = defaultDateRange(limits);
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     strategyId,
     title,
     params,

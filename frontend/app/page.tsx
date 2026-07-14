@@ -36,6 +36,7 @@ import {
   marketSelectionFromSource,
   sourceDisplayName,
   useWorkflowConfig,
+  workflowSchemaFallback,
 } from "@/lib/workflow-config";
 import {
   CartesianGrid,
@@ -907,21 +908,21 @@ function StrategyCard({
           </div>
         </div>
         <div className="strategy-status">
-          {onExplore && !cardLoading && (
+          {onExplore && (
             <button
               className="strategy-action-btn"
               type="button"
-              disabled={busy}
+              disabled={busy || cardLoading}
               onClick={() => onExplore(strategy.params)}
             >
               Explore
             </button>
           )}
-          {onBot && !cardLoading && (
+          {onBot && (
             <button
               className="strategy-action-btn strategy-action-btn-bot"
               type="button"
-              disabled={busy}
+              disabled={busy || cardLoading}
               onClick={() => onBot(strategy.params)}
             >
               Trading Bot
@@ -1173,68 +1174,66 @@ export default function Page() {
 
   const openExplore = useCallback(
     (strategy: StrategyResult, params: Record<string, number>) => {
-      if (!workflowSchema) {
-        setWorkflowActionError(
-          workflowConfigError ?? "Workflow settings are still loading. Try again in a moment."
+      const schema = workflowSchema ?? workflowSchemaFallback();
+      try {
+        setWorkflowActionError(null);
+        const draft = createExploreSession(
+          strategy.strategy_id,
+          strategy.title ?? strategy.strategy_id,
+          params,
+          strategy.initial_capital,
+          schema
         );
-        return;
+        setExploreSessions((prev) => {
+          const existing = findExploreSessionByFingerprint(prev, draft);
+          const targetId = existing?.id ?? draft.id;
+          queueMicrotask(() => {
+            setActiveExploreId(targetId);
+            setWorkflowMode("explore");
+            setWorkflowDockCollapsed(false);
+          });
+          if (existing) return prev;
+          return [...prev, draft];
+        });
+      } catch (err) {
+        setWorkflowActionError(
+          err instanceof Error ? err.message : "Failed to open Explore session"
+        );
       }
-      setWorkflowActionError(null);
-      const draft = createExploreSession(
-        strategy.strategy_id,
-        strategy.title ?? strategy.strategy_id,
-        params,
-        strategy.initial_capital,
-        workflowSchema
-      );
-      setExploreSessions((prev) => {
-        const existing = findExploreSessionByFingerprint(prev, draft);
-        if (existing) {
-          setActiveExploreId(existing.id);
-          setWorkflowMode("explore");
-          setWorkflowDockCollapsed(false);
-          return prev;
-        }
-        setActiveExploreId(draft.id);
-        setWorkflowMode("explore");
-        setWorkflowDockCollapsed(false);
-        return [...prev, draft];
-      });
     },
-    [workflowSchema, workflowConfigError]
+    [workflowSchema]
   );
 
   const openBot = useCallback(
     (strategy: StrategyResult, params: Record<string, number>) => {
-      if (!workflowSchema) {
-        setWorkflowActionError(
-          workflowConfigError ?? "Workflow settings are still loading. Try again in a moment."
+      const schema = workflowSchema ?? workflowSchemaFallback();
+      try {
+        setWorkflowActionError(null);
+        const draft = createBotSession(
+          strategy.strategy_id,
+          strategy.title ?? strategy.strategy_id,
+          params,
+          strategy.initial_capital,
+          schema
         );
-        return;
+        setBotSessions((prev) => {
+          const existing = findBotSessionByFingerprint(prev, draft);
+          const targetId = existing?.id ?? draft.id;
+          queueMicrotask(() => {
+            setActiveBotId(targetId);
+            setWorkflowMode("bot");
+            setWorkflowDockCollapsed(false);
+          });
+          if (existing) return prev;
+          return [...prev, draft];
+        });
+      } catch (err) {
+        setWorkflowActionError(
+          err instanceof Error ? err.message : "Failed to open Trading Bot session"
+        );
       }
-      setWorkflowActionError(null);
-      const draft = createBotSession(
-        strategy.strategy_id,
-        strategy.title ?? strategy.strategy_id,
-        params,
-        strategy.initial_capital,
-        workflowSchema
-      );
-      setBotSessions((prev) => {
-        const existing = findBotSessionByFingerprint(prev, draft);
-        if (existing) {
-          setActiveBotId(existing.id);
-          setWorkflowMode("bot");
-          setWorkflowDockCollapsed(false);
-          return prev;
-        }
-        setActiveBotId(draft.id);
-        setWorkflowMode("bot");
-        setWorkflowDockCollapsed(false);
-        return [...prev, draft];
-      });
     },
-    [workflowSchema, workflowConfigError]
+    [workflowSchema]
   );
 
   const runExploreSession = useCallback(async (sessionId: string) => {
@@ -1617,7 +1616,7 @@ export default function Page() {
         onModeChange={setWorkflowMode}
         exploreSessions={exploreSessions}
         activeExploreId={activeExploreId}
-        workflowSchema={workflowSchema}
+        workflowSchema={workflowSchema ?? workflowSchemaFallback()}
         botSessions={botSessions}
         activeBotId={activeBotId}
         collapsed={workflowDockCollapsed}
