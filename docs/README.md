@@ -1,7 +1,7 @@
 # Documentation Status
 
-Last audited against `main`: **July 13, 2026** (frontend workflow dock, trading bot, explore
-market pickers, DataLoader parallel-bot fix).
+Last audited against `main`: **July 14, 2026** (`b7e7bb4`; week delta from July 8 —
+PRs #139–#146 plus runtime fixes).
 
 Use this page to distinguish current implementation references from target architecture and
 historical course artifacts.
@@ -15,48 +15,53 @@ For current behavior, use this order:
 3. Git history and merged pull requests;
 4. target/historical artifacts.
 
-Week 5 engineering merged PRs #105–#107, #127–#128, #130, #134–#136 (July 1–7, 2026) and
-PR #137 (GitHub-hosted CI on `ubuntu-latest`). The audit baseline reflects that state.
+Week 5 closed July 7 (PRs #105–#107, #127–#128, #130, #134–#137). From **July 8** onward
+`main` added optimizer `ranked[]` (#139), multi-API tokens (#141), composable
+constraints/trailing (#142), explore + frontend workflow (#143/#146), trading bot (#144),
+Binance/examples (#145), and follow-up UI/bot fixes (July 14). Living docs on this page
+reflect that combined HEAD.
 
 ## Current Implementation References
 
 | Document | Scope |
 |---|---|
-| [`../README.md`](../README.md) | MVP2 capabilities, quick start, repository layout, limitations |
+| [`../README.md`](../README.md) | MVP capabilities, quick start, repository layout, limitations |
 | [`../DOCKER.md`](../DOCKER.md) | Compose services, CI job matrix, container workflow |
-| [`../frontend/README.md`](../frontend/README.md) | Dashboard UI: bootstrap, workflow dock (explore + bot), independent market pickers |
+| [`../frontend/README.md`](../frontend/README.md) | Dashboard UI: bootstrap, workflow dock (explore + bot), tokens |
 | [`api_description.md`](api_description.md) | Implemented Next.js routes plus separately labeled target FastAPI API |
-| [`interfaces_description.md`](interfaces_description.md) | Engine, strategy, composable, optimization, and broker-facing dataclasses |
+| [`interfaces_description.md`](interfaces_description.md) | Engine, strategy, composable, optimization, bot, broker dataclasses |
 | [`strategy_module_architecture.md`](strategy_module_architecture.md) | Strategy contract, plugin strategies, composable engine overview |
 | [`strategy_composable_engine_design.md`](strategy_composable_engine_design.md) | **Implemented** composable rule engine (bilingual EN/RU); architecture reference |
-| [`broker_adapter_description.md`](broker_adapter_description.md) | T-Bank live path; TwelveData/Bybit example adapters |
+| [`broker_adapter_description.md`](broker_adapter_description.md) | Factory sources: T-Bank, TwelveData, Bybit, Binance |
 | [`core_perfomance_metrics.md`](core_perfomance_metrics.md) | Implemented metric formulas and edge cases |
-| [`analytics_data_model_specification.md`](analytics_data_model_specification.md) | In-memory analytics, ranking, validation metrics; target persistence |
+| [`analytics_data_model_specification.md`](analytics_data_model_specification.md) | In-memory analytics, Top-N,optimizer `ranked[]`, validation metrics |
 | [`database_schema.md`](database_schema.md) | Implemented SQLite candle storage plus target relational run schema |
 
-## Implemented vs Planned (Week 5)
+## Implemented vs Planned
 
 | Area | Status |
 |---|---|
 | Composable YAML strategies (`config/strategies/*.yaml`) | Implemented |
 | Trigger/action rules with TP/SL and priority ordering | Implemented |
+| Constraints, time filters, trailing stop, drawdown/trend guards (#142) | Implemented |
 | Parameter optimizer (grid + random sample) | Implemented |
+| Optimizer parameter ranking (`ranked[]`, PR #139) | Implemented |
+| Strategy Top-N ranking (`build_top_n`) | Implemented |
 | MVP2 dashboard with Run/Stop, optimization panel, explore + trading bot workflow dock | Implemented |
-| Multi-API data sources (T-Bank, Twelve Data, Bybit) + token UI | Implemented |
-| Instrument dropdown (19 MOEX tickers, single-instrument) | Partial |
+| Multi-API data sources (T-Bank, Twelve Data, Bybit, Binance) + token UI | Implemented |
+| Instrument dropdown (single-instrument) | Partial |
 | GitHub Actions CI (`backend-tests`, `frontend-checks`, `docker-smoke` on `ubuntu-latest`) | Implemented |
 | Plugin strategies (`ma_crossover`, `ma_rsi`, `rsi_threshold`) | Implemented (codebase; dashboard uses composable YAML) |
-| Data Loader single-fetch reuse for optimizer | Implemented |
-| In-memory Top-N ranking and validation metrics library | Implemented |
-| TwelveData / Bybit adapters | Implemented (dashboard + trading bot) |
-| Explore dock (custom date range, stability, per-tab API/instrument) | Implemented |
-| Trading bot (PR #144 validation on fresh data, parallel jobs, shared SQLite cache) | Implemented |
-| Multi-period stability validation | Planned (Week 6 customer priority) |
-| End-to-end validation workflow (holdout second stage) | Not integrated |
+| Data Loader single-fetch reuse for optimizer / shared SQLite for parallel bots | Implemented |
+| Explore dock (custom date range, window stability, per-tab API/instrument) | Implemented |
+| Explore window-stability analytics (`src/stability.py`) | Implemented (partial — not full walk-forward ranking) |
+| Trading bot validation pipeline (PR #144; simulated fills only) | Implemented |
+| Full multi-period / walk-forward stability ranking | Planned |
+| End-to-end holdout validation workflow (second stage) | Not integrated |
 | FastAPI service (`src/api`) | Planned |
 | Relational run/trade/metrics persistence | Planned |
 | Multi-instrument portfolio UI | Planned |
-| CSV adapter, order placement, scheduler, notifications | Planned |
+| CSV adapter, T-Bank `place_order` / `get_portfolio`, scheduler, notifications, live order automation | Planned / stubs |
 
 ## Target Architecture / Historical Design
 
@@ -64,7 +69,8 @@ These files describe target or proposed architecture. They are not a complete de
 of the current MVP unless marked as implemented:
 
 - [`strategy_composable_engine_design.md`](strategy_composable_engine_design.md) — implemented
-  declarative rule engine (July 2026; bilingual EN/RU); kept as architecture reference.
+  declarative rule engine (July 2026; bilingual EN/RU); kept as architecture reference;
+  constraints/trailing surfaces from PR #142 are implemented in code.
 
 Historical Week 2 design records:
 
@@ -75,14 +81,15 @@ Historical Week 2 design records:
 - [`Backtesting/Backtest&Validation_Execution.pdf`](Backtesting/Backtest&Validation_Execution.pdf)
   — Issue #33 design snapshot dated June 16.
 
-Important differences from the current MVP:
+Important differences from early target docs:
 
 - there is no operational FastAPI service;
 - relational run history, trades, and metrics tables are not implemented;
-- the integrated app is one full-stack container plus JSON runtime state and SQLite candle cache;
-- only the T-Bank candle-read path is wired into `main.py` for live fetches;
-- composable YAML strategies run end to end with optimization in the dashboard;
-- CI uses GitHub-hosted `ubuntu-latest` runners (replaced self-hosted PR smoke in PR #137).
+- the integrated app is one full-stack container plus JSON runtime/job state and SQLite
+  candle cache;
+- dashboard and bot/explore paths select brokers through the adapter factory (not T-Bank-only);
+- composable YAML strategies run end to end with optimization, explore, and bot validation;
+- CI uses GitHub-hosted `ubuntu-latest` runners (PR #137).
 
 ## Historical Reports
 
@@ -90,7 +97,8 @@ Files under `reports/` are dated course submissions. Week 1 and Week 2 reports i
 retain statements that were true at submission time. They must not be edited to reflect later
 implementation.
 
-The Week 5 Markdown report is the latest course status snapshot:
+The Week 5 Markdown report is the last formal course weekly snapshot (July 7). Living docs
+above supersede it for behavior after July 8:
 
 - [`../reports/Week 5 report.md`](../reports/Week%205%20report.md)
 - [`../reports/Week 5 report.pdf`](../reports/Week%205%20report.pdf)

@@ -1,7 +1,7 @@
 # Docker Guide
 
 This guide matches `docker-compose.yml`, `Dockerfile`, and `Dockerfile.fullstack` as of
-July 7, 2026.
+July 14, 2026.
 
 ## Prerequisites
 
@@ -33,9 +33,9 @@ API tokens saved from the dashboard UI persist across `docker compose down` / `u
 are **not** cleared on restart — only the ephemeral container filesystem is recreated.
 
 The dashboard calls Next.js API routes that spawn `/app/main.py` subcommands (`bootstrap`,
-`stop`, `refresh-ranking`, `add-strategy`, `delete-strategy`), which update
-`/app/data/runtime-dashboard.json` and may write `/app/data/backtest.db` (SQLite candle
-cache).
+`stop`, `refresh-ranking`, `add-strategy`, `delete-strategy`, `explore-*`, `bot-*`, and
+related helpers), which update `/app/data/runtime-dashboard.json`, explore/bot job JSON under
+`/app/data/`, and may write `/app/data/backtest.db` (SQLite candle cache).
 
 Stop the stack:
 
@@ -106,8 +106,8 @@ Run backend tests:
 docker compose --profile test run --rm test
 ```
 
-As of July 7, 2026, the backend test suite contains **144 tests** (all passing) with
-**82%** coverage of `src/`.
+As of July 14, 2026, the backend test suite contains **188 tests** (all passing) with
+**77%** coverage of `src/`.
 
 ## CI
 

@@ -1,7 +1,7 @@
 # Composable Strategy Engine — Design Document
 
-**Status:** Implemented (Week 5, PR #127) — architecture reference  
-**Last updated:** July 7, 2026  
+**Status:** Implemented (Week 5, PR #127; constraints/trailing/time filters in PR #142) — architecture reference  
+**Last updated:** July 14, 2026  
 **Implementation:** `src/strategy/composable/`, `config/strategies/*.yaml`  
 **Related:** `strategy_module_architecture.md`, `transcriptions/29-06-26-customer.txt`
 

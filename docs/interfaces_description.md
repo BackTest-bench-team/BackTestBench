@@ -1,10 +1,10 @@
 # Current Module Contracts
 
-Last audited against `main`: **July 7, 2026**.
+Last audited against `main`: **July 14, 2026**.
 
 The Week 2 design referred to a root-level `interfaces.py`. That file is not the current
-contract source. Current runtime models are split between `src/engine`, `src/strategy`, and
-`src/broker_adapter`.
+contract source. Current runtime models are split between `src/engine`, `src/strategy`,
+`src/analytics`, `src/stability`, and `src/broker_adapter`.
 
 ## Contract Map
 
@@ -17,13 +17,17 @@ contract source. Current runtime models are split between `src/engine`, `src/str
 | `ExecutionContext` | `src/engine/context.py` | strategy |
 | `BaseStrategy` | `src/strategy/base.py` | strategy implementations |
 | `ComposableStrategy` / `CompiledStrategy` | `src/strategy/composable/` | YAML-defined composable strategies |
+| Constraints / trailing helpers | `src/strategy/composable/constraints.py`, actions/predicates | PR #142 surfaces |
 | `ParameterSpec` | `src/strategy/schema.py` | dashboard parameter schemas |
 | `OptimizationResult` / `OptimizationIteration` | `src/engine/optimization_engine.py` | parameter optimizer |
 | `LoadedMarketData` | `src/data_loader/loader.py` | single-fetch candle + price series |
 | `CandleModel` | `src/db/models.py` | SQLite candle persistence |
 | `DataLoader` | `src/data_loader/loader.py` | candle validation, upsert, cache reuse |
-| `TopNEntry`, `RankingReviewEntry` | `src/analytics/ranking.py` | in-memory Top-N ranking |
-| `BrokerAdapter` | `src/broker_adapter/base.py` | T-Bank adapter and orchestrator |
+| `TopNEntry`, `RankingReviewEntry` | `src/analytics/ranking.py` | strategy catalogue Top-N |
+| `OptimizerRankedEntry`, `rank_optimizer_results`, `build_optimizer_output` | `src/analytics/optimizer.py` | optimizer parameter ranking (PR #139) |
+| Minimal trading bot helpers | `src/engine/trading_bot.py` | bot validation jobs (PR #144) |
+| Explore stability helpers | `src/stability.py` | explore dock window analytics |
+| `BrokerAdapter` + `build_adapter` | `src/broker_adapter/base.py`, `factory.py` | dashboard / explore / bot |
 | Broker `OrderResult`, `Position`, `Portfolio` | `src/broker_adapter/models.py` | future order/portfolio operations |
 
 The engine `Portfolio` and broker `Portfolio` are separate types.

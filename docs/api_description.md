@@ -1,7 +1,7 @@
 # BackTestBench API Reference
 
-Last audited against `main`: **July 13, 2026** (workflow dock: independent market pickers,
-parallel trading bots, PR #144 bot pipeline).
+Last audited against `main`: **July 14, 2026** (workflow dock, multi-API tokens including
+Binance, parallel trading bots, PR #144 bot pipeline, PRs #139–#146 week delta).
 
 This document separates the API that currently works from the target FastAPI contract.
 
@@ -195,6 +195,9 @@ Removes the job JSON file.
   "initial_capital": 100000
 }
 ```
+
+Supported `broker_source` values match `src/broker_adapter/factory.py`:
+`tbank`, `twelvedata`, `bybit`, `binance`.
 
 **Stop:** `{ "action": "stop", "job_id": "…" }`
 

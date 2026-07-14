@@ -1,12 +1,25 @@
 # Broker Adapter
 
-Last audited against `main`: **July 7, 2026**.
+Last audited against `main`: **July 14, 2026**.
 
 ## Purpose
 
 `BrokerAdapter` defines an asynchronous boundary for market data and future trading
-operations. The current integrated pipeline uses only historical candle retrieval from
-T-Bank.
+operations. The integrated dashboard, explore dock, and trading bot select a concrete
+adapter through `src/broker_adapter/factory.py` (`build_adapter`).
+
+## Factory Sources
+
+`SUPPORTED_SOURCES`: `tbank`, `twelvedata`, `bybit`, `binance`.
+
+| Source | Env token | Notes |
+|---|---|---|
+| `tbank` | `TINKOFF_TOKEN` | MOEX/TQBR historical candles; optional sandbox host |
+| `twelvedata` | `TWELVEDATA_TOKEN` | REST `/time_series` |
+| `bybit` | `BYBIT_TOKEN` (optional for some public endpoints) | V5 kline API |
+| `binance` | `BINANCE_TOKEN` (optional for some public endpoints) | Added PR #145 |
+
+Display names and token status are also used by `GET/POST /api/tokens`.
 
 ## Interface
 
@@ -58,7 +71,7 @@ Supported timeframe keys:
 
 `1m`, `5m`, `15m`, `30m`, `1h`, `1d`, `1w`, `1M`.
 
-## TwelveData Adapter (examples only)
+## TwelveData Adapter
 
 Implemented in `src/broker_adapter/twelvedata.py` (PR #135):
 
@@ -66,17 +79,28 @@ Implemented in `src/broker_adapter/twelvedata.py` (PR #135):
 - token from `TWELVEDATA_TOKEN`;
 - returns engine `Candle` list.
 
-Used in `examples/` only. Not wired into `main.py` or the dashboard.
+Wired into the dashboard / explore / bot paths through the factory (not examples-only).
 
-## Bybit Adapter (examples only)
+## Bybit Adapter
 
 Implemented in `src/broker_adapter/bybit.py` (PR #135):
 
 - V5 kline API with 200-candle pagination;
-- spot symbol list in `examples/List_of_spots_bybit.txt` (512 symbols);
+- spot symbol list in `examples/List_of_spots_bybit.txt`;
 - returns engine `Candle` list.
 
-Used in `examples/` only. Not wired into `main.py` or the dashboard.
+Wired into runtime through the factory; examples remain useful for standalone demos.
+
+## Binance Adapter
+
+Implemented in `src/broker_adapter/binance.py` (PR #145):
+
+- historical kline fetch mapped to engine `Candle`;
+- registered in `factory.py` as `binance`;
+- examples documentation updated in `examples/README.md`.
+
+Note: merge title of PR #145 mentioned T-Bank `place_order` / `get_portfolio`, but those
+methods remain stubs (see Current Limitations).
 
 The strategy configuration parser supports a smaller set:
 `1m`, `5m`, `15m`, `1h`, `4h`, `1d`. In particular, `4h` is accepted by strategy
@@ -103,17 +127,16 @@ formatted as `YYYY-MM-DDTHH:MM:SS` without an explicit `Z` suffix.
 
 ## Current Limitations
 
-- `place_order()` raises `NotImplementedError`;
+- `place_order()` raises `NotImplementedError` on current adapters including T-Bank;
 - `get_portfolio()` raises `NotImplementedError`;
 - `csv_adapter.py` is empty;
 - `offset` is unused;
 - `limit` only slices the returned list after one request;
-- large ranges are not split into broker-safe windows;
-- `DataLoader` reuses SQLite candles when the lookback window is covered; otherwise
-  `main.py` fetches from T-Bank and upserts into `data/backtest.db`;
-- `connect()` validates the session by requesting SBER specifically;
-- `verify_ssl` defaults to `False`, and `main.py` explicitly disables certificate
-  verification. Production use must enable verification.
+- large ranges are not always split into broker-safe windows;
+- `DataLoader` reuses SQLite candles when the lookback window is covered; otherwise the
+  selected factory adapter fetches and upserts into `data/backtest.db`;
+- T-Bank `connect()` validates the session by requesting SBER specifically;
+- `verify_ssl` defaults to `False` for T-Bank; production use must enable verification.
 
 ## Error Types
 
@@ -121,28 +144,32 @@ formatted as `YYYY-MM-DDTHH:MM:SS` without an explicit `Z` suffix.
 - `AuthenticationError`;
 - `InvalidInstrumentError`;
 - `RateLimitError`;
-- `InsufficientFundsError` (defined, not used by current adapter);
-- `InvalidAccountError` (defined, not used by current adapter).
+- `InsufficientFundsError` (defined, not used by current adapters);
+- `InvalidAccountError` (defined, not used by current adapters).
 
 ## Environment
 
 ```dotenv
 TINKOFF_TOKEN=your_token_here
+TWELVEDATA_TOKEN=your_token_here
+BYBIT_TOKEN=your_token_here
+BINANCE_TOKEN=your_token_here
 ```
 
 Never commit token values. The integrated dashboard and Docker Compose require a root
-`.env` file.
+`.env` file (tokens may also be written from the UI into that file).
 
 ## Current Data Flow
 
 ```text
-main.py
-  -> DataLoader.db_candles_usable() ?
-       yes -> load from SQLite (data/backtest.db)
-       no  -> TBankAdapter.get_candles(...) -> DataLoader.store_candles()
+main.py / explore-job / bot-job
+  -> build_adapter(source)
+  -> DataLoader.ensure_candles_loaded(...)
+       cache hit -> SQLite (data/backtest.db)
+       miss / force_fetch -> adapter.get_candles(...) -> upsert
   -> list[engine.Candle]
-  -> ExecutionEngine (per strategy)
+  -> ExecutionEngine / trading bot validation loop
 ```
 
-CSV fallback, multi-broker dashboard selection, order placement, and portfolio retrieval are
-future work. TwelveData and Bybit adapters are available for standalone examples.
+Order placement and portfolio retrieval remain future work. Live trading automation is out
+of scope; the trading bot simulates fills only.

@@ -1,6 +1,6 @@
 # Strategy Module Architecture
 
-Last audited against `main`: **July 7, 2026**.
+Last audited against `main`: **July 14, 2026**.
 
 ## Current Scope
 
@@ -14,6 +14,8 @@ The Strategy Module provides:
 - `ParameterSpec` schemas for dashboard parameter editors;
 - strategy-specific parameter validation;
 - three built-in strategies: `ma_crossover`, `ma_rsi`, `rsi_threshold`;
+- composable YAML engine with constraints, time filters, trailing stop, and guards
+  (`src/strategy/composable/`, PR #127 + #142);
 - unit and engine-integration tests.
 
 `main.py` loads strategies from `config/dashboard.json` and YAML files under
@@ -211,16 +213,18 @@ JSON and SQLite candle cache persist across sessions.
 
 ## Known Gaps
 
-- multi-period stability validation (Week 6 customer priority);
+- full multi-period / walk-forward stability ranking (explore window stability is partial);
 - percentage-based metrics and risk/reward ratio in dashboard;
-- end-to-end validation workflow (holdout second stage; analytics library exists);
+- end-to-end validation workflow (holdout second stage; analytics library + trading bot
+  validation loop exist);
 - multi-instrument portfolio UI (single-instrument dropdown implemented);
 - signal explanations, short positions, and multi-instrument portfolios are not supported;
 - relational strategy/run/parameter persistence is planned, not implemented.
 
-## Composable Engine (Week 5)
+## Composable Engine (Week 5+)
 
 The dashboard discovers strategies from `config/strategies/*.yaml` with `series` and `rules`.
-See `docs/strategy_composable_engine_design.md` and `src/strategy/composable/`. Legacy plugin
+See `docs/strategy_composable_engine_design.md` and `src/strategy/composable/`. PR #142 added
+constraints, time predicates, trailing stop, drawdown guard, and trend filter. Legacy plugin
 strategies under `src/strategy/strategies/` remain in the codebase but are not the primary
 dashboard path.

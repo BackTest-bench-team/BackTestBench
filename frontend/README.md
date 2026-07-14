@@ -244,8 +244,12 @@ npm --prefix frontend ci
 npm --prefix frontend run build
 ```
 
+As of July 14, 2026 the backend suite reports **188 passed** tests with **77%** coverage of
+`src/` (re-measure after large code changes).
+
 ## Related docs
 
 - [`../src/data_loader/README.md`](../src/data_loader/README.md) — candle load pipeline
 - [`../docs/api_description.md`](../docs/api_description.md) — route contracts
 - [`../docs/strategy_composable_engine_design.md`](../docs/strategy_composable_engine_design.md) — YAML strategies
+- [`../docs/README.md`](../docs/README.md) — documentation status matrix

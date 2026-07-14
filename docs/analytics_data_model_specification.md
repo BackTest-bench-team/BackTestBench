@@ -1,6 +1,6 @@
 # Analytics Data Model
 
-Last audited against `main`: **July 7, 2026**.
+Last audited against `main`: **July 14, 2026**.
 
 ## Implementation Status
 
@@ -14,15 +14,19 @@ Implemented:
 - separate in-memory buckets for backtest metrics and validation metrics;
 - ranking review entries that can show Top-N backtest rows together with latest validation metrics;
 - serialization of the latest metrics into `data/runtime-dashboard.json`;
-- optimization summary (top iterations per strategy) in runtime JSON when optimizer runs.
+- optimization summary (top iterations per strategy) in runtime JSON when optimizer runs;
+- optimizer parameter ranking via `rank_optimizer_results` / `build_optimizer_output`
+  (`optimization.ranked[]` alongside `top_iterations[]`, PR #139);
+- explore window-stability helpers in `src/stability.py` (partial; not walk-forward ranking);
+- trading-bot validation jobs consuming validation metrics (PR #144).
 
 Not implemented:
 
 - relational persistence of runs, trades, equity points, metrics, or Top-N;
 - atomic database replacement of Top-N;
-- durable validation metrics persistence;
-- frontend run history;
-- scheduler or trading-bot consumers.
+- durable validation metrics persistence beyond job JSON files;
+- frontend run-history browser;
+- scheduler or live order automation.
 
 ## Dependency Boundary
 
@@ -176,8 +180,8 @@ The planned schema includes:
 - `metrics`;
 - `top_n`.
 
-See [database_schema.md](database_schema.md). `src/db` is currently empty, so the target
-schema must not be treated as implemented.
+See [database_schema.md](database_schema.md). `src/db` currently persists candles only, so
+the broader target run/trade/metrics schema must not be treated as implemented.
 
 ## Optimizer Result Ranking
 
