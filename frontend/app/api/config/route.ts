@@ -28,7 +28,12 @@ export async function GET() {
       settings: Record<string, unknown>;
       schema: Record<string, unknown>;
     };
-    const { tokens } = readTokenStatus();
+    let tokens: Record<string, { configured: boolean; masked: string | null }> = {};
+    try {
+      tokens = readTokenStatus().tokens;
+    } catch {
+      // Token read is optional; schema must still load for Explore/Bot workflows.
+    }
     return Response.json({
       ok: true,
       settings: payload.settings,

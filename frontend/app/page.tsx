@@ -1035,12 +1035,13 @@ export default function Page() {
   const rankingRefreshRequested = useRef(false);
   const highlightTimerRef = useRef<number | null>(null);
   const [highlightedStrategyId, setHighlightedStrategyId] = useState<string | null>(null);
-  const { schema: workflowSchema } = useWorkflowConfig();
+  const { schema: workflowSchema, error: workflowConfigError } = useWorkflowConfig();
   const [exploreSessions, setExploreSessions] = useState<ExploreSession[]>([]);
   const [botSessions, setBotSessions] = useState<BotSession[]>([]);
   const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("explore");
   const [activeExploreId, setActiveExploreId] = useState<string | null>(null);
   const [activeBotId, setActiveBotId] = useState<string | null>(null);
+  const [workflowActionError, setWorkflowActionError] = useState<string | null>(null);
   const [workflowDockCollapsed, setWorkflowDockCollapsed] = useState(false);
 
   const handleJobUpdate = useCallback((sessionId: string, job: Record<string, unknown>) => {
@@ -1172,7 +1173,13 @@ export default function Page() {
 
   const openExplore = useCallback(
     (strategy: StrategyResult, params: Record<string, number>) => {
-      if (!workflowSchema) return;
+      if (!workflowSchema) {
+        setWorkflowActionError(
+          workflowConfigError ?? "Workflow settings are still loading. Try again in a moment."
+        );
+        return;
+      }
+      setWorkflowActionError(null);
       const draft = createExploreSession(
         strategy.strategy_id,
         strategy.title ?? strategy.strategy_id,
@@ -1194,12 +1201,18 @@ export default function Page() {
         return [...prev, draft];
       });
     },
-    [workflowSchema]
+    [workflowSchema, workflowConfigError]
   );
 
   const openBot = useCallback(
     (strategy: StrategyResult, params: Record<string, number>) => {
-      if (!workflowSchema) return;
+      if (!workflowSchema) {
+        setWorkflowActionError(
+          workflowConfigError ?? "Workflow settings are still loading. Try again in a moment."
+        );
+        return;
+      }
+      setWorkflowActionError(null);
       const draft = createBotSession(
         strategy.strategy_id,
         strategy.title ?? strategy.strategy_id,
@@ -1221,7 +1234,7 @@ export default function Page() {
         return [...prev, draft];
       });
     },
-    [workflowSchema]
+    [workflowSchema, workflowConfigError]
   );
 
   const runExploreSession = useCallback(async (sessionId: string) => {
@@ -1570,6 +1583,12 @@ export default function Page() {
         />
 
         <AddStrategyPanel busy={anyBusy} onAdded={loadDashboard} />
+
+        {(workflowConfigError || workflowActionError) && (
+          <div className="workflow-config-error" role="alert">
+            {workflowActionError ?? workflowConfigError}
+          </div>
+        )}
 
         <section className="strategy-list">
           {rankedStrategies.map((strategy) => (

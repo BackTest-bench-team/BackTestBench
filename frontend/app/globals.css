@@ -622,7 +622,8 @@ body {
   line-height: 1.35;
 }
 
-.strategy-error {
+.strategy-error,
+.workflow-config-error {
   margin-bottom: 12px;
   padding: 10px 12px;
   border-radius: var(--radius-md);
