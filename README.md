@@ -231,10 +231,12 @@ planned, not implemented.
 
 ## Reports
 
-- [Week 5 report](reports/Week%205%20report.md) — last formal course weekly snapshot (July 7)
+- [Week 6 report](reports/Week%206%20report.md) — latest formal course weekly snapshot (July 14)
+- [Week 6 report (PDF)](reports/Week%206%20report.pdf)
+- [Week 5 report](reports/Week%205%20report.md)
 - [Week 5 report (PDF)](reports/Week%205%20report.pdf)
 - [Week 4 report](reports/Week%204%20report.md)
-- [Week 3 report](reports/Week%203%20report.md)
+- [Week 3 report](reports/Week%203%20report.pdf)
 - Week 1 and Week 2 PDFs are historical snapshots and intentionally retain statements that
   were true at the time.
 

@@ -97,16 +97,18 @@ Files under `reports/` are dated course submissions. Week 1 and Week 2 reports i
 retain statements that were true at submission time. They must not be edited to reflect later
 implementation.
 
-The Week 5 Markdown report is the last formal course weekly snapshot (July 7). Living docs
-above supersede it for behavior after July 8:
+The Week 6 report is the latest formal course weekly snapshot (July 14). Living docs
+above remain the day-to-day source of truth for HEAD; weekly reports are dated submissions:
 
+- [`../reports/Week 6 report.md`](../reports/Week%206%20report.md) — latest (July 14)
+- [`../reports/Week 6 report.pdf`](../reports/Week%206%20report.pdf)
 - [`../reports/Week 5 report.md`](../reports/Week%205%20report.md)
 - [`../reports/Week 5 report.pdf`](../reports/Week%205%20report.pdf)
 
 Earlier reports remain historical:
 
 - [`../reports/Week 4 report.md`](../reports/Week%204%20report.md)
-- [`../reports/Week 3 report.md`](../reports/Week%203%20report.md)
+- [`../reports/Week 3 report.pdf`](../reports/Week%203%20report.pdf)
 
 ## Audit Checklist
 
