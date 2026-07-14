@@ -18,6 +18,11 @@ constraints:
   - take_profit_pct > stop_loss_pct
   - rsi_buy_min < rsi_overbought
 
+constraints:
+  - fast < slow                       # a fast MA must be shorter than the slow MA
+  - take_profit_pct > stop_loss_pct   # reward must exceed risk
+  - rsi_buy_min < rsi_overbought
+
 series:
   fast_ma: { fn: sma, source: price, period: "${fast}" }
   slow_ma: { fn: sma, source: price, period: "${slow}" }
