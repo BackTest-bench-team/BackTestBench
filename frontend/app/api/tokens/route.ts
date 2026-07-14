@@ -1,4 +1,5 @@
 import { spawnPythonCapture } from "@/lib/spawn-python";
+import { readTokenStatus } from "@/lib/token-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,15 +19,7 @@ type TokenStatusPayload = {
 
 export async function GET() {
   try {
-    const captured = await spawnPythonCapture(["main.py", "token-status"]);
-    if (captured.exitCode !== 0) {
-      return Response.json(
-        { ok: false, message: captured.stderr || "Failed to load token status" },
-        { status: 500 }
-      );
-    }
-    const payload = JSON.parse(captured.stdout) as TokenStatusPayload;
-    return Response.json(payload);
+    return Response.json(readTokenStatus());
   } catch (error) {
     return Response.json(
       {

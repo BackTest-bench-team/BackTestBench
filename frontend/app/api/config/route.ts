@@ -1,4 +1,5 @@
 import { spawnPythonCapture } from "@/lib/spawn-python";
+import { readTokenStatus } from "@/lib/token-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,10 +28,12 @@ export async function GET() {
       settings: Record<string, unknown>;
       schema: Record<string, unknown>;
     };
+    const { tokens } = readTokenStatus();
     return Response.json({
       ok: true,
       settings: payload.settings,
       schema: payload.schema,
+      tokens,
     });
   } catch (error) {
     return Response.json(

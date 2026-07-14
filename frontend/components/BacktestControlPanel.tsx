@@ -87,31 +87,20 @@ type BacktestControlPanelProps = {
 async function loadConfigPayload(): Promise<{
   settings: Record<string, unknown>;
   schema: ConfigSchema;
+  tokens: Record<string, TokenStatus>;
 }> {
   const res = await fetch("/api/config", { cache: "no-store" });
   const json = (await res.json()) as {
     ok: boolean;
     settings?: Record<string, unknown>;
     schema?: ConfigSchema;
-    message?: string;
-  };
-  if (!res.ok || !json.ok || !json.settings || !json.schema) {
-    throw new Error(json.message ?? "Failed to load settings");
-  }
-  return { settings: json.settings, schema: json.schema };
-}
-
-async function loadTokenStatus(): Promise<Record<string, TokenStatus>> {
-  const res = await fetch("/api/tokens", { cache: "no-store" });
-  const json = (await res.json()) as {
-    ok: boolean;
     tokens?: Record<string, TokenStatus>;
     message?: string;
   };
-  if (!res.ok || !json.ok || !json.tokens) {
-    throw new Error(json.message ?? "Failed to load token status");
+  if (!res.ok || !json.ok || !json.settings || !json.schema || !json.tokens) {
+    throw new Error(json.message ?? "Failed to load settings");
   }
-  return json.tokens;
+  return { settings: json.settings, schema: json.schema, tokens: json.tokens };
 }
 
 function DeferredNumberInput({
@@ -246,23 +235,20 @@ export function BacktestControlPanel({ busy, onRunStart, onRun, onStop }: Backte
   const [tokenBusy, setTokenBusy] = useState<"TINKOFF_TOKEN" | "TWELVEDATA_TOKEN" | null>(null);
 
   const refreshPanel = useCallback(async () => {
-    const [configPayload, tokens] = await Promise.all([loadConfigPayload(), loadTokenStatus()]);
+    const configPayload = await loadConfigPayload();
     setSchema(configPayload.schema);
-    setTokenStatus(tokens);
+    setTokenStatus(configPayload.tokens);
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [configPayload, tokens] = await Promise.all([
-          loadConfigPayload(),
-          loadTokenStatus(),
-        ]);
+        const configPayload = await loadConfigPayload();
         if (!cancelled) {
           setSchema(configPayload.schema);
           setDraft(settingsFromPayload(configPayload.settings, configPayload.schema));
-          setTokenStatus(tokens);
+          setTokenStatus(configPayload.tokens);
         }
       } catch (err) {
         if (!cancelled) {

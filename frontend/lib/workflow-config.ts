@@ -51,6 +51,7 @@ export function sourceDisplayName(source: string): string {
     tbank: "T-Bank",
     twelvedata: "Twelve Data",
     bybit: "Bybit",
+    binance: "Binance",
   };
   return map[source.toLowerCase()] ?? source;
 }

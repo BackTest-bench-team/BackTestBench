@@ -38,12 +38,14 @@ INSTRUMENTS_BY_SOURCE: dict[str, tuple[str, ...]] = {
     "tbank": TBANK_INSTRUMENTS,
     "twelvedata": TWELVEDATA_INSTRUMENTS,
     "bybit": BYBIT_INSTRUMENTS,
+    "binance": BYBIT_INSTRUMENTS,
 }
 
 DEFAULT_INSTRUMENT_BY_SOURCE: dict[str, str] = {
     "tbank": "SBER",
     "twelvedata": "AAPL",
     "bybit": "BTCUSDT",
+    "binance": "BTCUSDT",
 }
 
 # Backward-compatible alias used by older imports/tests.
@@ -67,6 +69,12 @@ DATA_SOURCE_META: dict[str, dict[str, Any]] = {
     "bybit": {
         "label": "Bybit",
         "description": "Crypto spot pairs via Bybit public kline API",
+        "instrument_hint": "Crypto spot pairs (BTCUSDT, ETHUSDT, …)",
+        "token_required": False,
+    },
+    "binance": {
+        "label": "Binance",
+        "description": "Crypto spot pairs via Binance public kline API",
         "instrument_hint": "Crypto spot pairs (BTCUSDT, ETHUSDT, …)",
         "token_required": False,
     },

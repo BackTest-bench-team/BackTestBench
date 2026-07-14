@@ -74,6 +74,19 @@ RUNTIME_SETTING_KEYS = (
 
 DATA_DIR.mkdir(exist_ok=True)
 
+# Read-only CLI commands used by the dashboard on every page load.
+# Skip dashboard repair/sanitize so VM does not parse the full runtime JSON.
+LIGHTWEIGHT_COMMANDS = frozenset({
+    "config-schema",
+    "token-status",
+    "explore-limits",
+    "explore-list",
+    "explore-get",
+    "bot-limits",
+    "bot-list",
+    "bot-get",
+})
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -1466,9 +1479,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     load_env_file_into_process()
-    sanitize_config()
-    repair_runtime_dashboard()
     args = parse_args()
+    if args.command not in LIGHTWEIGHT_COMMANDS:
+        sanitize_config()
+        repair_runtime_dashboard()
 
     if args.command == "bootstrap":
         asyncio.run(bootstrap_all())
