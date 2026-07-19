@@ -74,6 +74,8 @@ def merge_strategy_params(
     for item in manifests:
         params = dict(item["params"])
         params.update(overrides.get(item["id"], {}))
+        if "enabled" not in params:
+            params["enabled"] = True
         merged.append({"id": item["id"], "params": params})
     return merged
 

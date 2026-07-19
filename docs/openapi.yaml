@@ -24,10 +24,10 @@ tags:
     description: Composable YAML strategy files
   - name: Tokens
     description: Broker API token status and persistence
-  - name: Explore
-    description: Custom date-range explore jobs
-  - name: Bot
-    description: Rolling out-of-sample trading bot jobs
+  - name: Live
+    description: Single-strategy live refresh (poll + tick)
+  - name: Progress
+    description: Bootstrap run progress
   - name: Planned
     description: Target FastAPI contract — not implemented
 paths:
@@ -212,6 +212,34 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
   /api/strategies/{id}:
+    patch:
+      tags: [Strategies]
+      summary: Toggle strategy enabled for bootstrap
+      operationId: patchStrategyEnabled
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
     delete:
       tags: [Strategies]
       summary: Delete composable strategy
@@ -297,225 +325,66 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-  /api/explore:
+  /api/run-progress:
     get:
-      tags: [Explore]
-      summary: Explore limits, job list, or job status
-      operationId: getExplore
-      parameters:
-        - name: list
-          in: query
-          schema:
-            type: string
-            enum: ["1"]
-          description: When set, list recent explore jobs
-        - name: job_id
-          in: query
-          schema:
-            type: string
-          description: Poll a single explore job
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 30
-          description: Max jobs when `list=1`
+      tags: [Progress]
+      summary: Bootstrap fetch/backtest progress
+      operationId: getRunProgress
       responses:
         "200":
-          description: Limits, job list, or job payload
+          description: Progress payload or inactive
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: true
-        "404":
-          description: Job not found
+  /api/live-run:
+    get:
+      tags: [Live]
+      summary: Live refresh status
+      operationId: getLiveRun
+      responses:
+        "200":
+          description: Active flag and strategy_id
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Request failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                type: object
+                additionalProperties: true
     post:
-      tags: [Explore]
-      summary: Queue explore job
-      description: Spawns `main.py explore-job {job_id}` in the background after queueing.
-      operationId: postExplore
+      tags: [Live]
+      summary: Start or stop live refresh
+      operationId: postLiveRun
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ExploreStartRequest"
-      responses:
-        "202":
-          description: Explore job queued
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [ok, job_id]
-                properties:
-                  ok:
-                    type: boolean
-                  job_id:
-                    type: string
-        "400":
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Start failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-    delete:
-      tags: [Explore]
-      summary: Delete explore job file
-      operationId: deleteExplore
-      parameters:
-        - name: job_id
-          in: query
-          required: true
-          schema:
-            type: string
+              type: object
+              additionalProperties: true
       responses:
         "200":
-          description: Job deleted
+          description: Start/stop result
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: true
-        "400":
-          description: Missing job_id
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Delete failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-  /api/bot:
-    get:
-      tags: [Bot]
-      summary: Bot limits, job list, or job status
-      operationId: getBot
-      parameters:
-        - name: list
-          in: query
-          schema:
-            type: string
-            enum: ["1"]
-          description: When set, list recent bot jobs
-        - name: job_id
-          in: query
-          schema:
-            type: string
-          description: Poll a single bot job
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 30
-          description: Max jobs when `list=1`
-      responses:
-        "200":
-          description: Limits, job list, or job payload
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        "404":
-          description: Job not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Request failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+  /api/live-run/tick:
     post:
-      tags: [Bot]
-      summary: Start, stop, or resume bot job
-      operationId: postBot
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              oneOf:
-                - $ref: "#/components/schemas/BotStartRequest"
-                - $ref: "#/components/schemas/BotStopRequest"
-                - $ref: "#/components/schemas/BotResumeRequest"
-      responses:
-        "202":
-          description: Bot started or resumed
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        "200":
-          description: Bot stopped
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        "400":
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Request failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-    delete:
-      tags: [Bot]
-      summary: Stop and delete bot job
-      description: Calls `bot-stop` then deletes the job file.
-      operationId: deleteBot
-      parameters:
-        - name: job_id
-          in: query
-          required: true
-          schema:
-            type: string
+      tags: [Live]
+      summary: Run one live tick
+      operationId: postLiveRunTick
       responses:
         "200":
-          description: Job removed
+          description: Updated strategy metrics
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: true
-        "400":
-          description: Missing job_id
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
         "500":
-          description: Delete failed
+          description: Tick failed
           content:
             application/json:
               schema:
@@ -757,83 +626,6 @@ components:
         verify:
           type: boolean
           description: When true, validate tokens against broker APIs before saving
-    ExploreStartRequest:
-      type: object
-      required: [strategy_id]
-      properties:
-        strategy_id:
-          type: string
-          example: sma_cross_demo
-        title:
-          type: string
-        params:
-          type: object
-          additionalProperties: true
-          example:
-            fast: 21
-            slow: 50
-        initial_capital:
-          type: number
-          example: 100000
-        from_date:
-          type: string
-          format: date
-          example: "2026-01-01"
-        to_date:
-          type: string
-          format: date
-          example: "2026-03-01"
-        instrument:
-          type: string
-          example: SBER
-        broker_source:
-          type: string
-          enum: [tbank, twelvedata, bybit, binance]
-    BotStartRequest:
-      type: object
-      required: [strategy_id]
-      properties:
-        strategy_id:
-          type: string
-          example: ma_rsi_composable
-        params:
-          type: object
-          additionalProperties: true
-        instrument:
-          type: string
-          example: AAPL
-        broker_source:
-          type: string
-          enum: [tbank, twelvedata, bybit, binance]
-        timeframe:
-          type: string
-          example: 1h
-        days_to_fetch:
-          type: integer
-          example: 7
-        use_sandbox:
-          type: boolean
-        initial_capital:
-          type: number
-          example: 100000
-    BotStopRequest:
-      type: object
-      required: [action, job_id]
-      properties:
-        action:
-          type: string
-          enum: [stop]
-        job_id:
-          type: string
-    BotResumeRequest:
-      type: object
-      required: [action, job_id]
-      properties:
-        action:
-          type: string
-          enum: [resume]
-        job_id:
-          type: string
     PlannedBacktestRequest:
       type: object
       properties:

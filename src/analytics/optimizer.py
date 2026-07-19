@@ -126,6 +126,13 @@ def metrics_report_to_dict(metrics: MetricsReport) -> dict[str, float | str]:
         "max_drawdown": float(metrics.max_drawdown),
         "win_rate": float(metrics.win_rate),
         "deposit_baseline_pnl": float(metrics.deposit_baseline_pnl),
+        "profit_factor": float(metrics.profit_factor),
+        "calmar_ratio": float(metrics.calmar_ratio),
+        "consistency_pct": float(metrics.consistency_pct),
+        "total_return_pct": float(metrics.total_return_pct),
+        "vs_buy_hold_pct": float(metrics.vs_buy_hold_pct),
+        "positive_months": int(metrics.positive_months),
+        "total_months": int(metrics.total_months),
     }
 
 

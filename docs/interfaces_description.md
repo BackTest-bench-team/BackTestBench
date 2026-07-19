@@ -1,10 +1,10 @@
 # Current Module Contracts
 
-Last audited against `main`: **July 14, 2026**.
+Last audited against `main`: **July 19, 2026**.
 
 The Week 2 design referred to a root-level `interfaces.py`. That file is not the current
 contract source. Current runtime models are split between `src/engine`, `src/strategy`,
-`src/analytics`, `src/stability`, and `src/broker_adapter`.
+`src/analytics`, and `src/broker_adapter`.
 
 ## Contract Map
 
@@ -25,9 +25,8 @@ contract source. Current runtime models are split between `src/engine`, `src/str
 | `DataLoader` | `src/data_loader/loader.py` | candle validation, upsert, cache reuse |
 | `TopNEntry`, `RankingReviewEntry` | `src/analytics/ranking.py` | strategy catalogue Top-N |
 | `OptimizerRankedEntry`, `rank_optimizer_results`, `build_optimizer_output` | `src/analytics/optimizer.py` | optimizer parameter ranking (PR #139) |
-| Minimal trading bot helpers | `src/engine/trading_bot.py` | bot validation jobs (PR #144) |
-| Explore stability helpers | `src/stability.py` | explore dock window analytics |
-| `BrokerAdapter` + `build_adapter` | `src/broker_adapter/base.py`, `factory.py` | dashboard / explore / bot |
+| Live refresh tick | `main.py` `live_run_tick_command` | fixed-params backtest on sliding window |
+| `BrokerAdapter` + `build_adapter` | `src/broker_adapter/base.py`, `factory.py` | bootstrap + live refresh |
 | Broker `OrderResult`, `Position`, `Portfolio` | `src/broker_adapter/models.py` | future order/portfolio operations |
 
 The engine `Portfolio` and broker `Portfolio` are separate types.
@@ -198,10 +197,13 @@ dashboard forms. Shared `order_size` is limited to 1–3 lots.
 
 ## Data Loader Contract
 
-`DataLoader` (`src/data_loader/loader.py`):
+`DataLoader` (`src/data_loader/loader.py`) handles SQLite persistence. Bootstrap uses
+`load_candles_for_backtest()` in `src/data_loader/backtest_fetch.py` for chunked broker fetch
+and cache policy.
 
 - `store_candles(instrument, timeframe, candles)` — validates and upserts into SQLite;
 - `load_candles(instrument, timeframe, from_dt, to_dt)` — reads normalised engine candles;
+- `get_candle_bounds`, `count_candles`, `clear_candles` — cache inspection and reset;
 - `db_candles_usable(...)` — checks whether cached candles cover a lookback window;
 - optional in-memory `CandleCache` when `use_cache=True`.
 
@@ -213,7 +215,8 @@ and invalid volume before storage.
 ## Analytics Ranking Types
 
 `TopNEntry` and `RankingReviewEntry` in `src/analytics/ranking.py` support in-memory Top-N
-sorting (P&L vs deposit baseline, drawdown, Sharpe, win rate, deterministic tie-break).
+sorting by Strategy health grade and its underlying metrics (profit factor, vs buy & hold,
+consistency, return, drawdown, Sharpe).
 
 `build_top_n()` filters and sorts `MetricsReport` rows. `build_ranking_review()` attaches
 latest validation metrics for ranking review.
@@ -278,9 +281,9 @@ portfolio retrieval are not implemented.
 
 ```text
 config/dashboard.json
-  -> DataLoader (SQLite cache hit or TBankAdapter.get_candles())
+  -> load_candles_for_backtest() (SQLite + chunked adapter fetch)
   -> list[engine.Candle] shared across strategies
-  -> for each strategy:
+  -> for each enabled strategy:
        ExecutionEngine.run(strategy, candles, initial_capital)
        -> ExecutionContext per candle
        -> strategy.on_candle(context)
@@ -288,7 +291,7 @@ config/dashboard.json
        -> OrderExecutor
        -> TradeLog + equity_curve + final Portfolio
        -> calculate_metrics_from_trade_log(TradeLog, RunContext)
-       -> MetricsReport
+       -> MetricsReport + strategy health verdict
   -> build_top_n() / update_dashboard_ranking()
   -> runtime-dashboard.json (strategies[] + ranking)
   -> GET /api/dashboard

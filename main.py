@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import json
-import secrets
 import os
 import signal
 import subprocess
@@ -24,20 +23,18 @@ from src.analytics import (
     calculate_metrics_from_trade_log,
     rank_optimizer_results,
 )
+from src.analytics.metrics import metrics_to_dashboard_dict
+from src.analytics.strategy_verdict import build_strategy_verdict, verdict_to_dashboard_dict
 from src.backtest_config import (
     ConfigValidationError,
-    max_lookback_days,
     ui_schema,
     validate_runtime_settings,
-    validate_timeframe,
 )
-from src.broker_adapter.factory import TOKEN_ENV_BY_SOURCE, build_adapter, source_display_name
+from src.broker_adapter.factory import build_adapter, source_display_name
 from src.env_file import load_env_file_into_process, mask_token, read_env_file, write_env_file
 from src.token_validation import validate_tokens_sync
-from src.stability import compute_explore_stability
-from src.data_loader import DataLoader, LoadedMarketData
-from src.db import init_db
 from src.engine import ExecutionEngine, RunContext
+from src.engine.execution_config import ExecutionConfig
 from src.engine.models import Candle, MetricsReport, Trade
 from src.engine.optimization_engine import RandomSearchExecutionEngine
 from src.engine.portfolio import Portfolio
@@ -57,9 +54,21 @@ CONFIG_FILE = BASE_DIR / "config" / "dashboard.json"
 DASHBOARD_FILE = DATA_DIR / "runtime-dashboard.json"
 STOP_FILE = DATA_DIR / "backtest.stop"
 PID_FILE = DATA_DIR / "backtest.pid"
-EXPLORE_JOBS_DIR = DATA_DIR / "explore-jobs"
-BOT_JOBS_DIR = DATA_DIR / "bot-jobs"
-EXPLORE_TIMEFRAME = "1d"
+BACKTEST_PENDING_FILE = DATA_DIR / "backtest.pending"
+LIVE_RUN_FILE = DATA_DIR / "live-run.json"
+LIVE_TICK_LOCK_FILE = DATA_DIR / "live-run.tick.lock"
+MAX_CHART_POINTS = 300
+
+LIVE_TICK_INTERVAL_SEC: dict[str, float] = {
+    "1m": 15.0,
+    "5m": 30.0,
+    "15m": 60.0,
+    "30m": 90.0,
+    "1h": 120.0,
+    "1d": 300.0,
+    "1w": 600.0,
+    "1M": 900.0,
+}
 
 RUNTIME_SETTING_KEYS = (
     "data_source",
@@ -70,6 +79,8 @@ RUNTIME_SETTING_KEYS = (
     "optimization_mode",
     "optimization_iterations",
     "optimization_seed",
+    "commission_pct",
+    "slippage_pct",
 )
 
 DATA_DIR.mkdir(exist_ok=True)
@@ -79,12 +90,12 @@ DATA_DIR.mkdir(exist_ok=True)
 LIGHTWEIGHT_COMMANDS = frozenset({
     "config-schema",
     "token-status",
-    "explore-limits",
-    "explore-list",
-    "explore-get",
-    "bot-limits",
-    "bot-list",
-    "bot-get",
+    "set-strategy-enabled",
+    "live-run-status",
+    "live-run-start",
+    "live-run-stop",
+    "live-run-tick",
+    "prepare-bootstrap",
 })
 
 
@@ -151,6 +162,283 @@ def clear_run_pid() -> None:
     PID_FILE.unlink(missing_ok=True)
 
 
+def is_backtest_running() -> bool:
+    if not PID_FILE.exists():
+        return False
+    try:
+        pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        PID_FILE.unlink(missing_ok=True)
+        return False
+
+    if sys.platform == "win32":
+        import ctypes
+
+        process_query_limited = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(process_query_limited, False, pid)
+        if handle:
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return True
+        PID_FILE.unlink(missing_ok=True)
+        return False
+
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        PID_FILE.unlink(missing_ok=True)
+        return False
+    return True
+
+
+def mark_backtest_pending() -> None:
+    BACKTEST_PENDING_FILE.write_text(now_iso(), encoding="utf-8")
+
+
+def clear_backtest_pending() -> None:
+    BACKTEST_PENDING_FILE.unlink(missing_ok=True)
+
+
+def is_backtest_active() -> bool:
+    return BACKTEST_PENDING_FILE.exists() or is_backtest_running()
+
+
+def load_live_run() -> dict[str, Any] | None:
+    if not LIVE_RUN_FILE.exists():
+        return None
+    try:
+        with open(LIVE_RUN_FILE, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        LIVE_RUN_FILE.unlink(missing_ok=True)
+        return None
+    if not isinstance(payload, dict) or not payload.get("strategy_id"):
+        LIVE_RUN_FILE.unlink(missing_ok=True)
+        return None
+    return payload
+
+
+def save_live_run(state: dict[str, Any]) -> None:
+    LIVE_RUN_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def clear_live_run() -> None:
+    LIVE_RUN_FILE.unlink(missing_ok=True)
+    LIVE_TICK_LOCK_FILE.unlink(missing_ok=True)
+    dashboard = load_dashboard() if DASHBOARD_FILE.exists() else None
+    if not dashboard:
+        return
+    changed = False
+    for entry in dashboard.get("strategies", []):
+        if entry.pop("live_active", None):
+            changed = True
+    if changed:
+        save_dashboard(dashboard)
+
+
+def live_tick_min_interval_sec(timeframe: str) -> float:
+    return float(LIVE_TICK_INTERVAL_SEC.get(str(timeframe), 60.0))
+
+
+def _parse_iso_dt(value: str) -> datetime:
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _merge_live_strategy_result(
+    dashboard: dict[str, Any],
+    strategy_id: str,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    previous = find_strategy_entry(dashboard, strategy_id) or {}
+    merged = dict(result)
+    if previous.get("optimization"):
+        merged["optimization"] = previous["optimization"]
+    merged_params = dict(previous.get("params") or {})
+    for key, value in (result.get("params") or {}).items():
+        if key != "enabled":
+            merged_params[key] = value
+    if "enabled" in (previous.get("params") or {}):
+        merged_params["enabled"] = previous["params"]["enabled"]
+    merged["params"] = merged_params
+    merged["live_active"] = True
+    merged["status"] = "completed"
+    merged["error"] = None
+    return merged
+
+
+def _live_status_payload() -> dict[str, Any]:
+    if is_backtest_active():
+        clear_live_run()
+        return {"ok": True, "active": False, "stopped_reason": "backtest_started"}
+    state = load_live_run()
+    if not state:
+        return {"ok": True, "active": False}
+    return {
+        "ok": True,
+        "active": True,
+        "strategy_id": state["strategy_id"],
+        "started_at": state.get("started_at"),
+        "last_tick_at": state.get("last_tick_at"),
+    }
+
+
+async def live_run_start_command(payload_json: str) -> dict[str, Any]:
+    payload = json.loads(payload_json)
+    strategy_id = str(payload["strategy_id"])
+    params = strategy_run_params(dict(payload.get("params") or {}))
+
+    if is_backtest_active():
+        raise RuntimeError("Stop the running backtest before starting live refresh")
+
+    existing = load_live_run()
+    if existing and existing.get("strategy_id") != strategy_id:
+        raise RuntimeError(
+            f"Strategy {existing['strategy_id']} is already live. Stop it first."
+        )
+
+    state = {
+        "strategy_id": strategy_id,
+        "params": params,
+        "started_at": now_iso(),
+        "last_tick_at": None,
+    }
+    save_live_run(state)
+    tick = await live_run_tick_command(force=True)
+    if not tick.get("ok"):
+        clear_live_run()
+        raise RuntimeError(str(tick.get("message") or "Live refresh failed to start"))
+    return {
+        "ok": True,
+        "active": True,
+        "strategy_id": strategy_id,
+        "strategy": tick.get("strategy"),
+        "live": tick.get("live"),
+    }
+
+
+def live_run_stop_command(payload_json: str) -> dict[str, Any]:
+    payload = json.loads(payload_json) if payload_json else {}
+    state = load_live_run()
+    if not state:
+        return {"ok": True, "active": False}
+
+    requested_id = payload.get("strategy_id")
+    if requested_id and str(requested_id) != str(state.get("strategy_id")):
+        raise RuntimeError("Another strategy is live")
+
+    clear_live_run()
+    return {"ok": True, "active": False, "strategy_id": state.get("strategy_id")}
+
+
+def _live_tick_cached_response(
+    state: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    message: str | None = None,
+) -> dict[str, Any]:
+    dashboard = load_dashboard() if DASHBOARD_FILE.exists() else default_dashboard()
+    entry = find_strategy_entry(dashboard, str(state["strategy_id"]))
+    timeframe = str(config.get("timeframe", "1h"))
+    min_interval = live_tick_min_interval_sec(timeframe)
+    next_tick_in_sec = min_interval
+    last_tick_at = state.get("last_tick_at")
+    if last_tick_at:
+        elapsed = (datetime.now(timezone.utc) - _parse_iso_dt(last_tick_at)).total_seconds()
+        next_tick_in_sec = max(0.0, min_interval - elapsed)
+    payload: dict[str, Any] = {
+        "ok": True,
+        "active": True,
+        "cached": True,
+        "strategy": entry,
+        "live": state,
+        "next_tick_in_sec": next_tick_in_sec,
+    }
+    if message:
+        payload["message"] = message
+    return payload
+
+
+async def live_run_tick_command(*, force: bool = False) -> dict[str, Any]:
+    if is_backtest_active():
+        clear_live_run()
+        return {"ok": True, "active": False, "stopped_reason": "backtest_started"}
+
+    state = load_live_run()
+    if not state:
+        return {"ok": True, "active": False}
+
+    config = load_config()
+    timeframe = str(config.get("timeframe", "1h"))
+    min_interval = live_tick_min_interval_sec(timeframe)
+    last_tick_at = state.get("last_tick_at")
+    if not force and last_tick_at:
+        elapsed = (datetime.now(timezone.utc) - _parse_iso_dt(last_tick_at)).total_seconds()
+        if elapsed < min_interval:
+            return _live_tick_cached_response(state, config)
+
+    acquired = False
+    for _ in range(300):
+        try:
+            fd = os.open(LIVE_TICK_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            acquired = True
+            break
+        except FileExistsError:
+            import time
+
+            time.sleep(0.1)
+    if not acquired:
+        return _live_tick_cached_response(
+            state,
+            config,
+            message="Live refresh already in progress",
+        )
+
+    try:
+        state = load_live_run()
+        if not state:
+            return {"ok": True, "active": False}
+        if is_backtest_active():
+            clear_live_run()
+            return {"ok": True, "active": False, "stopped_reason": "backtest_started"}
+
+        strategy_id = str(state["strategy_id"])
+        params = strategy_run_params(dict(state.get("params") or {}))
+        candles, source = await load_candles_for_backtest(config)
+        result = run_fixed_params_backtest(strategy_id, params, candles, config)
+        dashboard = load_dashboard() if DASHBOARD_FILE.exists() else default_dashboard()
+        merged = _merge_live_strategy_result(dashboard, strategy_id, result)
+        upsert_strategy_result(dashboard, merged)
+        dashboard["data_source"] = source
+        save_dashboard(dashboard)
+
+        state["last_tick_at"] = now_iso()
+        save_live_run(state)
+    finally:
+        LIVE_TICK_LOCK_FILE.unlink(missing_ok=True)
+
+    return {
+        "ok": True,
+        "active": True,
+        "cached": False,
+        "strategy": merged,
+        "live": state,
+        "next_tick_in_sec": min_interval,
+    }
+
+
+def live_run_status_command() -> dict[str, Any]:
+    return _live_status_payload()
+
+
+def prepare_bootstrap_command() -> dict[str, Any]:
+    clear_live_run()
+    mark_backtest_pending()
+    return {"ok": True, "live_cleared": True, "backtest_pending": True}
+
+
 def save_runtime_settings(updates: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     payload = {key: updates.get(key, config.get(key)) for key in RUNTIME_SETTING_KEYS}
@@ -180,6 +468,21 @@ def normalize_order_size(params: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def strategy_enabled(params: dict[str, Any]) -> bool:
+    """Whether the strategy participates in the next bootstrap run."""
+
+    enabled = params.get("enabled", True)
+    if isinstance(enabled, str):
+        return enabled.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(enabled)
+
+
+def strategy_run_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Strategy params passed to the engine (meta keys like enabled are stripped)."""
+
+    return normalize_order_size({key: value for key, value in params.items() if key != "enabled"})
+
+
 def sanitize_config() -> None:
     """Fix saved strategy param overrides in config/dashboard.json."""
     config = load_config()
@@ -206,9 +509,30 @@ def update_config_params(strategy_id: str, params: dict[str, Any]) -> None:
     params = normalize_order_size(params)
     config = load_config()
     overrides = get_strategy_overrides(config)
-    overrides[strategy_id] = params
+    previous = dict(overrides.get(strategy_id, {}))
+    overrides[strategy_id] = {**previous, **params}
     config["strategy_overrides"] = overrides
     save_config(config)
+
+
+def set_strategy_enabled(strategy_id: str, enabled: bool) -> dict[str, Any]:
+    config = load_config()
+    overrides = get_strategy_overrides(config)
+    entry = dict(overrides.get(strategy_id, {}))
+    entry["enabled"] = bool(enabled)
+    overrides[strategy_id] = entry
+    config["strategy_overrides"] = overrides
+    save_config(config)
+
+    dashboard = load_dashboard()
+    entry_dashboard = find_strategy_entry(dashboard, strategy_id)
+    if entry_dashboard is not None:
+        merged = dict(entry_dashboard.get("params") or {})
+        merged["enabled"] = bool(enabled)
+        entry_dashboard["params"] = merged
+        save_dashboard(dashboard)
+
+    return {"strategy_id": strategy_id, "enabled": bool(enabled), "params": entry}
 
 
 def sync_dashboard_strategies(dashboard: dict[str, Any], config: dict[str, Any]) -> None:
@@ -284,6 +608,13 @@ def empty_metrics() -> dict[str, None]:
         "win_rate": None,
         "deposit_baseline_pnl": None,
         "deposit_baseline_final": None,
+        "profit_factor": None,
+        "calmar_ratio": None,
+        "consistency_pct": None,
+        "total_return_pct": None,
+        "vs_buy_hold_pct": None,
+        "positive_months": None,
+        "total_months": None,
     }
 
 
@@ -352,55 +683,42 @@ def get_candle_date_range(
     return from_dt, to_dt
 
 
-async def load_market_data(
-    config: dict[str, Any],
-    loader: DataLoader | None = None,
-    *,
-    force_fetch: bool = False,
-) -> tuple[DataLoader, LoadedMarketData]:
-    """Load candles once via DataLoader; reuse loader cache for in-process reads."""
-    init_db()
-    instrument = config["instrument"]
-    timeframe = config["timeframe"]
-    owns_loader = loader is None
-    loader = loader or DataLoader(use_cache=True)
+async def load_candles_for_backtest(config: dict[str, Any]) -> tuple[list[Candle], str]:
+    """Load candles via SQLite cache with chunked broker fetch for missing ranges."""
 
-    latest = loader.get_latest_candle_timestamp(instrument, timeframe)
-    period_end = latest if latest is not None and not config.get("period_end") else None
-    from_dt, to_dt = get_candle_date_range(config, period_end=period_end)
+    from src.data_loader.backtest_fetch import ensure_backtest_candles
+    from src.run_progress import write_run_progress
 
-    async def fetch(from_dt: datetime, to_dt: datetime) -> list[Candle]:
-        return await fetch_candles_from_api(config, from_dt, to_dt)
+    from_dt, to_dt = get_candle_date_range(config)
 
-    try:
-        market_data = await loader.ensure_candles_loaded(
-            instrument,
-            timeframe,
-            from_dt,
-            to_dt,
-            fetch,
-            broker_label=source_display_name(config.get("data_source", "tbank")),
-            token_env=TOKEN_ENV_BY_SOURCE.get(config.get("data_source", "tbank"), "TINKOFF_TOKEN"),
-            force_fetch=force_fetch,
+    def on_fetch_progress(current: int, total: int) -> None:
+        if current <= 0:
+            label = f"Preparing {total} data requests"
+        elif current >= total:
+            label = "Candles loaded" if total <= 1 else f"Loaded candles {current}/{total}"
+        else:
+            label = f"Loading candles {current}/{total}"
+        write_run_progress(
+            phase="fetching",
+            current=max(current, 0),
+            total=total,
+            label=label,
         )
-        if not market_data.candles:
-            raise RuntimeError("No candles available for backtest window")
-        return loader, market_data
-    except Exception:
-        if owns_loader:
-            loader.close()
-        raise
+
+    candles, source, _api_calls = await ensure_backtest_candles(
+        config,
+        from_dt,
+        to_dt,
+        fetch_candles_from_api,
+        on_progress=on_fetch_progress,
+    )
+    return candles, source
 
 
-async def get_candles(
-    config: dict[str, Any],
-    loader: DataLoader | None = None,
-) -> tuple[list[Candle], str]:
-    """Load candles: read from DB when fresh, otherwise fetch from T-Bank and store."""
-    active_loader, market_data = await load_market_data(config, loader=loader)
-    if loader is None:
-        active_loader.close()
-    return market_data.candles, market_data.source
+async def get_candles(config: dict[str, Any]) -> tuple[list[Candle], str]:
+    """Load candles from the broker (no SQLite cache)."""
+
+    return await load_candles_for_backtest(config)
 
 
 async def fetch_candles_from_api(
@@ -422,6 +740,15 @@ async def fetch_candles_from_api(
         raise RuntimeError("No candles returned from broker")
 
     return candles
+
+
+def downsample_chart_points(points: list[dict[str, Any]], max_points: int = MAX_CHART_POINTS) -> list[dict[str, Any]]:
+    if len(points) <= max_points:
+        return points
+    step = len(points) / max_points
+    indices = {min(len(points) - 1, int(i * step)) for i in range(max_points)}
+    indices.add(len(points) - 1)
+    return [points[i] for i in sorted(indices)]
 
 
 def build_chart_series(
@@ -455,7 +782,7 @@ def build_chart_series(
                 "close": close,
             }
         )
-    return points
+    return downsample_chart_points(points)
 
 
 def build_trade_log(trades: list[Trade]) -> list[dict[str, Any]]:
@@ -556,6 +883,10 @@ def build_optimization_summary(
     }
 
 
+def create_execution_engine(config: dict[str, Any]) -> ExecutionEngine:
+    return ExecutionEngine(ExecutionConfig.from_dashboard(config))
+
+
 def build_strategy_result(
     strategy_id: str,
     params: dict[str, Any],
@@ -570,6 +901,8 @@ def build_strategy_result(
     initial_capital = float(config.get("initial_capital", 100_000.0))
     meta = describe_strategy(strategy_id)
     deposit_pnl = float(metrics.deposit_baseline_pnl)
+    chart_points = build_chart_series(candles, equity_curve, initial_capital)
+    verdict = build_strategy_verdict(metrics, initial_capital=initial_capital)
 
     payload = {
         "strategy_id": strategy_id,
@@ -580,14 +913,11 @@ def build_strategy_result(
         "parameter_specs": meta.get("parameters", []),
         "initial_capital": initial_capital,
         "metrics": {
-            "total_pnl": float(metrics.total_pnl),
-            "sharpe_ratio": float(metrics.sharpe_ratio),
-            "max_drawdown": float(metrics.max_drawdown),
-            "win_rate": float(metrics.win_rate),
-            "deposit_baseline_pnl": deposit_pnl,
+            **metrics_to_dashboard_dict(metrics),
             "deposit_baseline_final": initial_capital + deposit_pnl,
         },
-        "chart_points": build_chart_series(candles, equity_curve, initial_capital),
+        "verdict": verdict_to_dashboard_dict(verdict),
+        "chart_points": chart_points,
         "trade_log": build_trade_log(trades),
         "final_portfolio": {
             "cash": float(final.cash),
@@ -599,6 +929,21 @@ def build_strategy_result(
     if optimization is not None:
         payload["optimization"] = optimization
     return payload
+
+
+def compute_run_metrics(
+    trade_log_report: Any,
+    run_context: RunContext,
+    candles: list[Candle],
+    equity_curve: list[float],
+    initial_capital: float,
+) -> MetricsReport:
+    chart_points = build_chart_series(candles, equity_curve, initial_capital)
+    return calculate_metrics_from_trade_log(
+        trade_log_report,
+        run_context,
+        chart_points=chart_points,
+    )
 
 
 def run_strategy_backtest(
@@ -624,7 +969,9 @@ def run_strategy_backtest(
         n_iterations = int(config.get("optimization_iterations", 16))
         seed = int(config.get("optimization_seed", 42))
         mode = str(config.get("optimization_mode", "grid"))
-        opt_result = RandomSearchExecutionEngine().run_optimization(
+        opt_result = RandomSearchExecutionEngine(
+            base_engine=create_execution_engine(config),
+        ).run_optimization(
             strategy_id=strategy_id,
             param_grid=param_grid,
             candles=candles,
@@ -640,12 +987,18 @@ def run_strategy_backtest(
             raise RuntimeError("Stopped by user")
         if opt_result.best_metrics is None:
             strategy = create_strategy(strategy_id, params)
-            engine_result = ExecutionEngine().run(
+            engine_result = create_execution_engine(config).run(
                 strategy=strategy,
                 candles=candles,
                 initial_capital=initial_capital,
             )
-            metrics = calculate_metrics_from_trade_log(engine_result["trade_log_report"], run_context)
+            metrics = compute_run_metrics(
+                engine_result["trade_log_report"],
+                run_context,
+                candles,
+                engine_result["equity_curve"],
+                initial_capital,
+            )
             return build_strategy_result(
                 strategy_id,
                 params,
@@ -659,10 +1012,17 @@ def run_strategy_backtest(
 
         best_params = normalize_order_size(dict(opt_result.best_params))
         update_config_params(strategy_id, best_params)
+        best_metrics = compute_run_metrics(
+            opt_result.best_trade_log_report,
+            run_context,
+            candles,
+            opt_result.best_equity_curve,
+            initial_capital,
+        )
         return build_strategy_result(
             strategy_id,
             best_params,
-            opt_result.best_metrics,
+            best_metrics,
             opt_result.best_equity_curve,
             opt_result.best_trade_log_report.trades,
             opt_result.best_final_portfolio,
@@ -672,12 +1032,18 @@ def run_strategy_backtest(
         )
 
     strategy = create_strategy(strategy_id, params)
-    engine_result = ExecutionEngine().run(
+    engine_result = create_execution_engine(config).run(
         strategy=strategy,
         candles=candles,
         initial_capital=initial_capital,
     )
-    metrics = calculate_metrics_from_trade_log(engine_result["trade_log_report"], run_context)
+    metrics = compute_run_metrics(
+        engine_result["trade_log_report"],
+        run_context,
+        candles,
+        engine_result["equity_curve"],
+        initial_capital,
+    )
     return build_strategy_result(
         strategy_id,
         params,
@@ -735,6 +1101,13 @@ def metrics_report_from_entry(entry: dict[str, Any], instrument: str) -> Metrics
             max_drawdown=float(metrics["max_drawdown"]),
             win_rate=float(metrics["win_rate"]),
             deposit_baseline_pnl=float(metrics["deposit_baseline_pnl"]),
+            profit_factor=float(metrics.get("profit_factor") or 0.0),
+            calmar_ratio=float(metrics.get("calmar_ratio") or 0.0),
+            consistency_pct=float(metrics.get("consistency_pct") or 0.0),
+            total_return_pct=float(metrics.get("total_return_pct") or 0.0),
+            vs_buy_hold_pct=float(metrics.get("vs_buy_hold_pct") or 0.0),
+            positive_months=int(metrics.get("positive_months") or 0),
+            total_months=int(metrics.get("total_months") or 0),
         )
     except (TypeError, ValueError):
         return None
@@ -776,7 +1149,11 @@ def update_dashboard_ranking(dashboard: dict[str, Any]) -> None:
     top_n = build_top_n(
         reports,
         n=max(len(strategies), 1),
-        config=RankingConfig(n=max(len(strategies), 1), require_above_baseline=False),
+        config=RankingConfig(
+            n=max(len(strategies), 1),
+            require_above_baseline=False,
+            initial_capital=float(dashboard.get("initial_capital", 100_000.0)),
+        ),
     )
     computed_at = now_iso()
     entries = [
@@ -795,49 +1172,80 @@ async def refresh_ranking() -> None:
 
 
 async def bootstrap_all() -> None:
+    from src.run_progress import clear_run_progress, write_run_progress
+
+    clear_live_run()
+    mark_backtest_pending()
     clear_stop_request()
     write_run_pid()
-    loader: DataLoader | None = None
     try:
         config = load_config()
         strategies = runtime_strategies(config)
         prev_dashboard = load_dashboard() if DASHBOARD_FILE.exists() else {}
-        curr_source = str(config.get("data_source", "tbank"))
-        force_fetch = (
-            prev_dashboard.get("data_source_key") != curr_source
-            or prev_dashboard.get("instrument") != config.get("instrument")
-            or prev_dashboard.get("timeframe") != config.get("timeframe")
-        )
+        prev_entries = {
+            entry.get("strategy_id"): entry
+            for entry in prev_dashboard.get("strategies", [])
+            if entry.get("strategy_id")
+        }
+
+        dashboard_strategies: list[dict[str, Any]] = []
+        for item in strategies:
+            strategy_id = item["id"]
+            params = dict(item["params"])
+            if "enabled" not in params:
+                params["enabled"] = True
+            previous = prev_entries.get(strategy_id)
+            if strategy_enabled(params):
+                dashboard_strategies.append(strategy_skeleton(strategy_id, params, status="running"))
+            elif previous:
+                kept = dict(previous)
+                kept["params"] = params
+                dashboard_strategies.append(kept)
+            else:
+                dashboard_strategies.append(strategy_skeleton(strategy_id, params, status="idle"))
+
         dashboard = {
             "instrument": config["instrument"],
             "timeframe": config["timeframe"],
-            "data_source_key": curr_source,
-            "data_source": source_display_name(curr_source),
+            "data_source_key": str(config.get("data_source", "tbank")),
+            "data_source": source_display_name(str(config.get("data_source", "tbank"))),
             "initial_capital": config.get("initial_capital", 100_000.0),
-            "strategies": [
-                strategy_skeleton(item["id"], dict(item["params"]), status="running")
-                for item in strategies
-            ],
+            "strategies": dashboard_strategies,
             "ranking": empty_ranking(),
         }
         save_dashboard(dashboard)
 
-        loader = DataLoader(use_cache=True)
+        enabled_strategies = [item for item in strategies if strategy_enabled(item["params"])]
+        if not enabled_strategies:
+            save_dashboard(dashboard)
+            return
+
+        total_strategies = len(enabled_strategies)
+        progress_steps = max(total_strategies * 2, 1)
+        progress_cursor = 0
+
         try:
-            _, market_data = await load_market_data(config, loader=loader, force_fetch=force_fetch)
+            candles, source = await load_candles_for_backtest(config)
             if stop_requested():
                 mark_strategies_stopped(dashboard)
                 save_dashboard(dashboard)
                 return
-            candles = market_data.candles
-            dashboard["data_source"] = market_data.source
+            dashboard["data_source"] = source
         except Exception as exc:
             for entry in dashboard["strategies"]:
-                entry.update({"status": "error", "error": str(exc)})
+                if entry.get("status") == "running":
+                    entry.update({"status": "error", "error": str(exc)})
             save_dashboard(dashboard)
             raise
 
-        for item in strategies:
+        write_run_progress(
+            phase="backtesting",
+            current=0,
+            total=progress_steps,
+            label="Starting backtests",
+        )
+
+        for index, item in enumerate(enabled_strategies, start=1):
             if stop_requested():
                 mark_strategies_stopped(dashboard, from_strategy_id=item["id"])
                 save_dashboard(dashboard)
@@ -845,10 +1253,24 @@ async def bootstrap_all() -> None:
 
             strategy_id = item["id"]
             params = dict(item["params"])
+            progress_cursor += 1
+            write_run_progress(
+                phase="backtesting",
+                current=progress_cursor,
+                total=progress_steps,
+                label=f"Backtesting {strategy_id} ({index}/{total_strategies})",
+                display_pct=round(100 * (progress_cursor - 0.5) / progress_steps),
+            )
             set_strategy_running(dashboard, strategy_id, params)
             save_dashboard(dashboard)
             try:
-                result = run_strategy_backtest(strategy_id, params, candles, config)
+                result = run_strategy_backtest(
+                    strategy_id,
+                    strategy_run_params(params),
+                    candles,
+                    config,
+                )
+                result["params"] = params
                 upsert_strategy_result(dashboard, result)
             except Exception as exc:
                 entry = find_strategy_entry(dashboard, strategy_id)
@@ -856,14 +1278,21 @@ async def bootstrap_all() -> None:
                     status = "idle" if str(exc) == "Stopped by user" else "error"
                     entry.update({"status": status, "error": str(exc)})
             save_dashboard(dashboard)
+            progress_cursor += 1
+            write_run_progress(
+                phase="backtesting",
+                current=progress_cursor,
+                total=progress_steps,
+                label=f"Completed {strategy_id} ({index}/{total_strategies})",
+            )
 
         update_dashboard_ranking(dashboard)
         save_dashboard(dashboard)
     finally:
-        if loader is not None:
-            loader.close()
         clear_run_pid()
+        clear_backtest_pending()
         clear_stop_request()
+        clear_run_progress()
 
 
 def add_strategy_from_yaml(yaml_text: str) -> dict[str, Any]:
@@ -966,121 +1395,6 @@ def save_tokens_command(payload_json: str) -> dict[str, Any]:
     return {"ok": True, "tokens": tokens}
 
 
-def _explore_job_path(job_id: str) -> Path:
-    return EXPLORE_JOBS_DIR / f"{job_id}.json"
-
-
-def _load_explore_job(job_id: str) -> dict[str, Any]:
-    path = _explore_job_path(job_id)
-    if not path.exists():
-        raise ValueError(f"Explore job {job_id!r} not found")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _save_explore_job(job: dict[str, Any]) -> None:
-    EXPLORE_JOBS_DIR.mkdir(parents=True, exist_ok=True)
-    _explore_job_path(str(job["job_id"])).write_text(
-        json.dumps(job, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-
-def parse_explore_dates(
-    config: dict[str, Any],
-    from_str: str,
-    to_str: str,
-    *,
-    timeframe: str | None = None,
-) -> tuple[datetime, datetime, int]:
-    now = datetime.now(timezone.utc)
-    from_dt = datetime.fromisoformat(from_str[:10]).replace(tzinfo=timezone.utc)
-    to_dt = datetime.fromisoformat(to_str[:10]).replace(
-        hour=23, minute=59, second=59, tzinfo=timezone.utc
-    )
-    to_dt = min(to_dt, now)
-    if from_dt >= to_dt:
-        raise ValueError("Start date must be before end date")
-    span_days = max((to_dt.date() - from_dt.date()).days, 1)
-    source = str(config.get("data_source", "tbank"))
-    tf = validate_timeframe(timeframe or EXPLORE_TIMEFRAME)
-    limit_days = max_lookback_days(source, tf)
-    if span_days > limit_days:
-        raise ValueError(f"Range exceeds {limit_days} days for {tf}")
-    earliest = now - timedelta(days=limit_days)
-    if from_dt < earliest:
-        raise ValueError(f"Start date cannot be earlier than {earliest.date().isoformat()}")
-    return from_dt, to_dt, span_days
-
-
-def explore_limits_command() -> dict[str, Any]:
-    config = load_config()
-    now = datetime.now(timezone.utc)
-    source = str(config.get("data_source", "tbank"))
-    limit_days = max_lookback_days(source, EXPLORE_TIMEFRAME)
-    earliest = now - timedelta(days=limit_days)
-    return {
-        "ok": True,
-        "min_date": earliest.date().isoformat(),
-        "max_date": now.date().isoformat(),
-        "max_days": limit_days,
-        "instrument": config.get("instrument"),
-        "explore_timeframe": EXPLORE_TIMEFRAME,
-        "data_source": source_display_name(source),
-    }
-
-
-def explore_list_command(limit: int = 30) -> dict[str, Any]:
-    EXPLORE_JOBS_DIR.mkdir(parents=True, exist_ok=True)
-    jobs: list[dict[str, Any]] = []
-    for path in EXPLORE_JOBS_DIR.glob("*.json"):
-        try:
-            job = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            continue
-        if isinstance(job, dict) and job.get("job_id"):
-            jobs.append(job)
-    jobs.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
-    return {"ok": True, "jobs": jobs[: max(1, limit)]}
-
-
-def explore_delete_command(job_id: str) -> dict[str, Any]:
-    path = _explore_job_path(job_id)
-    if path.exists():
-        path.unlink()
-    return {"ok": True, "job_id": job_id}
-
-
-async def load_candles_for_range(
-    config: dict[str, Any],
-    from_dt: datetime,
-    to_dt: datetime,
-    *,
-    timeframe: str | None = None,
-) -> list[Candle]:
-    loader = DataLoader(use_cache=True)
-    source = str(config.get("data_source", "tbank"))
-    tf = validate_timeframe(timeframe or EXPLORE_TIMEFRAME)
-
-    async def fetch(start: datetime, end: datetime) -> list[Candle]:
-        return await fetch_candles_from_api(config, start, end)
-
-    try:
-        market_data = await loader.ensure_candles_loaded(
-            config["instrument"],
-            tf,
-            from_dt,
-            to_dt,
-            fetch,
-            broker_label=source_display_name(source),
-            token_env=TOKEN_ENV_BY_SOURCE.get(source, "TINKOFF_TOKEN"),
-        )
-        if not market_data.candles:
-            raise RuntimeError("No candles available for selected range")
-        return market_data.candles
-    finally:
-        loader.close()
-
-
 def run_fixed_params_backtest(
     strategy_id: str,
     params: dict[str, Any],
@@ -1098,16 +1412,22 @@ def run_fixed_params_backtest(
         period_end=candles[-1].timestamp,
         initial_capital=initial_capital,
     )
-    strategy = create_strategy(strategy_id, normalize_order_size(dict(params)))
-    engine_result = ExecutionEngine().run(
+    strategy = create_strategy(strategy_id, strategy_run_params(dict(params)))
+    engine_result = create_execution_engine(config).run(
         strategy=strategy,
         candles=candles,
         initial_capital=initial_capital,
     )
-    metrics = calculate_metrics_from_trade_log(engine_result["trade_log_report"], run_context)
+    metrics = compute_run_metrics(
+        engine_result["trade_log_report"],
+        run_context,
+        candles,
+        engine_result["equity_curve"],
+        initial_capital,
+    )
     return build_strategy_result(
         strategy_id,
-        normalize_order_size(dict(params)),
+        strategy_run_params(dict(params)),
         metrics,
         engine_result["equity_curve"],
         engine_result["trade_log"],
@@ -1115,300 +1435,6 @@ def run_fixed_params_backtest(
         candles,
         config,
     )
-
-
-def explore_start_command(payload_json: str) -> dict[str, Any]:
-    payload = json.loads(payload_json)
-    config = load_config()
-    source = str(payload.get("broker_source") or config.get("data_source", "tbank"))
-    instrument = str(payload.get("instrument") or config.get("instrument", "SBER"))
-    job_id = secrets.token_hex(8)
-    job = {
-        "job_id": job_id,
-        "status": "queued",
-        "strategy_id": str(payload["strategy_id"]),
-        "title": str(payload.get("title") or payload["strategy_id"]),
-        "params": dict(payload.get("params") or {}),
-        "from_date": str(payload["from_date"])[:10],
-        "to_date": str(payload["to_date"])[:10],
-        "timeframe": EXPLORE_TIMEFRAME,
-        "instrument": instrument,
-        "broker_source": source,
-        "initial_capital": float(payload.get("initial_capital") or config.get("initial_capital", 100_000.0)),
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
-    }
-    _save_explore_job(job)
-    return {"ok": True, "job_id": job_id}
-
-
-def explore_get_command(job_id: str) -> dict[str, Any]:
-    job = _load_explore_job(job_id)
-    return {"ok": True, "job": job}
-
-
-async def explore_job_command(job_id: str) -> None:
-    job = _load_explore_job(job_id)
-    job["status"] = "running"
-    job["updated_at"] = now_iso()
-    _save_explore_job(job)
-    try:
-        config = load_config()
-        source = str(job.get("broker_source") or config.get("data_source", "tbank"))
-        instrument = str(job.get("instrument") or config.get("instrument", "SBER"))
-        job_timeframe = str(job.get("timeframe") or EXPLORE_TIMEFRAME)
-        explore_config = {
-            **config,
-            "data_source": source,
-            "instrument": instrument,
-            "timeframe": job_timeframe,
-        }
-        from_dt, to_dt, days = parse_explore_dates(
-            explore_config,
-            job["from_date"],
-            job["to_date"],
-            timeframe=job_timeframe,
-        )
-        candles = await load_candles_for_range(
-            explore_config,
-            from_dt,
-            to_dt,
-            timeframe=job_timeframe,
-        )
-        result = run_fixed_params_backtest(job["strategy_id"], job["params"], candles, explore_config)
-
-        initial_capital = float(job.get("initial_capital") or config.get("initial_capital", 100_000.0))
-        total_pnl = float(result["metrics"]["total_pnl"])
-        explore_return = total_pnl / initial_capital
-        chart_points = result.get("chart_points") or []
-        stability = compute_explore_stability(chart_points)
-
-        job.update(
-            {
-                "status": "completed",
-                "updated_at": now_iso(),
-                "period_days": days,
-                "metrics": result["metrics"],
-                "chart_points": chart_points,
-                "return_pct": explore_return,
-                "stability": stability,
-            }
-        )
-    except Exception as exc:
-        job.update({"status": "error", "updated_at": now_iso(), "error": str(exc)})
-    _save_explore_job(job)
-
-
-def _bot_job_path(job_id: str) -> Path:
-    return BOT_JOBS_DIR / f"{job_id}.json"
-
-
-def _load_bot_job(job_id: str) -> dict[str, Any]:
-    path = _bot_job_path(job_id)
-    if not path.exists():
-        raise ValueError(f"Bot job {job_id!r} not found")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _save_bot_job(job: dict[str, Any]) -> None:
-    BOT_JOBS_DIR.mkdir(parents=True, exist_ok=True)
-    _bot_job_path(str(job["job_id"])).write_text(
-        json.dumps(job, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-
-def bot_limits_command() -> dict[str, Any]:
-    config = load_config()
-    source = str(config.get("data_source", "tbank"))
-    timeframe = str(config.get("timeframe", "1h"))
-    max_days = max_lookback_days(source, timeframe)
-    from src.engine.trading_bot import poll_seconds_for_timeframe
-
-    return {
-        "ok": True,
-        "instrument": config.get("instrument"),
-        "timeframe": timeframe,
-        "data_source": source_display_name(source),
-        "broker_source": source,
-        "initial_capital": float(config.get("initial_capital", 100_000.0)),
-        "default_days": min(7, max_days),
-        "max_days": max_days,
-        "use_sandbox_default": source == "tbank",
-        "poll_seconds": poll_seconds_for_timeframe(timeframe),
-    }
-
-
-def bot_list_command(limit: int = 30) -> dict[str, Any]:
-    BOT_JOBS_DIR.mkdir(parents=True, exist_ok=True)
-    jobs: list[dict[str, Any]] = []
-    for path in BOT_JOBS_DIR.glob("*.json"):
-        try:
-            job = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            continue
-        if isinstance(job, dict) and job.get("job_id"):
-            jobs.append(job)
-    jobs.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
-    return {"ok": True, "jobs": jobs[: max(1, limit)]}
-
-
-def bot_delete_command(job_id: str) -> dict[str, Any]:
-    path = _bot_job_path(job_id)
-    if path.exists():
-        path.unlink()
-    return {"ok": True, "job_id": job_id}
-
-
-def bot_start_command(payload_json: str) -> dict[str, Any]:
-    payload = json.loads(payload_json)
-    config = load_config()
-    source = str(payload.get("broker_source") or config.get("data_source", "tbank"))
-    job_id = secrets.token_hex(8)
-    job = {
-        "job_id": job_id,
-        "status": "running",
-        "mode": "validation",
-        "strategy_id": str(payload["strategy_id"]),
-        "title": str(payload.get("title") or payload["strategy_id"]),
-        "params": dict(payload.get("params") or {}),
-        "instrument": str(payload.get("instrument") or config.get("instrument", "SBER")),
-        "timeframe": str(payload.get("timeframe") or config.get("timeframe", "1h")),
-        "broker_source": source,
-        "days_to_fetch": int(payload.get("days_to_fetch") or 7),
-        "use_sandbox": bool(payload.get("use_sandbox", source == "tbank")),
-        "initial_capital": float(payload.get("initial_capital") or config.get("initial_capital", 100_000.0)),
-        "source_backtest_run_id": str(payload.get("source_backtest_run_id") or "dashboard"),
-        "tick": 0,
-        "chart_points": [],
-        "trade_log": [],
-        "started_at": now_iso(),
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
-    }
-    _save_bot_job(job)
-    return {"ok": True, "job_id": job_id}
-
-
-def bot_stop_command(job_id: str) -> dict[str, Any]:
-    job = _load_bot_job(job_id)
-    job["status"] = "stopped"
-    job["updated_at"] = now_iso()
-    _save_bot_job(job)
-    return {"ok": True, "job_id": job_id, "status": "stopped"}
-
-
-def _bot_validation_payload(report: Any, initial_capital: float) -> dict[str, Any]:
-    metrics = report.metrics
-    return_pct = float(metrics.total_pnl) / initial_capital if initial_capital else 0.0
-    return {
-        "validation_run_id": report.validation_run_id,
-        "source_backtest_run_id": report.source_backtest_run_id,
-        "total_pnl": float(metrics.total_pnl),
-        "sharpe_ratio": float(metrics.sharpe_ratio),
-        "max_drawdown": float(metrics.max_drawdown),
-        "win_rate": float(metrics.win_rate),
-        "deposit_baseline_pnl": float(metrics.deposit_baseline_pnl),
-        "return_pct": return_pct,
-    }
-
-
-async def bot_job_command(job_id: str) -> None:
-    from src.engine.trading_bot import (
-        MinimalTradingBot,
-        fetch_recent_market_data_via_loader_async,
-        poll_seconds_for_timeframe,
-    )
-
-    job = _load_bot_job(job_id)
-    if job.get("status") == "stopped":
-        return
-
-    job["status"] = "running"
-    job["mode"] = "validation"
-    job.setdefault("tick", 0)
-    job.setdefault("chart_points", [])
-    job.setdefault("trade_log", [])
-    job["updated_at"] = now_iso()
-    _save_bot_job(job)
-
-    days = int(job.get("days_to_fetch") or 7)
-    source = str(job.get("broker_source") or "tbank")
-    instrument = str(job.get("instrument") or "SBER")
-    timeframe = str(job.get("timeframe") or "1h")
-    initial_capital = float(job.get("initial_capital") or 100_000.0)
-    use_sandbox = bool(job.get("use_sandbox", source == "tbank"))
-    poll_seconds = poll_seconds_for_timeframe(timeframe)
-    bot = MinimalTradingBot()
-
-    while True:
-        job = _load_bot_job(job_id)
-        if job.get("status") in {"stopped", "stopping"}:
-            job["status"] = "stopped"
-            job["updated_at"] = now_iso()
-            _save_bot_job(job)
-            return
-
-        try:
-            candles, candle_source = await fetch_recent_market_data_via_loader_async(
-                instrument=instrument,
-                timeframe=timeframe,
-                days=days,
-                source=source,
-                use_sandbox=use_sandbox,
-                force_fetch=True,
-            )
-            if not candles:
-                raise RuntimeError("No candles available for the selected period")
-
-            snapshot = bot.validation_snapshot(
-                strategy_id=str(job["strategy_id"]),
-                params=normalize_order_size(dict(job.get("params") or {})),
-                recent_candles=candles,
-                initial_capital=initial_capital,
-                instrument=instrument,
-                timeframe=timeframe,
-                source_backtest_run_id=str(job.get("source_backtest_run_id") or "dashboard"),
-                candle_source=candle_source,
-            )
-
-            job.update(
-                {
-                    "status": "running",
-                    "updated_at": now_iso(),
-                    "last_tick_at": now_iso(),
-                    "poll_seconds": poll_seconds,
-                    "tick": int(job.get("tick") or 0) + 1,
-                    "candle_count": snapshot.candles_loaded,
-                    "candle_source": snapshot.candle_source or candle_source,
-                    "period_start": snapshot.period_start,
-                    "period_end": snapshot.period_end,
-                    "trade_count": snapshot.trade_count,
-                    "paper_events": snapshot.paper_events[-6:],
-                    "last_trade": snapshot.last_trade,
-                    "chart_points": snapshot.chart_points,
-                    "trade_log": snapshot.trade_log,
-                    "validation": _bot_validation_payload(snapshot.report, initial_capital),
-                    "error": None,
-                }
-            )
-            _save_bot_job(job)
-        except Exception as exc:
-            job.update({"status": "error", "updated_at": now_iso(), "error": str(exc)})
-            _save_bot_job(job)
-            return
-
-        await asyncio.sleep(poll_seconds)
-
-
-async def bot_live_command(job_id: str) -> None:
-    """Backward-compatible alias for the validation job loop."""
-    await bot_job_command(job_id)
-
-
-def bot_get_command(job_id: str) -> dict[str, Any]:
-    job = _load_bot_job(job_id)
-    return {"ok": True, "job": job}
 
 
 def parse_args() -> argparse.Namespace:
@@ -1434,45 +1460,18 @@ def parse_args() -> argparse.Namespace:
     delete_strategy_parser = sub.add_parser("delete-strategy", help="Delete a composable strategy YAML")
     delete_strategy_parser.add_argument("strategy_id")
 
-    sub.add_parser("explore-limits", help="Print allowed explore date range")
+    set_enabled_parser = sub.add_parser("set-strategy-enabled", help="Toggle strategy participation in bootstrap")
+    set_enabled_parser.add_argument("payload_json")
 
-    explore_list = sub.add_parser("explore-list", help="List recent explore jobs")
-    explore_list.add_argument("--limit", type=int, default=30)
+    live_start_parser = sub.add_parser("live-run-start", help="Start live refresh for one strategy")
+    live_start_parser.add_argument("payload_json")
 
-    explore_start = sub.add_parser("explore-start", help="Queue an explore job")
-    explore_start.add_argument("payload_json")
+    live_stop_parser = sub.add_parser("live-run-stop", help="Stop live refresh")
+    live_stop_parser.add_argument("payload_json")
 
-    explore_get = sub.add_parser("explore-get", help="Get explore job status")
-    explore_get.add_argument("job_id")
-
-    explore_delete = sub.add_parser("explore-delete", help="Delete an explore job file")
-    explore_delete.add_argument("job_id")
-
-    explore_job = sub.add_parser("explore-job", help="Run a queued explore job")
-    explore_job.add_argument("job_id")
-
-    sub.add_parser("bot-limits", help="Print paper bot defaults from dashboard config")
-
-    bot_list = sub.add_parser("bot-list", help="List recent paper bot jobs")
-    bot_list.add_argument("--limit", type=int, default=30)
-
-    bot_start = sub.add_parser("bot-start", help="Queue a paper bot validation job")
-    bot_start.add_argument("payload_json")
-
-    bot_get = sub.add_parser("bot-get", help="Get paper bot job status")
-    bot_get.add_argument("job_id")
-
-    bot_delete = sub.add_parser("bot-delete", help="Delete a paper bot job file")
-    bot_delete.add_argument("job_id")
-
-    bot_stop = sub.add_parser("bot-stop", help="Stop a live trading bot job")
-    bot_stop.add_argument("job_id")
-
-    bot_job = sub.add_parser("bot-job", help="Run a trading bot validation loop")
-    bot_job.add_argument("job_id")
-
-    bot_live = sub.add_parser("bot-live", help="Alias for bot-job")
-    bot_live.add_argument("job_id")
+    sub.add_parser("live-run-status", help="Print live refresh status")
+    sub.add_parser("live-run-tick", help="Refresh live strategy metrics from broker API")
+    sub.add_parser("prepare-bootstrap", help="Stop live refresh and mark backtest pending")
 
     return parser.parse_args()
 
@@ -1547,85 +1546,49 @@ def main() -> None:
         asyncio.run(refresh_ranking())
         return
 
-    if args.command == "explore-limits":
-        print(json.dumps(explore_limits_command(), ensure_ascii=False))
-        return
-
-    if args.command == "explore-list":
-        print(json.dumps(explore_list_command(limit=args.limit), ensure_ascii=False))
-        return
-
-    if args.command == "explore-start":
+    if args.command == "set-strategy-enabled":
         try:
-            result = explore_start_command(args.payload_json)
-        except (ValueError, json.JSONDecodeError) as exc:
-            print(str(exc))
+            payload = json.loads(args.payload_json)
+            result = set_strategy_enabled(str(payload["strategy_id"]), bool(payload.get("enabled", True)))
+        except (ValueError, json.JSONDecodeError, KeyError) as exc:
+            print(json.dumps({"ok": False, "message": str(exc)}, ensure_ascii=False))
+            sys.exit(1)
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False))
+        return
+
+    if args.command == "live-run-start":
+        try:
+            result = asyncio.run(live_run_start_command(args.payload_json))
+        except (ValueError, json.JSONDecodeError, RuntimeError) as exc:
+            print(json.dumps({"ok": False, "message": str(exc)}, ensure_ascii=False))
             sys.exit(1)
         print(json.dumps(result, ensure_ascii=False))
         return
 
-    if args.command == "explore-get":
+    if args.command == "live-run-stop":
         try:
-            result = explore_get_command(args.job_id)
-        except ValueError as exc:
-            print(str(exc))
+            result = live_run_stop_command(args.payload_json)
+        except (ValueError, json.JSONDecodeError, RuntimeError) as exc:
+            print(json.dumps({"ok": False, "message": str(exc)}, ensure_ascii=False))
             sys.exit(1)
         print(json.dumps(result, ensure_ascii=False))
         return
 
-    if args.command == "explore-delete":
-        print(json.dumps(explore_delete_command(args.job_id), ensure_ascii=False))
+    if args.command == "live-run-status":
+        print(json.dumps(live_run_status_command(), ensure_ascii=False))
         return
 
-    if args.command == "explore-job":
-        asyncio.run(explore_job_command(args.job_id))
-        return
-
-    if args.command == "bot-limits":
-        print(json.dumps(bot_limits_command(), ensure_ascii=False))
-        return
-
-    if args.command == "bot-list":
-        print(json.dumps(bot_list_command(limit=args.limit), ensure_ascii=False))
-        return
-
-    if args.command == "bot-start":
+    if args.command == "live-run-tick":
         try:
-            result = bot_start_command(args.payload_json)
-        except (ValueError, json.JSONDecodeError) as exc:
-            print(str(exc))
+            result = asyncio.run(live_run_tick_command())
+        except RuntimeError as exc:
+            print(json.dumps({"ok": False, "message": str(exc)}, ensure_ascii=False))
             sys.exit(1)
         print(json.dumps(result, ensure_ascii=False))
         return
 
-    if args.command == "bot-get":
-        try:
-            result = bot_get_command(args.job_id)
-        except ValueError as exc:
-            print(str(exc))
-            sys.exit(1)
-        print(json.dumps(result, ensure_ascii=False))
-        return
-
-    if args.command == "bot-delete":
-        print(json.dumps(bot_delete_command(args.job_id), ensure_ascii=False))
-        return
-
-    if args.command == "bot-stop":
-        try:
-            result = bot_stop_command(args.job_id)
-        except ValueError as exc:
-            print(str(exc))
-            sys.exit(1)
-        print(json.dumps(result, ensure_ascii=False))
-        return
-
-    if args.command == "bot-job":
-        asyncio.run(bot_job_command(args.job_id))
-        return
-
-    if args.command == "bot-live":
-        asyncio.run(bot_live_command(args.job_id))
+    if args.command == "prepare-bootstrap":
+        print(json.dumps(prepare_bootstrap_command(), ensure_ascii=False))
         return
 
     asyncio.run(bootstrap_all())

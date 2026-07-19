@@ -1,49 +1,47 @@
 {
-  "data_source": "binance",
-  "instrument": "BTCUSDT",
-  "timeframe": "15m",
+  "data_source": "tbank",
+  "instrument": "LKOH",
+  "timeframe": "1m",
   "initial_capital": 10000000.0,
-  "lookback_days": 24,
+  "lookback_days": 4,
   "optimization_iterations": 16,
   "optimization_mode": "sample",
   "optimization_seed": 42,
   "strategy_overrides": {
     "ma_rsi_composable": {
       "order_size": 1,
-      "fast": 5,
-      "slow": 30,
+      "fast": 21,
+      "slow": 50,
       "rsi_period": 7,
-      "rsi_buy_min": 45,
+      "rsi_buy_min": 40,
       "rsi_overbought": 60,
       "stop_loss_pct": 0.5,
-      "take_profit_pct": 2.0
+      "take_profit_pct": 1.0,
+      "enabled": false
     },
     "rsi_bounce_demo": {
       "order_size": 1,
       "rsi_period": 20,
       "rsi_oversold": 20,
-      "rsi_overbought": 65,
-      "stop_loss_pct": 7
-    },
-    "sma_cross_demo": {
-      "order_size": 1,
-      "fast": 12,
-      "slow": 50,
-      "stop_loss_pct": 0.7,
-      "take_profit_pct": 1.0
+      "rsi_overbought": 60,
+      "stop_loss_pct": 3,
+      "enabled": false
     },
     "ma_trailing_composable": {
       "order_size": 1,
-      "fast": 21,
-      "slow": 30,
-      "trailing_stop_pct": 3
+      "fast": 30,
+      "slow": 100,
+      "trailing_stop_pct": 5,
+      "enabled": false
     },
     "sma_cross_demo_the_best_final_1": {
       "fast": 15,
       "order_size": 1,
-      "slow": 20,
-      "stop_loss_pct": 1.0,
-      "take_profit_pct": 0.7
+      "slow": 100,
+      "stop_loss_pct": 1.5,
+      "take_profit_pct": 0.3
     }
-  }
+  },
+  "commission_pct": 0.05,
+  "slippage_pct": 0.01
 }

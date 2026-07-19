@@ -232,14 +232,19 @@ Top-N ranking is implemented in `src/analytics/ranking.py` and consumes already 
 total_pnl > deposit_baseline_pnl
 ```
 
-Eligible rows are sorted by a stable, documented criterion:
+Eligible rows are sorted by a stable criterion aligned with Strategy health
+(``build_strategy_verdict``):
 
-1. higher `total_pnl` first;
-2. if P&L ties, lower `max_drawdown` first;
-3. then higher `sharpe_ratio`;
-4. then higher `win_rate`;
-5. then deterministic `strategy_id` and `instrument` ordering;
-6. exact duplicate ranking keys keep their original input order.
+1. higher grade — PASS, then CAUTION, then FAIL;
+2. fewer health flags;
+3. higher ``profit_factor``;
+4. higher ``vs_buy_hold_pct``;
+5. higher ``consistency_pct``;
+6. higher ``total_return_pct``;
+7. lower ``max_drawdown``;
+8. higher ``sharpe_ratio``;
+9. deterministic ``strategy_id`` and ``instrument`` ordering;
+10. exact duplicate ranking keys keep their original input order.
 
 Empty input, `None` reports, non-finite metrics, `n <= 0`, and missing run IDs are handled
 without raising. The default output is `List[TopNEntry]`. Each entry includes rank, strategy,
