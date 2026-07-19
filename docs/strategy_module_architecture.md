@@ -1,6 +1,6 @@
 # Strategy Module Architecture
 
-Last audited against `main`: **July 14, 2026**.
+Last audited against `main`: **July 19, 2026**.
 
 ## Current Scope
 
@@ -213,10 +213,9 @@ JSON and SQLite candle cache persist across sessions.
 
 ## Known Gaps
 
-- full multi-period / walk-forward stability ranking (explore window stability is partial);
+- full multi-period / walk-forward stability ranking;
 - percentage-based metrics and risk/reward ratio in dashboard;
-- end-to-end validation workflow (holdout second stage; analytics library + trading bot
-  validation loop exist);
+- end-to-end validation workflow (holdout second stage);
 - multi-instrument portfolio UI (single-instrument dropdown implemented);
 - signal explanations, short positions, and multi-instrument portfolios are not supported;
 - relational strategy/run/parameter persistence is planned, not implemented.

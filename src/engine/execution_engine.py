@@ -1,5 +1,6 @@
 from typing import List
 
+from .execution_config import ExecutionConfig
 from .models import Candle, Trade, TradeLog
 from .portfolio import Portfolio
 from .context import ExecutionContext
@@ -8,8 +9,8 @@ from .order_executor import OrderExecutor
 
 class ExecutionEngine:
 
-    def __init__(self):
-        self.executor = OrderExecutor()
+    def __init__(self, execution_config: ExecutionConfig | None = None):
+        self.executor = OrderExecutor(execution_config)
 
     def run(
         self,

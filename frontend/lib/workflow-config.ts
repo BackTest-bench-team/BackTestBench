@@ -37,23 +37,13 @@ export type WorkflowMarketSelection = {
 export const WORKFLOW_MARKET_DEFAULTS_KEY = "backtestbench.workflow.market.v1";
 export const EXPLORE_TIMEFRAME = "1d";
 
-const REMOTE_MAX_LOOKBACK_DAYS = 3650;
-const TBANK_MAX_BY_TF: Record<string, number> = {
-  "1m": 1,
-  "5m": 7,
-  "15m": 24,
-  "30m": 25,
-  "1h": 100,
-  "1d": 2400,
-  "1w": 2100,
-  "1M": 3600,
-};
+const REMOTE_MAX_LOOKBACK_DAYS = 365_000;
 
 function timeframesForSource(source: string): WorkflowTimeframeOption[] {
   const values = ["1m", "5m", "15m", "30m", "1h", "1d", "1w", "1M"];
   return values.map((value) => ({
     value,
-    max_lookback_days: source === "tbank" ? (TBANK_MAX_BY_TF[value] ?? 30) : REMOTE_MAX_LOOKBACK_DAYS,
+    max_lookback_days: REMOTE_MAX_LOOKBACK_DAYS,
   }));
 }
 
@@ -236,9 +226,7 @@ export function saveWorkflowMarketDefaults(selection: Pick<WorkflowMarketSelecti
 
 export function exploreDateLimits(schema: WorkflowConfigSchema, brokerSource: string) {
   const source = resolveDataSource(schema, brokerSource);
-  const tf =
-    source.timeframes.find((item) => item.value === EXPLORE_TIMEFRAME) ?? source.timeframes[0];
-  const maxDays = tf?.max_lookback_days ?? 365;
+  const maxDays = REMOTE_MAX_LOOKBACK_DAYS;
   const now = new Date();
   const earliest = new Date(now);
   earliest.setUTCDate(earliest.getUTCDate() - maxDays);
@@ -253,13 +241,11 @@ export function exploreDateLimits(schema: WorkflowConfigSchema, brokerSource: st
 }
 
 export function botRollingWindowMaxDays(
-  schema: WorkflowConfigSchema,
-  brokerSource: string,
-  timeframe: string
+  _schema: WorkflowConfigSchema,
+  _brokerSource: string,
+  _timeframe: string
 ): number {
-  const source = resolveDataSource(schema, brokerSource);
-  const tf = source.timeframes.find((item) => item.value === timeframe) ?? source.timeframes[0];
-  return tf?.max_lookback_days ?? 30;
+  return REMOTE_MAX_LOOKBACK_DAYS;
 }
 
 async function loadConfigSchema(): Promise<WorkflowConfigSchema> {
