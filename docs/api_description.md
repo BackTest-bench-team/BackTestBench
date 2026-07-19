@@ -5,6 +5,14 @@ Binance, parallel trading bots, PR #144 bot pipeline, PRs #139–#146 week delta
 
 This document separates the API that currently works from the target FastAPI contract.
 
+## Interactive API Docs
+
+When the frontend is running:
+
+- **Swagger UI:** [http://localhost:3000/docs](http://localhost:3000/docs)
+- **OpenAPI spec (YAML):** [http://localhost:3000/api/openapi](http://localhost:3000/api/openapi)
+- **Source file:** [`openapi.yaml`](openapi.yaml)
+
 ## Implementation Status
 
 Implemented:
@@ -17,7 +25,8 @@ Not implemented:
 
 - the FastAPI application under `src/api` (files are empty);
 - strategy/backtest/history/data REST endpoints on port 8000;
-- durable run storage, request schemas, pagination, or OpenAPI generation.
+- durable run storage, request schemas, or pagination;
+- the planned FastAPI service (OpenAPI for the live Next.js routes is in [`openapi.yaml`](openapi.yaml)).
 
 ## Implemented Dashboard API
 

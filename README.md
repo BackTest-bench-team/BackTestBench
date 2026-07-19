@@ -101,7 +101,8 @@ The default Compose service runs the integrated dashboard:
 docker compose up --build
 ```
 
-Open <http://localhost:3000> (or the host port from `APP_PORT`, default 80).
+Open <http://localhost:3000> (or the host port from `APP_PORT`, default 80). API documentation:
+<http://localhost:3000/docs>.
 
 On first load the dashboard lists strategies from `config/strategies/*.yaml`. **Run backtest**
 executes all of them. Explore and Trading Bot live in the workflow dock. Stop the stack with:
