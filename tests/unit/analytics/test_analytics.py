@@ -39,6 +39,34 @@ def trade(pnl: float) -> Trade:
     )
 
 
+def _ranking_report(
+    strategy_id: str,
+    *,
+    total_pnl: float = 100.0,
+    deposit_baseline_pnl: float = 50.0,
+    profit_factor: float = 1.4,
+    consistency_pct: float = 0.75,
+    vs_buy_hold_pct: float = 0.03,
+    total_return_pct: float = 0.10,
+    sharpe_ratio: float = 1.0,
+    max_drawdown: float = 0.10,
+    win_rate: float = 0.5,
+) -> MetricsReport:
+    return MetricsReport(
+        strategy_id,
+        "SBER",
+        total_pnl=total_pnl,
+        sharpe_ratio=sharpe_ratio,
+        max_drawdown=max_drawdown,
+        win_rate=win_rate,
+        deposit_baseline_pnl=deposit_baseline_pnl,
+        profit_factor=profit_factor,
+        consistency_pct=consistency_pct,
+        total_return_pct=total_return_pct,
+        vs_buy_hold_pct=vs_buy_hold_pct,
+    )
+
+
 def test_total_pnl_calculation_works():
     assert calculate_total_pnl([trade(10.0), trade(-3.5), trade(0.5)]) == 7.0
     assert calculate_total_pnl([]) == 0.0
@@ -126,9 +154,23 @@ def test_data_integrity_error_when_totals_do_not_match_final_value():
 
 def test_top_n_filters_baseline_and_sorts():
     reports = [
-        MetricsReport("s1", "SBER", total_pnl=100.0, sharpe_ratio=1.0, max_drawdown=0.1, win_rate=0.5, deposit_baseline_pnl=50.0),
-        MetricsReport("s2", "SBER", total_pnl=40.0, sharpe_ratio=2.0, max_drawdown=0.1, win_rate=0.7, deposit_baseline_pnl=50.0),
-        MetricsReport("s3", "SBER", total_pnl=120.0, sharpe_ratio=1.5, max_drawdown=0.2, win_rate=0.6, deposit_baseline_pnl=50.0),
+        _ranking_report(
+            "s1",
+            total_pnl=100.0,
+            profit_factor=1.2,
+            consistency_pct=0.70,
+            vs_buy_hold_pct=0.02,
+            total_return_pct=0.08,
+        ),
+        _ranking_report("s2", total_pnl=40.0, deposit_baseline_pnl=50.0),
+        _ranking_report(
+            "s3",
+            total_pnl=120.0,
+            profit_factor=1.6,
+            consistency_pct=0.80,
+            vs_buy_hold_pct=0.05,
+            total_return_pct=0.12,
+        ),
     ]
 
     top = build_top_n(reports, n=2)
@@ -137,16 +179,98 @@ def test_top_n_filters_baseline_and_sorts():
     assert [entry.rank for entry in top] == [1, 2]
 
 
-def test_top_n_defines_tie_breakers_and_keeps_exact_ties_stable():
+def test_top_n_sorts_by_strategy_health_grade():
     reports = [
-        MetricsReport("s2", "SBER", total_pnl=100.0, sharpe_ratio=1.0, max_drawdown=0.10, win_rate=0.5, deposit_baseline_pnl=0.0),
-        MetricsReport("s1", "SBER", total_pnl=100.0, sharpe_ratio=1.0, max_drawdown=0.08, win_rate=0.5, deposit_baseline_pnl=0.0),
-        MetricsReport("s4", "SBER", total_pnl=80.0, sharpe_ratio=3.0, max_drawdown=0.01, win_rate=0.9, deposit_baseline_pnl=0.0),
-        MetricsReport("same", "A", total_pnl=70.0, sharpe_ratio=1.0, max_drawdown=0.10, win_rate=0.5, deposit_baseline_pnl=0.0),
-        MetricsReport("same", "A", total_pnl=70.0, sharpe_ratio=1.0, max_drawdown=0.10, win_rate=0.5, deposit_baseline_pnl=0.0),
+        _ranking_report("fail", total_pnl=10.0, deposit_baseline_pnl=50.0, profit_factor=0.8),
+        _ranking_report(
+            "caution",
+            total_pnl=80.0,
+            profit_factor=1.3,
+            consistency_pct=0.40,
+            vs_buy_hold_pct=0.01,
+        ),
+        _ranking_report(
+            "pass",
+            total_pnl=70.0,
+            profit_factor=1.5,
+            consistency_pct=0.80,
+            vs_buy_hold_pct=0.04,
+        ),
     ]
 
-    top = build_top_n(reports, n=5)
+    top = build_top_n(
+        reports,
+        n=3,
+        config=RankingConfig(n=3, require_above_baseline=False),
+    )
+
+    assert [entry.strategy_id for entry in top] == ["pass", "caution", "fail"]
+
+
+def test_top_n_defines_tie_breakers_and_keeps_exact_ties_stable():
+    reports = [
+        _ranking_report(
+            "s2",
+            total_pnl=100.0,
+            profit_factor=1.4,
+            max_drawdown=0.10,
+            vs_buy_hold_pct=0.02,
+            consistency_pct=0.75,
+            total_return_pct=0.10,
+        ),
+        _ranking_report(
+            "s1",
+            total_pnl=100.0,
+            profit_factor=1.4,
+            max_drawdown=0.08,
+            vs_buy_hold_pct=0.03,
+            consistency_pct=0.75,
+            total_return_pct=0.10,
+        ),
+        _ranking_report(
+            "s4",
+            total_pnl=80.0,
+            profit_factor=1.35,
+            sharpe_ratio=3.0,
+            max_drawdown=0.01,
+            vs_buy_hold_pct=0.04,
+            consistency_pct=0.76,
+            total_return_pct=0.09,
+            deposit_baseline_pnl=0.0,
+        ),
+        MetricsReport(
+            "same",
+            "A",
+            total_pnl=70.0,
+            sharpe_ratio=1.0,
+            max_drawdown=0.10,
+            win_rate=0.5,
+            deposit_baseline_pnl=0.0,
+            profit_factor=1.2,
+            consistency_pct=0.75,
+            vs_buy_hold_pct=0.03,
+            total_return_pct=0.07,
+        ),
+        MetricsReport(
+            "same",
+            "A",
+            total_pnl=70.0,
+            sharpe_ratio=1.0,
+            max_drawdown=0.10,
+            win_rate=0.5,
+            deposit_baseline_pnl=0.0,
+            profit_factor=1.2,
+            consistency_pct=0.75,
+            vs_buy_hold_pct=0.03,
+            total_return_pct=0.07,
+        ),
+    ]
+
+    top = build_top_n(
+        reports,
+        n=5,
+        config=RankingConfig(n=5, require_above_baseline=False),
+    )
 
     assert [entry.strategy_id for entry in top[:3]] == ["s1", "s2", "s4"]
     assert top[3].strategy_id == "same"
@@ -403,6 +527,13 @@ def test_optimizer_output_schema_works_with_composable_strategy_id():
                 "max_drawdown": 0.2,
                 "win_rate": 0.5,
                 "deposit_baseline_pnl": 0.0,
+                "profit_factor": 0.0,
+                "calmar_ratio": 0.0,
+                "consistency_pct": 0.0,
+                "total_return_pct": 0.0,
+                "vs_buy_hold_pct": 0.0,
+                "positive_months": 0,
+                "total_months": 0,
             },
         }
     ]

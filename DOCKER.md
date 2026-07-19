@@ -1,7 +1,6 @@
 # Docker Guide
 
-This guide matches `docker-compose.yml`, `Dockerfile`, and `Dockerfile.fullstack` as of
-July 14, 2026.
+This guide matches `docker-compose.yml` as of **July 19, 2026**.
 
 ## Prerequisites
 
@@ -33,9 +32,26 @@ API tokens saved from the dashboard UI persist across `docker compose down` / `u
 are **not** cleared on restart — only the ephemeral container filesystem is recreated.
 
 The dashboard calls Next.js API routes that spawn `/app/main.py` subcommands (`bootstrap`,
-`stop`, `refresh-ranking`, `add-strategy`, `delete-strategy`, `explore-*`, `bot-*`, and
-related helpers), which update `/app/data/runtime-dashboard.json`, explore/bot job JSON under
-`/app/data/`, and may write `/app/data/backtest.db` (SQLite candle cache).
+`live-run-*`, `stop`, `refresh-ranking`, …), which update `/app/data/runtime-dashboard.json`
+and `/app/data/backtest.db` (SQLite candle cache).
+
+## Storing API keys (`.env`)
+
+Compose loads `./.env` via `env_file` and bind-mounts it into the container (`./.env:/app/.env`).
+The dashboard **Save token** action also writes keys into this file on the host.
+
+**Acceptable for a private research VM** if you:
+
+- never commit `.env` (keep `.gitignore` intact);
+- restrict host access (`chmod 600 .env`, limited SSH/users);
+- treat keys like passwords (rotate if leaked);
+- accept that keys are **plain text on disk**, not in a secrets manager.
+
+**Not ideal for production or multi-tenant servers** — prefer Docker secrets, Vault, or
+cloud secret stores; inject env vars at deploy time instead of a world-readable file.
+
+Bybit/Binance public kline endpoints often work without tokens. T-Bank and Twelve Data keys
+grant API access to your brokerage/data account — protect accordingly.
 
 Stop the stack:
 
@@ -106,8 +122,8 @@ Run backend tests:
 docker compose --profile test run --rm test
 ```
 
-As of July 14, 2026, the backend test suite contains **188 tests** (all passing) with
-**77%** coverage of `src/`.
+As of July 19, 2026, run the suite via Compose or locally (`pytest tests -q`). Exact test
+count and coverage vary by branch; CI runs the full suite on every PR.
 
 ## CI
 

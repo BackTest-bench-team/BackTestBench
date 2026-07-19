@@ -60,6 +60,13 @@ class MetricsReport:
     max_drawdown: float
     win_rate: float
     deposit_baseline_pnl: float
+    profit_factor: float = 0.0
+    calmar_ratio: float = 0.0
+    consistency_pct: float = 0.0
+    total_return_pct: float = 0.0
+    vs_buy_hold_pct: float = 0.0
+    positive_months: int = 0
+    total_months: int = 0
 
 @dataclass(frozen=True)
 class OptimizationIteration:

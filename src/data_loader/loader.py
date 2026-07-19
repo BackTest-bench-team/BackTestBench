@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -150,6 +150,74 @@ class DataLoader:
         if self.cache:
             self.cache.set(instrument, timeframe, rows)
         return rows
+
+    def get_earliest_candle_timestamp(
+        self,
+        instrument: str,
+        timeframe: str,
+    ) -> datetime | None:
+        stmt = (
+            select(CandleModel.timestamp)
+            .where(
+                and_(
+                    CandleModel.instrument == instrument,
+                    CandleModel.timeframe == timeframe,
+                )
+            )
+            .order_by(CandleModel.timestamp.asc())
+            .limit(1)
+        )
+        row = self.session.execute(stmt).scalar_one_or_none()
+        if row is None:
+            return None
+        earliest = utc_naive(row)
+        return earliest.replace(tzinfo=timezone.utc)
+
+    def get_candle_bounds(
+        self,
+        instrument: str,
+        timeframe: str,
+    ) -> tuple[datetime | None, datetime | None]:
+        return (
+            self.get_earliest_candle_timestamp(instrument, timeframe),
+            self.get_latest_candle_timestamp(instrument, timeframe),
+        )
+
+    def clear_candles(self, instrument: str, timeframe: str) -> int:
+        stmt = delete(CandleModel).where(
+            and_(
+                CandleModel.instrument == instrument,
+                CandleModel.timeframe == timeframe,
+            )
+        )
+        result = self.session.execute(stmt)
+        self.session.commit()
+        if self.cache:
+            self.cache.clear()
+        return result.rowcount or 0
+
+    def count_candles(
+        self,
+        instrument: str,
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+    ) -> int:
+        start_naive = utc_naive(start)
+        end_naive = utc_naive(end)
+        stmt = (
+            select(func.count())
+            .select_from(CandleModel)
+            .where(
+                and_(
+                    CandleModel.instrument == instrument,
+                    CandleModel.timeframe == timeframe,
+                    CandleModel.timestamp >= start_naive,
+                    CandleModel.timestamp <= end_naive,
+                )
+            )
+        )
+        return int(self.session.execute(stmt).scalar_one())
 
     def get_latest_candle_timestamp(
         self,

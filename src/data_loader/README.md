@@ -1,106 +1,59 @@
 # Data Loader
 
-Loads candle history from broker adapters into SQLite and serves it to the backtest engine,
-optimizer, explore dock, and trading bot.
+Loads candle history into SQLite and serves it to the backtest engine and Live refresh.
 
-## End-to-end pipeline
+## Pipeline
 
 ```text
-Broker adapter (T-Bank / Twelve Data / Bybit)
-        │  get_candles()
+Broker adapter (T-Bank / Twelve Data / Bybit / Binance)
+        │  get_candles() — paginated inside adapter for large ranges
         ▼
-normalize_candle() + validate_candles()
-        │  UTC timestamps, float OHLCV, OHLC sanity, dedupe
+backtest_fetch.ensure_backtest_candles()  — chunked sequential fetch, gap fill
+        │  validate_candles() + upsert
         ▼
-DataLoader.store_candles()  →  SQLite (candles table)
+SQLite data/backtest.db (candles table)
         │
-        ├─ load_engine_candles()  →  ExecutionEngine / charts (full OHLCV)
-        └─ load_price_series()    →  composable strategies (timestamp + close)
-                │
-                ▼
-        create_strategy() + ExecutionEngine.run()
-                │
-                ▼
-        MetricsReport / ValidationMetricsReport / dashboard JSON
+        └─ load_engine_candles() → ExecutionEngine / metrics / charts
 ```
 
-**Single-fetch contract:** `main.load_market_data()` and `ensure_candles_loaded()` fetch at
-most once per process run (unless `force_fetch=True`). The optimizer, explore jobs, and
-multi-strategy bootstrap all reuse the same `LoadedMarketData.candles` list.
+**Bootstrap path:** `main.load_candles_for_backtest()` → `ensure_backtest_candles()`.
+
+- Same instrument + timeframe: reuse DB; fetch only missing date ranges.
+- Timeframe change on Run backtest: clears cached candles for the old TF.
+- Lookback decrease: serve from DB only; increase: fetch additional chunks.
+
+**Live refresh:** same loader on each tick (`live_run_tick_command`).
+
+**Trading bot module** (`src/engine/trading_bot.py`) still uses `DataLoader.ensure_candles_loaded()` directly for optional rolling validation scripts — separate from the dashboard.
 
 ## Validation (`validate_candles`)
 
-Checked before storage:
-
-| Rule | Detail |
-|------|--------|
-| Non-empty input | Raises `ValidationError` on `[]` |
-| Required OHLC | `None` open/high/low/close rows are dropped |
-| Volume | Negative volume dropped; missing volume → `0` |
-| OHLC consistency | `high >= low`, wick brackets open/close |
-| Duplicates | Same timestamp: last row wins |
-
-**Not checked** (explicitly post-course / out of scope for #120):
-
-- Missing bars / gap detection across the series
-- Incremental sync or delta updates from broker
-- Train vs validation dataset splits
-- Corporate actions, splits, or session calendars
+Non-empty input, valid OHLC, dedupe by timestamp before upsert.
 
 ## Core API
 
 ```python
-loader = DataLoader(use_cache=True)
+from src.data_loader.backtest_fetch import ensure_backtest_candles
 
-# Store after broker fetch
-loader.store_candles("SBER", "1h", raw_candles)
-
-# Full candles for ExecutionEngine
-candles = loader.load_engine_candles("SBER", "1h", start, end)
-
-# Composable price series (timestamp + close)
-bars = loader.load_price_series("SBER", "1h", start, end)
-
-# Last N bars only — useful for trading bot / rolling windows
-bars = loader.load_price_series("SBER", "1h", start, end, last_n_bars=168)
-
-# One-shot load with broker fallback
-market = await loader.ensure_candles_loaded(
-    "SBER", "1h", start, end, fetch_from_broker,
-    force_fetch=False,
+candles, source, api_calls = await ensure_backtest_candles(
+    config, from_dt, to_dt, fetch_candles_from_api, on_progress=callback,
 )
-# market.candles, market.price_series, market.source
+```
 
+```python
+loader = DataLoader(use_cache=False)
+loader.store_candles("SBER", "1h", raw_candles)
+candles = loader.load_engine_candles("SBER", "1h", start, end)
 loader.close()
 ```
 
-`CandleCache` keeps the latest `(instrument, timeframe)` query in memory until
-`store_candles()` clears it.
+## Docker / SQLite
 
-## Dashboard integration
+- Local dev: WAL journal mode when not in Docker.
+- Compose `app` service: `SQLITE_JOURNAL_MODE=DELETE` (bind mounts).
+- Cache file: `data/backtest.db` (gitignored).
 
-`main.bootstrap_all()`:
+## Deferred
 
-1. `load_market_data()` → `ensure_candles_loaded()`
-2. Reuses `market_data.candles` for every strategy backtest
-3. Optimizer iterations never call the broker again in the same run
-
-Trading bot (`src/engine/trading_bot.py`) uses the same loader with `force_fetch=True` on
-each validation tick to refresh the recent window.
-
-**Parallel bot jobs:** each `bot-job` subprocess owns its own `BrokerAdapter` and `DataLoader`
-session. SQLite uses WAL locally; **Docker Compose uses `DELETE` journal mode** because WAL
-sidecar files often break on bind-mounted volumes. `ensure_candles_loaded()` releases the read
-transaction before awaiting the broker so multiple bots can write candles concurrently.
-
-## Composable strategies
-
-Composable YAML strategies precompute indicators from closing prices. After candles are in
-SQLite, `load_price_series()` is the preferred export. Use `price_bars_to_candles()` only when
-a caller needs minimal `Candle` rows from `(timestamp, price)` pairs.
-
-## Deferred (issue #120 — not in current sprint)
-
-- Incremental candle sync (append-only broker polling)
-- Dedicated validation/holdout dataset storage
-- Full gap/outlier analytics on stored series
+- Dedicated holdout dataset tables
+- Corporate actions / session calendars

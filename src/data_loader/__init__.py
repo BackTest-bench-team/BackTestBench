@@ -1,3 +1,4 @@
+from .backtest_fetch import ensure_backtest_candles, coverage_gaps, chunk_windows
 from .loader import (
     DataLoader,
     LoadedMarketData,
