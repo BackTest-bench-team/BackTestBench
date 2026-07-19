@@ -29,6 +29,7 @@ reflect that combined HEAD.
 | [`../DOCKER.md`](../DOCKER.md) | Compose services, CI job matrix, container workflow |
 | [`../frontend/README.md`](../frontend/README.md) | Dashboard UI: bootstrap, workflow dock (explore + bot), tokens |
 | [`api_description.md`](api_description.md) | Implemented Next.js routes plus separately labeled target FastAPI API |
+| [`openapi.yaml`](openapi.yaml) | OpenAPI 3 spec; interactive Swagger UI at `/docs` when frontend runs |
 | [`interfaces_description.md`](interfaces_description.md) | Engine, strategy, composable, optimization, bot, broker dataclasses |
 | [`strategy_module_architecture.md`](strategy_module_architecture.md) | Strategy contract, plugin strategies, composable engine overview |
 | [`strategy_composable_engine_design.md`](strategy_composable_engine_design.md) | **Implemented** composable rule engine (bilingual EN/RU); architecture reference |

@@ -21,6 +21,9 @@ Browser
    └─ Poll results ──► GET /api/dashboard | /api/explore?job_id=… | /api/bot?job_id=…
 ```
 
+**API docs:** with the dev server running, open [http://localhost:3000/docs](http://localhost:3000/docs)
+(Swagger UI) or fetch the spec at `/api/openapi`.
+
 1. **Backtest control panel** saves runtime settings to `config/dashboard.json` and starts
    `main.py bootstrap`.
 2. **Explore** and **Trading Bot** live in the bottom **Workflow dock** as independent tabs with
@@ -251,5 +254,6 @@ As of July 14, 2026 the backend suite reports **188 passed** tests with **77%** 
 
 - [`../src/data_loader/README.md`](../src/data_loader/README.md) — candle load pipeline
 - [`../docs/api_description.md`](../docs/api_description.md) — route contracts
+- [`../docs/openapi.yaml`](../docs/openapi.yaml) — OpenAPI spec (Swagger UI at `/docs`)
 - [`../docs/strategy_composable_engine_design.md`](../docs/strategy_composable_engine_design.md) — YAML strategies
 - [`../docs/README.md`](../docs/README.md) — documentation status matrix
