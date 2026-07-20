@@ -1,5 +1,13 @@
 {
   "dependencies": {
     "recharts": "^3.8.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  },
+  "scripts": {
+    "render:presentation": "node reports/render-presentation-pdf.mjs",
+    "render:final-report": "node reports/render-final-pdf.mjs",
+    "postinstall": "playwright install chromium"
   }
 }

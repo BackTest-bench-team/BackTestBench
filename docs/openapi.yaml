@@ -1,43 +1,20 @@
 openapi: 3.0.3
 info:
-  title: BackTestBench Dashboard API
-  description: |
-    Live Next.js route handlers used by the MVP2 dashboard (`http://localhost:3000`).
-
-    Python subprocesses write JSON state under `data/`. This is not a durable run-history store.
-
-    Planned FastAPI routes on port 8000 are listed under the **Planned** tag — they are not callable yet.
-
-    Markdown reference: `docs/api_description.md`
+  title: BackTestBench API
+  description: REST API for the BackTestBench dashboard.
   version: 1.0.0
-  contact:
-    name: BackTestBench
-servers:
-  - url: http://localhost:3000
-    description: Local Next.js dev server
 tags:
   - name: Dashboard
-    description: Backtest run state and control
   - name: Config
-    description: Runtime settings persisted in config/dashboard.json
   - name: Strategies
-    description: Composable YAML strategy files
   - name: Tokens
-    description: Broker API token status and persistence
   - name: Explore
-    description: Custom date-range explore jobs
   - name: Bot
-    description: Rolling out-of-sample trading bot jobs
-  - name: Planned
-    description: Target FastAPI contract — not implemented
 paths:
   /api/dashboard:
     get:
       tags: [Dashboard]
       summary: Get dashboard state
-      description: |
-        Returns the latest multi-strategy dashboard payload from `data/runtime-dashboard.json`.
-        If the file is missing or invalid, returns a valid idle state with HTTP 200.
       operationId: getDashboard
       responses:
         "200":
@@ -50,19 +27,16 @@ paths:
     post:
       tags: [Dashboard]
       summary: Start bootstrap backtest
-      description: |
-        Runs all composable strategies from `config/strategies/*.yaml` via `python main.py bootstrap`.
-        Settings come from `config/dashboard.json`.
       operationId: postBootstrap
       responses:
         "202":
-          description: Bootstrap subprocess started
+          description: Bootstrap started
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/StartResponse"
         "500":
-          description: Token missing or launch failure
+          description: Launch failure
           content:
             application/json:
               schema:
@@ -71,11 +45,10 @@ paths:
     post:
       tags: [Dashboard]
       summary: Stop running bootstrap
-      description: Writes a stop request file and terminates the running bootstrap process when possible.
       operationId: postStop
       responses:
         "202":
-          description: Stop request accepted
+          description: Stop accepted
           content:
             application/json:
               schema:
@@ -91,7 +64,7 @@ paths:
                   dashboard_updated:
                     type: boolean
         "500":
-          description: Stop request failed
+          description: Stop failed
           content:
             application/json:
               schema:
@@ -100,7 +73,6 @@ paths:
     post:
       tags: [Dashboard]
       summary: Refresh strategy Top-N ranking
-      description: Recomputes ranking from completed strategy metrics without rerunning backtests.
       operationId: postRefreshRanking
       responses:
         "202":
@@ -119,7 +91,6 @@ paths:
     get:
       tags: [Config]
       summary: Load runtime settings schema
-      description: Returns current settings, validation schema, and optional token status.
       operationId: getConfig
       responses:
         "200":
@@ -129,7 +100,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ConfigGetResponse"
         "500":
-          description: Failed to load schema
+          description: Load failed
           content:
             application/json:
               schema:
@@ -185,7 +156,6 @@ paths:
               properties:
                 yaml:
                   type: string
-                  description: Full composable strategy YAML document
       responses:
         "200":
           description: Strategy added
@@ -222,7 +192,6 @@ paths:
           required: true
           schema:
             type: string
-          description: Strategy identifier (filename stem)
       responses:
         "200":
           description: Strategy deleted
@@ -257,13 +226,13 @@ paths:
       operationId: getTokens
       responses:
         "200":
-          description: Token status per provider
+          description: Token status
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TokenStatusResponse"
         "500":
-          description: Failed to load token status
+          description: Load failed
           content:
             application/json:
               schema:
@@ -308,21 +277,18 @@ paths:
           schema:
             type: string
             enum: ["1"]
-          description: When set, list recent explore jobs
         - name: job_id
           in: query
           schema:
             type: string
-          description: Poll a single explore job
         - name: limit
           in: query
           schema:
             type: integer
             default: 30
-          description: Max jobs when `list=1`
       responses:
         "200":
-          description: Limits, job list, or job payload
+          description: OK
           content:
             application/json:
               schema:
@@ -343,7 +309,6 @@ paths:
     post:
       tags: [Explore]
       summary: Queue explore job
-      description: Spawns `main.py explore-job {job_id}` in the background after queueing.
       operationId: postExplore
       requestBody:
         required: true
@@ -353,7 +318,7 @@ paths:
               $ref: "#/components/schemas/ExploreStartRequest"
       responses:
         "202":
-          description: Explore job queued
+          description: Job queued
           content:
             application/json:
               schema:
@@ -378,7 +343,7 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
     delete:
       tags: [Explore]
-      summary: Delete explore job file
+      summary: Delete explore job
       operationId: deleteExplore
       parameters:
         - name: job_id
@@ -417,21 +382,18 @@ paths:
           schema:
             type: string
             enum: ["1"]
-          description: When set, list recent bot jobs
         - name: job_id
           in: query
           schema:
             type: string
-          description: Poll a single bot job
         - name: limit
           in: query
           schema:
             type: integer
             default: 30
-          description: Max jobs when `list=1`
       responses:
         "200":
-          description: Limits, job list, or job payload
+          description: OK
           content:
             application/json:
               schema:
@@ -492,7 +454,6 @@ paths:
     delete:
       tags: [Bot]
       summary: Stop and delete bot job
-      description: Calls `bot-stop` then deletes the job file.
       operationId: deleteBot
       parameters:
         - name: job_id
@@ -520,45 +481,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-  /health:
-    get:
-      tags: [Planned]
-      summary: "[Planned] API health check"
-      description: Not implemented. Target FastAPI service on port 8000.
-      operationId: plannedHealth
-      servers:
-        - url: http://localhost:8000
-      responses:
-        "501":
-          description: Not implemented
-  /strategies:
-    get:
-      tags: [Planned]
-      summary: "[Planned] List registered strategies"
-      description: Not implemented. Target FastAPI service on port 8000.
-      operationId: plannedListStrategies
-      servers:
-        - url: http://localhost:8000
-      responses:
-        "501":
-          description: Not implemented
-  /backtest/run:
-    post:
-      tags: [Planned]
-      summary: "[Planned] Start configurable backtest run"
-      description: Not implemented. Target FastAPI service on port 8000.
-      operationId: plannedBacktestRun
-      servers:
-        - url: http://localhost:8000
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PlannedBacktestRequest"
-      responses:
-        "501":
-          description: Not implemented
 components:
   schemas:
     ErrorResponse:
@@ -566,7 +488,6 @@ components:
       properties:
         ok:
           type: boolean
-          example: false
         message:
           type: string
     StartResponse:
@@ -575,10 +496,8 @@ components:
       properties:
         ok:
           type: boolean
-          example: true
         started:
           type: boolean
-          example: true
         message:
           type: string
     StrategySummary:
@@ -656,10 +575,8 @@ components:
       properties:
         instrument:
           type: string
-          example: SBER
         timeframe:
           type: string
-          example: 1h
         data_source:
           type: string
         initial_capital:
@@ -756,36 +673,27 @@ components:
           type: string
         verify:
           type: boolean
-          description: When true, validate tokens against broker APIs before saving
     ExploreStartRequest:
       type: object
       required: [strategy_id]
       properties:
         strategy_id:
           type: string
-          example: sma_cross_demo
         title:
           type: string
         params:
           type: object
           additionalProperties: true
-          example:
-            fast: 21
-            slow: 50
         initial_capital:
           type: number
-          example: 100000
         from_date:
           type: string
           format: date
-          example: "2026-01-01"
         to_date:
           type: string
           format: date
-          example: "2026-03-01"
         instrument:
           type: string
-          example: SBER
         broker_source:
           type: string
           enum: [tbank, twelvedata, bybit, binance]
@@ -795,27 +703,22 @@ components:
       properties:
         strategy_id:
           type: string
-          example: ma_rsi_composable
         params:
           type: object
           additionalProperties: true
         instrument:
           type: string
-          example: AAPL
         broker_source:
           type: string
           enum: [tbank, twelvedata, bybit, binance]
         timeframe:
           type: string
-          example: 1h
         days_to_fetch:
           type: integer
-          example: 7
         use_sandbox:
           type: boolean
         initial_capital:
           type: number
-          example: 100000
     BotStopRequest:
       type: object
       required: [action, job_id]
@@ -834,27 +737,3 @@ components:
           enum: [resume]
         job_id:
           type: string
-    PlannedBacktestRequest:
-      type: object
-      properties:
-        strategy_id:
-          type: string
-          example: ma_crossover
-        instrument:
-          type: string
-          example: SBER
-        from_dt:
-          type: string
-          format: date-time
-        to_dt:
-          type: string
-          format: date-time
-        timeframe:
-          type: string
-          example: 1h
-        initial_capital:
-          type: number
-          example: 100000
-        params:
-          type: object
-          additionalProperties: true
