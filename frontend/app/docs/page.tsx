@@ -6,8 +6,6 @@ const SWAGGER_UI_VERSION = "5.18.2";
 
 type SwaggerUiBundle = {
   (config: Record<string, unknown>): void;
-  presets: { apis: unknown };
-  SwaggerUIStandalonePreset: unknown;
 };
 
 declare global {
@@ -23,6 +21,10 @@ export default function ApiDocsPage() {
     stylesheet.href = `https://unpkg.com/swagger-ui-dist@${SWAGGER_UI_VERSION}/swagger-ui.css`;
     document.head.appendChild(stylesheet);
 
+    const hideServersStyle = document.createElement("style");
+    hideServersStyle.textContent = ".swagger-ui .scheme-container { display: none; }";
+    document.head.appendChild(hideServersStyle);
+
     const script = document.createElement("script");
     script.src = `https://unpkg.com/swagger-ui-dist@${SWAGGER_UI_VERSION}/swagger-ui-bundle.js`;
     script.async = true;
@@ -34,14 +36,13 @@ export default function ApiDocsPage() {
         url: "/api/openapi",
         dom_id: "#swagger-ui",
         deepLinking: true,
-        presets: [bundle.presets.apis, bundle.SwaggerUIStandalonePreset],
-        layout: "StandaloneLayout",
       });
     };
     document.body.appendChild(script);
 
     return () => {
       stylesheet.remove();
+      hideServersStyle.remove();
       script.remove();
     };
   }, []);
@@ -50,10 +51,6 @@ export default function ApiDocsPage() {
     <main className="min-h-screen bg-white">
       <header className="border-b border-slate-200 px-6 py-4">
         <h1 className="text-xl font-semibold text-slate-900">BackTestBench API</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Interactive OpenAPI docs for the live Next.js dashboard routes. Planned FastAPI endpoints
-          are tagged <strong>Planned</strong>.
-        </p>
       </header>
       <div id="swagger-ui" />
     </main>

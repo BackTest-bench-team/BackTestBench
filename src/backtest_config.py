@@ -91,10 +91,9 @@ TBANK_DAYS_LIMIT_BY_TIMEFRAME: dict[str, int] = {
     "1M": 3600,
 }
 
-REMOTE_MAX_LOOKBACK_DAYS = 3650
-
-# Backward-compatible alias.
+# Backward-compatible alias (limits removed from validation; kept for legacy imports).
 DAYS_LIMIT_BY_TIMEFRAME = TBANK_DAYS_LIMIT_BY_TIMEFRAME
+REMOTE_MAX_LOOKBACK_DAYS = 365_000
 
 OPTIMIZATION_MODES: dict[str, str] = {
     "grid": (
@@ -123,9 +122,9 @@ def validate_data_source(value: str) -> str:
 
 
 def max_lookback_days(data_source: str, timeframe: str) -> int:
-    source = validate_data_source(data_source)
-    if source == "tbank":
-        return TBANK_DAYS_LIMIT_BY_TIMEFRAME[timeframe]
+    """UI hint only — validation no longer caps lookback."""
+    _ = validate_data_source(data_source)
+    _ = validate_timeframe(timeframe)
     return REMOTE_MAX_LOOKBACK_DAYS
 
 
@@ -162,18 +161,16 @@ def validate_timeframe(timeframe: str) -> str:
 
 
 def validate_lookback_days(timeframe: str, lookback_days: int, data_source: str = "tbank") -> int:
+    _ = validate_timeframe(timeframe)
+    _ = validate_data_source(data_source)
     if isinstance(lookback_days, bool) or not isinstance(lookback_days, int):
         raise ConfigValidationError(f"lookback_days must be a positive integer, got: {lookback_days!r}")
     if lookback_days <= 0:
         raise ConfigValidationError(f"lookback_days must be > 0, got: {lookback_days}")
-
-    source = validate_data_source(data_source)
-    limit = max_lookback_days(source, timeframe)
-    if lookback_days > limit:
-        provider = source_display_name(source)
+    if lookback_days > REMOTE_MAX_LOOKBACK_DAYS:
         raise ConfigValidationError(
-            f"lookback_days={lookback_days} exceeds the limit for timeframe '{timeframe}' "
-            f"on {provider} (max {limit} days)."
+            f"lookback_days={lookback_days} exceeds the maximum supported value "
+            f"({REMOTE_MAX_LOOKBACK_DAYS} days)."
         )
     return lookback_days
 
@@ -216,6 +213,26 @@ def validate_optimization_seed(seed: int) -> int:
     return seed
 
 
+def validate_commission_pct(value: Any) -> float:
+    try:
+        pct = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigValidationError("commission_pct must be a number") from exc
+    if pct < 0 or pct > 10:
+        raise ConfigValidationError("commission_pct must be between 0 and 10")
+    return pct
+
+
+def validate_slippage_pct(value: Any) -> float:
+    try:
+        pct = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigValidationError("slippage_pct must be a number") from exc
+    if pct < 0 or pct > 5:
+        raise ConfigValidationError("slippage_pct must be between 0 and 5")
+    return pct
+
+
 def validate_runtime_settings(raw: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalize dashboard runtime settings (not strategy params)."""
     data_source = validate_data_source(str(raw.get("data_source", "tbank")))
@@ -236,6 +253,8 @@ def validate_runtime_settings(raw: dict[str, Any]) -> dict[str, Any]:
         int(raw.get("optimization_iterations", 16)),
     )
     optimization_seed = validate_optimization_seed(int(raw.get("optimization_seed", 42)))
+    commission_pct = validate_commission_pct(raw.get("commission_pct", 0.05))
+    slippage_pct = validate_slippage_pct(raw.get("slippage_pct", 0.01))
 
     return {
         "data_source": data_source,
@@ -246,6 +265,8 @@ def validate_runtime_settings(raw: dict[str, Any]) -> dict[str, Any]:
         "optimization_mode": optimization_mode,
         "optimization_iterations": optimization_iterations,
         "optimization_seed": optimization_seed,
+        "commission_pct": commission_pct,
+        "slippage_pct": slippage_pct,
     }
 
 
@@ -293,5 +314,7 @@ def ui_schema() -> dict[str, Any]:
             "optimization_mode": "grid",
             "optimization_iterations": 16,
             "optimization_seed": 42,
+            "commission_pct": 0.05,
+            "slippage_pct": 0.01,
         },
     }

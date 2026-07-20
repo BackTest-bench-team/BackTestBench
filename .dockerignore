@@ -45,6 +45,7 @@ reports/
 transcriptions/
 *.pdf
 docs/
+!docs/openapi.yaml
 
 # Development
 venv/

@@ -17,6 +17,7 @@ class Portfolio:
     cash: float
     position_size: float = 0.0
     average_entry_price: float = 0.0
+    cost_basis: float = 0.0
     equity: float = 0.0
     opened_at: Optional[str] = None
     effects: List[PositionEffect] = field(default_factory=list) # Новое поле

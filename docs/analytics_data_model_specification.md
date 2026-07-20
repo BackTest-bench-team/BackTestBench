@@ -1,6 +1,6 @@
 # Analytics Data Model
 
-Last audited against `main`: **July 14, 2026**.
+Last audited against `main`: **July 19, 2026**.
 
 ## Implementation Status
 
@@ -17,8 +17,8 @@ Implemented:
 - optimization summary (top iterations per strategy) in runtime JSON when optimizer runs;
 - optimizer parameter ranking via `rank_optimizer_results` / `build_optimizer_output`
   (`optimization.ranked[]` alongside `top_iterations[]`, PR #139);
-- explore window-stability helpers in `src/stability.py` (partial; not walk-forward ranking);
-- trading-bot validation jobs consuming validation metrics (PR #144).
+- period consistency (`calculate_period_consistency`, four equal sub-periods by bar count);
+- strategy health verdict (`src/analytics/strategy_verdict.py`).
 
 Not implemented:
 
@@ -102,14 +102,21 @@ The dashboard formats currency as RUB, but the dataclass itself does not encode 
 4. takes the requested `n`;
 5. returns `TopNEntry` values.
 
-The default ranking criterion is:
+The default ranking criterion (Strategy health / ``build_strategy_verdict``):
 
-1. higher `total_pnl` first;
-2. if P&L ties, lower `max_drawdown` first;
-3. then higher `sharpe_ratio`;
-4. then higher `win_rate`;
-5. then deterministic `strategy_id` / `instrument` ordering;
-6. exact duplicate ranking keys keep the original input order.
+1. higher grade — PASS, then CAUTION, then FAIL;
+2. fewer health flags;
+3. higher ``profit_factor``;
+4. higher ``vs_buy_hold_pct``;
+5. higher ``consistency_pct``;
+6. higher ``total_return_pct``;
+7. lower ``max_drawdown``;
+8. higher ``sharpe_ratio``;
+9. deterministic ``strategy_id`` / ``instrument`` ordering;
+10. exact duplicate ranking keys keep the original input order.
+
+Pass ``RankingConfig.initial_capital`` when ranking from dashboard metrics (used for deposit
+baseline comparison inside the verdict).
 
 For ranking-review screens where below-baseline strategies still need to be inspected,
 callers may pass `RankingConfig(require_above_baseline=False)`.

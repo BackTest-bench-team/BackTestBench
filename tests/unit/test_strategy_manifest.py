@@ -114,6 +114,22 @@ def test_get_strategy_overrides_ignores_invalid_entries():
     }
 
 
+def test_runtime_strategies_default_enabled_true(tmp_path, monkeypatch):
+    strategies = runtime_strategies({"strategy_overrides": {}})
+    assert strategies
+    assert all(item["params"].get("enabled") is True for item in strategies)
+
+
+def test_strategy_enabled_flag():
+    from main import strategy_enabled, strategy_run_params
+
+    assert strategy_enabled({"enabled": True, "fast": 5}) is True
+    assert strategy_enabled({"enabled": False, "fast": 5}) is False
+    assert strategy_enabled({"fast": 5}) is True
+    assert "enabled" not in strategy_run_params({"enabled": False, "fast": 5, "order_size": 1})
+    assert strategy_run_params({"enabled": False, "fast": 5, "order_size": 1})["fast"] == 5
+
+
 def test_runtime_strategies_merges_config_overrides(tmp_path, monkeypatch):
     monkeypatch.setattr("src.strategy_manifest.STRATEGIES_DIR", tmp_path)
     add_strategy_yaml(SAMPLE_YAML)

@@ -1,11 +1,11 @@
 # Broker Adapter
 
-Last audited against `main`: **July 14, 2026**.
+Last audited against `main`: **July 19, 2026**.
 
 ## Purpose
 
 `BrokerAdapter` defines an asynchronous boundary for market data and future trading
-operations. The integrated dashboard, explore dock, and trading bot select a concrete
+operations. The dashboard and Live refresh select a concrete
 adapter through `src/broker_adapter/factory.py` (`build_adapter`).
 
 ## Factory Sources
@@ -79,7 +79,7 @@ Implemented in `src/broker_adapter/twelvedata.py` (PR #135):
 - token from `TWELVEDATA_TOKEN`;
 - returns engine `Candle` list.
 
-Wired into the dashboard / explore / bot paths through the factory (not examples-only).
+Wired into bootstrap and live refresh through the factory.
 
 ## Bybit Adapter
 
@@ -162,14 +162,14 @@ Never commit token values. The integrated dashboard and Docker Compose require a
 ## Current Data Flow
 
 ```text
-main.py / explore-job / bot-job
+main.py bootstrap / live_run_tick
   -> build_adapter(source)
-  -> DataLoader.ensure_candles_loaded(...)
+  -> load_candles_for_backtest() / ensure_backtest_candles()
        cache hit -> SQLite (data/backtest.db)
-       miss / force_fetch -> adapter.get_candles(...) -> upsert
+       miss / force_fetch -> adapter.get_candles(...) chunked -> upsert
   -> list[engine.Candle]
-  -> ExecutionEngine / trading bot validation loop
+  -> ExecutionEngine.run(...)
 ```
 
 Order placement and portfolio retrieval remain future work. Live trading automation is out
-of scope; the trading bot simulates fills only.
+of scope; the dashboard simulates fills only.

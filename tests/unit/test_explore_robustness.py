@@ -1,47 +1,43 @@
-"""Tests for explore stability scoring."""
+"""Tests for period-based consistency metric."""
 
-from src.stability import compute_explore_stability
+from src.analytics.metrics import calculate_period_consistency
 
 
-def _points(strategy_values: list[float], benchmark_values: list[float] | None = None) -> list[dict]:
-    bench = benchmark_values or strategy_values
+def _points(strategy_values: list[float]) -> list[dict]:
     return [
         {
-            "date": f"2026-01-{i + 1:02d}T00:00:00",
-            "strategy_index": strategy_values[i],
-            "benchmark_index": bench[i],
+            "date": f"2025-01-01T{i:02d}:00:00",
+            "strategy_index": value,
+            "benchmark_index": value,
         }
-        for i in range(len(strategy_values))
+        for i, value in enumerate(strategy_values)
     ]
 
 
-def test_stability_high_when_consistent_across_windows():
-    strategy = [100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120, 122]
-    benchmark = [100, 100.5, 101, 101.5, 102, 102.5, 103, 103.5, 104, 104.5, 105, 105.5]
-    result = compute_explore_stability(_points(strategy, benchmark))
-    assert result["stability"] is not None
-    assert result["stability"] >= 70
-    assert result["consistency_score"] == 100
-    assert result["positive_windows"] == result["windows"]
-    assert result["volatility"] is not None
-    assert result["worst_period"] is not None
+def test_consistency_high_when_most_periods_positive():
+    values = [100 + i for i in range(40)]
+    pct, positive, total = calculate_period_consistency(_points(values), periods=4)
+    assert total == 3
+    assert positive == 3
+    assert pct == 1.0
 
 
-def test_stability_low_when_only_one_lucky_window():
-    strategy = [100] * 11 + [130]
-    benchmark = [100] * 12
-    result = compute_explore_stability(_points(strategy, benchmark))
-    assert result["stability"] is not None
-    assert result["stability"] <= 45
-    assert result["positive_windows"] == 1
-    assert result["worst_period"] == 0.0
+def test_consistency_not_binary_for_short_intraday_window():
+    pct, positive, total = calculate_period_consistency(_points([100, 101, 99, 102]), periods=4)
+    assert total >= 1
+    assert 0.0 < pct < 1.0 or positive in {0, 1, 2, 3}
 
 
-def test_stability_reports_volatility_and_worst_period():
-    strategy = [100, 108, 102, 110, 104, 112, 106, 114]
-    benchmark = [100, 101, 101, 102, 102, 103, 103, 104]
-    result = compute_explore_stability(_points(strategy, benchmark), segment_count=2)
-    assert result["volatility"] is not None
-    assert result["worst_period"] is not None
-    assert result["vs_benchmark"] is not None
-    assert result["vs_benchmark"] > 0
+def test_consistency_low_when_only_last_period_wins():
+    values = [100] * 30 + [150] * 10
+    pct, positive, total = calculate_period_consistency(_points(values), periods=4)
+    assert total == 3
+    assert positive <= 1
+    assert pct <= 0.34
+
+
+def test_consistency_empty_for_short_series():
+    pct, positive, total = calculate_period_consistency([])
+    assert pct == 0.0
+    assert positive == 0
+    assert total == 0

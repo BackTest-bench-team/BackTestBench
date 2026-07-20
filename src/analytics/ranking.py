@@ -15,24 +15,35 @@ from math import isfinite
 from typing import Any, Sequence
 
 from src.engine.models import MetricsReport
+from src.analytics.strategy_verdict import build_strategy_verdict
 
 
 @dataclass(frozen=True)
 class RankingConfig:
     """Configuration for Top-N generation.
 
-    Ranking criterion:
-    1. include only reports with ``total_pnl > deposit_baseline_pnl``;
-    2. sort by higher ``total_pnl``;
-    3. if P&L ties, prefer lower ``max_drawdown``;
-    4. then prefer higher ``sharpe_ratio``;
-    5. then prefer higher ``win_rate``;
-    6. then use ``strategy_id`` and ``instrument`` for deterministic ordering;
-    7. exact duplicate keys keep their original input order.
+    Eligibility (when ``require_above_baseline`` is true):
+    - include only reports with ``total_pnl > deposit_baseline_pnl``.
+
+    Sort order (aligned with Strategy health / ``build_strategy_verdict``):
+    1. higher grade — PASS, then CAUTION, then FAIL;
+    2. fewer health flags;
+    3. higher ``profit_factor``;
+    4. higher ``vs_buy_hold_pct``;
+    5. higher ``consistency_pct``;
+    6. higher ``total_return_pct``;
+    7. lower ``max_drawdown``;
+    8. higher ``sharpe_ratio``;
+    9. deterministic ``strategy_id`` / ``instrument``;
+    10. original input order for exact ties.
     """
 
     n: int = 10
     require_above_baseline: bool = True
+    initial_capital: float = 100_000.0
+
+
+_GRADE_ORDER = {"PASS": 0, "CAUTION": 1, "FAIL": 2}
 
 
 @dataclass(frozen=True)
@@ -97,7 +108,9 @@ def build_top_n(
 
     # Python sorting is stable. The original index is the final key so exact
     # duplicate ranking keys preserve input order in a documented way.
-    valid_reports.sort(key=lambda item: _ranking_key(item[1], item[0]))
+    valid_reports.sort(
+        key=lambda item: _ranking_key(item[1], item[0], cfg.initial_capital)
+    )
 
     entries: list[TopNEntry] = []
     for rank, (_, report) in enumerate(valid_reports[:limit], start=1):
@@ -157,12 +170,19 @@ def build_ranking_review(
     return review
 
 
-def _ranking_key(report: MetricsReport, original_index: int) -> tuple:
+def _ranking_key(
+    report: MetricsReport, original_index: int, initial_capital: float
+) -> tuple:
+    verdict = build_strategy_verdict(report, initial_capital=initial_capital)
     return (
-        -float(report.total_pnl),
+        _GRADE_ORDER[verdict.grade],
+        len(verdict.flags),
+        -verdict.profit_factor,
+        -verdict.vs_buy_hold_pct,
+        -verdict.consistency_pct,
+        -verdict.total_return_pct,
         float(report.max_drawdown),
         -float(report.sharpe_ratio),
-        -float(report.win_rate),
         str(report.strategy_id),
         str(report.instrument),
         original_index,

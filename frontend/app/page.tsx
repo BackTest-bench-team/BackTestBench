@@ -1,43 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BacktestControlPanel,
   type RuntimeSettings,
 } from "@/components/BacktestControlPanel";
 import { AddStrategyPanel } from "@/components/AddStrategyPanel";
-import {
-  applyExploreJobUpdate,
-  createExploreSession,
-  deleteExploreJob,
-  dismissExploreSession,
-  findExploreSessionByFingerprint,
-  saveExploreSessions,
-  useExploreJobPolling,
-  useExploreRestore,
-  type ExploreSession,
-} from "@/components/ExploreDock";
-import {
-  applyBotJobUpdate,
-  createBotSession,
-  deleteBotJob,
-  dismissBotSession,
-  findBotSessionByFingerprint,
-  saveBotSessions,
-  useBotJobPolling,
-  useBotRestore,
-  stopBotJob,
-  type BotSession,
-} from "@/components/BotDock";
-import { WorkflowDock, type WorkflowMode } from "@/components/WorkflowDock";
-import { dedupeByFingerprint, exploreSessionFingerprint, botSessionFingerprint } from "@/lib/session-fingerprint";
-import {
-  loadWorkflowMarketDefaults,
-  marketSelectionFromSource,
-  sourceDisplayName,
-  useWorkflowConfig,
-  workflowSchemaFallback,
-} from "@/lib/workflow-config";
+import { sourceDisplayName } from "@/lib/workflow-config";
 import {
   CartesianGrid,
   ComposedChart,
@@ -102,7 +71,7 @@ type StrategyResult = {
   strategy_version: string;
   title?: string;
   status: "idle" | "running" | "completed" | "error";
-  params: Record<string, number>;
+  params: Record<string, number | boolean>;
   parameter_specs?: ParamSpec[];
   initial_capital: number;
   optimization?: OptimizationSummary;
@@ -113,7 +82,24 @@ type StrategyResult = {
     win_rate: number | null;
     deposit_baseline_pnl: number | null;
     deposit_baseline_final?: number | null;
+    profit_factor: number | null;
+    calmar_ratio: number | null;
+    consistency_pct: number | null;
+    total_return_pct: number | null;
+    vs_buy_hold_pct: number | null;
+    positive_months: number | null;
+    total_months: number | null;
   };
+  live_active?: boolean;
+  verdict?: {
+    grade: "PASS" | "CAUTION" | "FAIL";
+    flags: string[];
+    vs_buy_hold_pct: number;
+    vs_deposit_pct: number;
+    profit_factor: number;
+    consistency_pct: number;
+    total_return_pct: number;
+  } | null;
   chart_points?: ChartPoint[];
   trade_log?: TradePoint[];
   final_portfolio: {
@@ -154,9 +140,23 @@ type DashboardData = {
   last_updated: string | null;
 };
 
-const POLL_IDLE_MS = 4000;
-const POLL_RUNNING_MS = 900;
+const POLL_IDLE_MS = 8000;
+const POLL_RUNNING_MS = 1500;
 const BASELINE = 100;
+
+function livePollMs(timeframe: string) {
+  const intervals: Record<string, number> = {
+    "1m": 15_000,
+    "5m": 30_000,
+    "15m": 60_000,
+    "30m": 90_000,
+    "1h": 120_000,
+    "1d": 300_000,
+    "1w": 600_000,
+    "1M": 900_000,
+  };
+  return intervals[timeframe] ?? 60_000;
+}
 
 const CHART = {
   strategy: "#475ee6",
@@ -268,14 +268,20 @@ function buildChartRows(points: ChartPoint[], trades: TradePoint[]): ChartRow[] 
 
   return baseRows.map((row, index) => {
     const next = baseRows[index + 1];
+    const prev = baseRows[index - 1];
     const bridgeToFlat = row.in_position && next && !next.in_position;
-    const bridgeToHold = !row.in_position && next && next.in_position;
+    const entering = row.in_position && (!prev || !prev.in_position);
+
+    let action = row.action;
+    if (!action && bridgeToFlat) action = "SELL";
+    if (!action && entering) action = "BUY";
 
     return {
       ...row,
-      strategy_solid: row.in_position || bridgeToHold ? row.strategy_index : null,
+      action,
+      strategy_solid: row.in_position || (next && !row.in_position && next.in_position) ? row.strategy_index : null,
       strategy_flat: !row.in_position || bridgeToFlat ? row.strategy_index : null,
-      trade_marker: row.action ? row.strategy_index : null,
+      trade_marker: action ? row.strategy_index : null,
     };
   });
 }
@@ -538,10 +544,20 @@ function formatParamLabel(name: string) {
   return name.replace(/_/g, " ");
 }
 
-function ParamSummary({ params }: { params: Record<string, number> }) {
+function numericStrategyParams(params: Record<string, number | boolean>) {
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (key === "enabled") continue;
+    if (typeof value === "number") out[key] = value;
+  }
+  return out;
+}
+
+function ParamSummary({ params }: { params: Record<string, number | boolean> }) {
+  const numeric = numericStrategyParams(params);
   return (
     <div className="params-summary" aria-label="Strategy parameters">
-      {Object.entries(params).map(([name, value]) => (
+      {Object.entries(numeric).map(([name, value]) => (
         <div className="param-chip" key={name}>
           <span className="param-chip-label">{formatParamLabel(name)}</span>
           <span className="param-chip-value">{value}</span>
@@ -554,13 +570,9 @@ function ParamSummary({ params }: { params: Record<string, number> }) {
 function OptimizationPanel({
   summary,
   initialCapital,
-  onExplore,
-  onBot,
 }: {
   summary: OptimizationSummary;
   initialCapital: number;
-  onExplore?: (params: Record<string, number>) => void;
-  onBot?: (params: Record<string, number>) => void;
 }) {
   const scopeLabel =
     summary.mode === "grid" || summary.exhaustive
@@ -583,7 +595,6 @@ function OptimizationPanel({
                 <th>Return %</th>
                 <th>Sharpe</th>
                 <th>Params</th>
-                {(onExplore || onBot) && <th />}
               </tr>
             </thead>
             <tbody>
@@ -599,28 +610,6 @@ function OptimizationPanel({
                       .map(([key, value]) => `${formatParamLabel(key)}=${value}`)
                       .join(", ")}
                   </td>
-                  {(onExplore || onBot) && (
-                    <td className="optimization-actions">
-                      {onExplore && (
-                        <button
-                          className="strategy-action-btn"
-                          type="button"
-                          onClick={() => onExplore(row.params)}
-                        >
-                          Explore
-                        </button>
-                      )}
-                      {onBot && (
-                        <button
-                          className="strategy-action-btn strategy-action-btn-bot"
-                          type="button"
-                          onClick={() => onBot(row.params)}
-                        >
-                          Trading Bot
-                        </button>
-                      )}
-                    </td>
-                  )}
                 </tr>
               ))}
             </tbody>
@@ -677,7 +666,7 @@ function TradeMarker(props: { cx?: number; cy?: number; payload?: ChartRow }) {
   return <circle cx={cx} cy={cy} r={3.5} fill={fill} stroke="#ffffff" strokeWidth={1.5} />;
 }
 
-function PerformanceChart({ points, trades = [] }: { points: ChartPoint[]; trades: TradePoint[] }) {
+function PerformanceChartInner({ points, trades = [] }: { points: ChartPoint[]; trades: TradePoint[] }) {
   const data = useMemo(() => buildChartRows(points, trades), [points, trades]);
   const chartBoxRef = useRef<HTMLDivElement>(null);
 
@@ -848,23 +837,109 @@ function PerformanceChart({ points, trades = [] }: { points: ChartPoint[]; trade
   );
 }
 
-function formatStrategyError(message: string | null | undefined) {
-  if (!message) return "Unknown error";
-  if (message.includes("invest-public-api.tbank.ru") || message.includes("Connection failed")) {
-    return "T-Bank API unreachable (network timeout). Check internet/VPN/firewall, or run again when cached candles exist in the database.";
+const PerformanceChart = memo(PerformanceChartInner);
+
+function bestParams(strategy: StrategyResult): Record<string, number> {
+  const best = strategy.optimization?.top_iterations?.[0]?.params;
+  if (best) return best;
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(strategy.params)) {
+    if (typeof value === "number") out[key] = value;
   }
-  return message;
+  return out;
 }
 
-function StrategyCard({
+function formatConsistency(metrics: StrategyResult["metrics"]) {
+  if (metrics.consistency_pct == null) return "—";
+  const periods =
+    metrics.positive_months != null && metrics.total_months != null
+      ? ` (${metrics.positive_months}/${metrics.total_months} periods)`
+      : "";
+  return `${formatPercent(metrics.consistency_pct)}${periods}`;
+}
+
+const VERDICT_LABELS: Record<string, string> = {
+  profit_factor_below_1: "Profit factor below 1.0",
+  below_deposit_baseline: "Does not beat deposit baseline",
+  underperforms_buy_hold: "Underperforms buy & hold",
+  low_consistency: "Low period consistency",
+};
+
+function applyLiveStrategy(
+  strategies: StrategyResult[],
+  strategyId: string,
+  strategy: StrategyResult
+) {
+  return strategies.map((entry) =>
+    entry.strategy_id === strategyId
+      ? { ...strategy, live_active: true }
+      : { ...entry, live_active: false }
+  );
+}
+
+function StrategyHealthPanel({
+  strategy,
+}: {
+  strategy: StrategyResult;
+}) {
+  const verdict = strategy.verdict;
+  if (!verdict) return null;
+
+  const gradeClass =
+    verdict.grade === "PASS"
+      ? "is-pass"
+      : verdict.grade === "CAUTION"
+        ? "is-caution"
+        : "is-fail";
+
+  return (
+    <div className={`strategy-health ${gradeClass}`} aria-label="Strategy health">
+      <div className="strategy-health-head">
+        <span className="strategy-health-kicker">Strategy health</span>
+        <span className={`strategy-health-grade ${gradeClass}`}>{verdict.grade}</span>
+      </div>
+      <div className="strategy-health-metrics">
+        <span>Return {formatSignedReturnPct(verdict.total_return_pct)}</span>
+        <span>PF {formatNumber(verdict.profit_factor)}</span>
+        <span>Consistency {formatPercent(verdict.consistency_pct)}</span>
+        <span>vs B&amp;H {formatSignedReturnPct(verdict.vs_buy_hold_pct)}</span>
+        <span>vs Deposit {formatSignedReturnPct(verdict.vs_deposit_pct)}</span>
+      </div>
+      {verdict.flags.length > 0 && (
+        <ul className="strategy-health-flags">
+          {verdict.flags.map((flag) => (
+            <li key={flag}>{VERDICT_LABELS[flag] ?? flag}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function isStrategyEnabled(params: Record<string, number | boolean | string | undefined>) {
+  const enabled = params.enabled;
+  if (enabled === false || enabled === 0) return false;
+  if (typeof enabled === "string") {
+    const normalized = enabled.trim().toLowerCase();
+    if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
+      return false;
+    }
+  }
+  return true;
+}
+
+const StrategyCardInner = ({
   strategy,
   rankEntry,
   highlighted,
   busy,
   showLoading,
   onDelete,
-  onExplore,
-  onBot,
+  onToggleLive,
+  liveBusy,
+  liveStrategyId,
+  onToggleEnabled,
+  togglingEnabled,
 }: {
   strategy: StrategyResult;
   rankEntry?: RankingEntry;
@@ -872,12 +947,18 @@ function StrategyCard({
   busy?: boolean;
   showLoading?: boolean;
   onDelete?: (strategyId: string) => Promise<void>;
-  onExplore?: (params: Record<string, number>) => void;
-  onBot?: (params: Record<string, number>) => void;
-}) {
+  onToggleLive?: (strategyId: string, params: Record<string, number>, isLive: boolean) => Promise<void>;
+  liveBusy?: boolean;
+  liveStrategyId?: string | null;
+  onToggleEnabled?: (strategyId: string, enabled: boolean) => Promise<void>;
+  togglingEnabled?: boolean;
+}) => {
   const isRunning = strategy.status === "running";
   const isError = strategy.status === "error";
   const cardLoading = Boolean(showLoading);
+  const runEnabled = isStrategyEnabled(strategy.params);
+  const isLive = liveStrategyId === strategy.strategy_id || Boolean(strategy.live_active);
+  const otherLive = liveStrategyId != null && liveStrategyId !== strategy.strategy_id;
   const [deleting, setDeleting] = useState(false);
 
   async function handleDelete() {
@@ -897,10 +978,21 @@ function StrategyCard({
   return (
     <article
       id={strategyCardId(strategy.strategy_id)}
-      className={`strategy-card ${cardLoading || isRunning ? "is-running" : ""}${highlighted ? " is-highlighted" : ""}`}
+      className={`strategy-card ${cardLoading || isRunning ? "is-running" : ""}${isLive ? " is-live" : ""}${highlighted ? " is-highlighted" : ""}${runEnabled ? "" : " is-run-disabled"}`}
     >
       <header className="strategy-header">
         <div className="strategy-header-main">
+          {onToggleEnabled && (
+            <label className="strategy-run-toggle" title="Include in next Run backtest">
+              <input
+                type="checkbox"
+                checked={runEnabled}
+                disabled={busy || togglingEnabled || cardLoading}
+                onChange={(event) => void onToggleEnabled(strategy.strategy_id, event.target.checked)}
+              />
+              <span>Run</span>
+            </label>
+          )}
           {!cardLoading && <RankBadge entry={rankEntry} />}
           <div>
             <p className="strategy-kicker">{strategy.title ?? strategy.strategy_id}</p>
@@ -908,25 +1000,22 @@ function StrategyCard({
           </div>
         </div>
         <div className="strategy-status">
-          {onExplore && (
+          {onToggleLive && !cardLoading && strategy.status === "completed" && (
             <button
-              className="strategy-action-btn"
+              className="strategy-action-btn strategy-action-btn-live"
               type="button"
-              disabled={busy || cardLoading}
-              onClick={() => onExplore(strategy.params)}
+              disabled={busy || liveBusy || otherLive}
+              onClick={() => void onToggleLive(strategy.strategy_id, bestParams(strategy), isLive)}
             >
-              Explore
+              {liveBusy && isLive
+                ? "Starting…"
+                : isLive
+                  ? "Stop Live"
+                  : "Go Live"}
             </button>
           )}
-          {onBot && (
-            <button
-              className="strategy-action-btn strategy-action-btn-bot"
-              type="button"
-              disabled={busy || cardLoading}
-              onClick={() => onBot(strategy.params)}
-            >
-              Trading Bot
-            </button>
+          {isLive && !cardLoading && (
+            <span className="status-pill status-live">Live</span>
           )}
           {onDelete && (
             <button
@@ -960,13 +1049,10 @@ function StrategyCard({
       <ParamSummary params={strategy.params} />
 
       {!cardLoading && strategy.optimization && (
-        <OptimizationPanel
-          summary={strategy.optimization}
-          initialCapital={strategy.initial_capital}
-          onExplore={onExplore}
-          onBot={onBot}
-        />
+        <OptimizationPanel summary={strategy.optimization} initialCapital={strategy.initial_capital} />
       )}
+
+      {!cardLoading && strategy.status === "completed" && <StrategyHealthPanel strategy={strategy} />}
 
       {isError && strategy.error && (
         <div className="strategy-error">{formatStrategyError(strategy.error)}</div>
@@ -978,12 +1064,14 @@ function StrategyCard({
         <>
           <div className="metrics-grid">
             <div className="metric-card">
-              <span className="metric-title">P&amp;L</span>
+              <span className="metric-title">Return</span>
               <span className="metric-value">
                 {formatSignedReturnPct(
-                  strategy.metrics.total_pnl != null && strategy.initial_capital > 0
-                    ? strategy.metrics.total_pnl / strategy.initial_capital
-                    : null
+                  strategy.metrics.total_return_pct ?? (
+                    strategy.metrics.total_pnl != null && strategy.initial_capital > 0
+                      ? strategy.metrics.total_pnl / strategy.initial_capital
+                      : null
+                  )
                 )}
               </span>
             </div>
@@ -1000,7 +1088,26 @@ function StrategyCard({
               <span className="metric-value">{formatPercent(strategy.metrics.win_rate)}</span>
             </div>
             <div className="metric-card">
-              <span className="metric-title">Deposit</span>
+              <span className="metric-title">Profit factor</span>
+              <span className="metric-value">{formatNumber(strategy.metrics.profit_factor)}</span>
+            </div>
+            <div className="metric-card">
+              <span className="metric-title">Calmar</span>
+              <span className="metric-value">{formatNumber(strategy.metrics.calmar_ratio)}</span>
+            </div>
+            <div className="metric-card">
+              <span className="metric-title">Consistency</span>
+              <span className="metric-value">{formatConsistency(strategy.metrics)}</span>
+              <span className="metric-hint">Positive months</span>
+            </div>
+            <div className="metric-card">
+              <span className="metric-title">vs Buy&amp;Hold</span>
+              <span className="metric-value">
+                {formatSignedReturnPct(strategy.metrics.vs_buy_hold_pct)}
+              </span>
+            </div>
+            <div className="metric-card">
+              <span className="metric-title">vs Deposit</span>
               <span className="metric-value">
                 {formatSignedReturnPct(
                   strategy.metrics.deposit_baseline_pnl != null && strategy.initial_capital > 0
@@ -1008,11 +1115,7 @@ function StrategyCard({
                     : null
                 )}
               </span>
-              <span className="metric-hint">Bank baseline</span>
-            </div>
-            <div className="metric-card">
-              <span className="metric-title">Capital</span>
-              <span className="metric-value">{formatMoney(strategy.initial_capital)}</span>
+              <span className="metric-hint">13% baseline</span>
             </div>
           </div>
 
@@ -1024,6 +1127,16 @@ function StrategyCard({
       )}
     </article>
   );
+};
+
+const StrategyCard = memo(StrategyCardInner);
+
+function formatStrategyError(message: string | null | undefined) {
+  if (!message) return "Unknown error";
+  if (message.includes("invest-public-api.tbank.ru") || message.includes("Connection failed")) {
+    return "T-Bank API unreachable (network timeout). Check internet/VPN/firewall and try again.";
+  }
+  return message;
 }
 
 export default function Page() {
@@ -1036,336 +1149,211 @@ export default function Page() {
   const rankingRefreshRequested = useRef(false);
   const highlightTimerRef = useRef<number | null>(null);
   const [highlightedStrategyId, setHighlightedStrategyId] = useState<string | null>(null);
-  const { schema: workflowSchema, error: workflowConfigError } = useWorkflowConfig();
-  const [exploreSessions, setExploreSessions] = useState<ExploreSession[]>([]);
-  const [botSessions, setBotSessions] = useState<BotSession[]>([]);
-  const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("explore");
-  const [activeExploreId, setActiveExploreId] = useState<string | null>(null);
-  const [activeBotId, setActiveBotId] = useState<string | null>(null);
-  const [workflowActionError, setWorkflowActionError] = useState<string | null>(null);
-  const [workflowDockCollapsed, setWorkflowDockCollapsed] = useState(false);
+  const [liveStrategyId, setLiveStrategyId] = useState<string | null>(null);
+  const liveStrategyIdRef = useRef<string | null>(null);
+  liveStrategyIdRef.current = liveStrategyId;
+  const [liveBusyId, setLiveBusyId] = useState<string | null>(null);
+  const [togglingEnabledId, setTogglingEnabledId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const handleJobUpdate = useCallback((sessionId: string, job: Record<string, unknown>) => {
-    setExploreSessions((prev) =>
-      prev.map((session) =>
-        session.id === sessionId ? applyExploreJobUpdate(session, job) : session
-      )
-    );
-  }, []);
+  const stopLiveRefresh = useCallback(async () => {
+    const activeId = liveStrategyIdRef.current;
+    if (!activeId) return;
 
-  const handleBotJobUpdate = useCallback((sessionId: string, job: Record<string, unknown>) => {
-    setBotSessions((prev) =>
-      prev.map((session) =>
-        session.id === sessionId ? applyBotJobUpdate(session, job) : session
-      )
-    );
-  }, []);
-
-  const handleExploreRestore = useCallback((sessions: ExploreSession[]) => {
-    setExploreSessions((prev) => {
-      const merged = new Map<string, ExploreSession>();
-      for (const session of sessions) {
-        merged.set(session.jobId ?? session.id, session);
-      }
-      for (const session of prev) {
-        const key = session.jobId ?? session.id;
-        if (!merged.has(key)) {
-          merged.set(key, session);
-        }
-      }
-      return dedupeByFingerprint(Array.from(merged.values()), exploreSessionFingerprint);
+    liveStrategyIdRef.current = null;
+    setLiveStrategyId(null);
+    setData((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        strategies: prev.strategies.map((strategy) => ({
+          ...strategy,
+          live_active: false,
+        })),
+      };
     });
-    setActiveExploreId((current) => {
-      if (current) return current;
-      const running = sessions.find((session) => session.status === "running" || session.status === "queued");
-      return running?.id ?? sessions[0]?.id ?? null;
-    });
-    if (sessions.some((session) => session.status === "running" || session.status === "queued")) {
-      setWorkflowDockCollapsed(false);
-      setWorkflowMode("explore");
-    }
-  }, []);
 
-  const handleBotRestore = useCallback((sessions: BotSession[]) => {
-    setBotSessions((prev) => {
-      const merged = new Map<string, BotSession>();
-      for (const session of sessions) {
-        merged.set(session.jobId ?? session.id, session);
-      }
-      for (const session of prev) {
-        const key = session.jobId ?? session.id;
-        if (!merged.has(key)) {
-          merged.set(key, session);
-        }
-      }
-      return dedupeByFingerprint(Array.from(merged.values()), botSessionFingerprint);
-    });
-    setActiveBotId((current) => {
-      if (current) return current;
-      const running = sessions.find((session) => session.status === "running" || session.status === "queued");
-      return running?.id ?? sessions[0]?.id ?? null;
-    });
-    if (sessions.some((session) => session.status === "running" || session.status === "queued")) {
-      setWorkflowDockCollapsed(false);
-      setWorkflowMode("bot");
-    }
-    for (const session of sessions) {
-      if (session.status === "running" && session.jobId) {
-        void fetch("/api/bot", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "resume", job_id: session.jobId }),
-        });
-      }
-    }
-  }, []);
-
-  useExploreRestore(handleExploreRestore);
-  useBotRestore(handleBotRestore);
-  useExploreJobPolling(exploreSessions, handleJobUpdate);
-  useBotJobPolling(botSessions, handleBotJobUpdate);
-
-  useEffect(() => {
-    if (!workflowSchema) return;
-    const defaults = loadWorkflowMarketDefaults(workflowSchema);
-    setExploreSessions((prev) =>
-      prev.map((session) => {
-        if (session.instrument && session.brokerSource && session.dataSource) {
-          return session;
-        }
-        const market = marketSelectionFromSource(
-          workflowSchema,
-          session.brokerSource ?? defaults.brokerSource,
-          session.instrument ?? defaults.instrument
-        );
-        return { ...session, ...market };
-      })
-    );
-    setBotSessions((prev) =>
-      prev.map((session) => {
-        if (session.instrument && session.brokerSource && session.dataSource) {
-          return session;
-        }
-        const market = marketSelectionFromSource(
-          workflowSchema,
-          session.brokerSource ?? defaults.brokerSource,
-          session.instrument ?? defaults.instrument
-        );
-        return { ...session, ...market };
-      })
-    );
-  }, [workflowSchema]);
-
-  useEffect(() => {
-    saveExploreSessions(exploreSessions);
-  }, [exploreSessions]);
-
-  useEffect(() => {
-    saveBotSessions(botSessions);
-  }, [botSessions]);
-
-  useEffect(() => {
-    if (workflowMode === "explore" && !exploreSessions.length && botSessions.length) {
-      setWorkflowMode("bot");
-    } else if (workflowMode === "bot" && !botSessions.length && exploreSessions.length) {
-      setWorkflowMode("explore");
-    }
-  }, [workflowMode, exploreSessions.length, botSessions.length]);
-
-  const openExplore = useCallback(
-    (strategy: StrategyResult, params: Record<string, number>) => {
-      const schema = workflowSchema ?? workflowSchemaFallback();
-      try {
-        setWorkflowActionError(null);
-        const draft = createExploreSession(
-          strategy.strategy_id,
-          strategy.title ?? strategy.strategy_id,
-          params,
-          strategy.initial_capital,
-          schema
-        );
-        setExploreSessions((prev) => {
-          const existing = findExploreSessionByFingerprint(prev, draft);
-          const targetId = existing?.id ?? draft.id;
-          queueMicrotask(() => {
-            setActiveExploreId(targetId);
-            setWorkflowMode("explore");
-            setWorkflowDockCollapsed(false);
-          });
-          if (existing) return prev;
-          return [...prev, draft];
-        });
-      } catch (err) {
-        setWorkflowActionError(
-          err instanceof Error ? err.message : "Failed to open Explore session"
-        );
-      }
-    },
-    [workflowSchema]
-  );
-
-  const openBot = useCallback(
-    (strategy: StrategyResult, params: Record<string, number>) => {
-      const schema = workflowSchema ?? workflowSchemaFallback();
-      try {
-        setWorkflowActionError(null);
-        const draft = createBotSession(
-          strategy.strategy_id,
-          strategy.title ?? strategy.strategy_id,
-          params,
-          strategy.initial_capital,
-          schema
-        );
-        setBotSessions((prev) => {
-          const existing = findBotSessionByFingerprint(prev, draft);
-          const targetId = existing?.id ?? draft.id;
-          queueMicrotask(() => {
-            setActiveBotId(targetId);
-            setWorkflowMode("bot");
-            setWorkflowDockCollapsed(false);
-          });
-          if (existing) return prev;
-          return [...prev, draft];
-        });
-      } catch (err) {
-        setWorkflowActionError(
-          err instanceof Error ? err.message : "Failed to open Trading Bot session"
-        );
-      }
-    },
-    [workflowSchema]
-  );
-
-  const runExploreSession = useCallback(async (sessionId: string) => {
-    const session = exploreSessions.find((s) => s.id === sessionId);
-    if (!session) return;
-    setExploreSessions((prev) =>
-      prev.map((s) => (s.id === sessionId ? { ...s, status: "queued", error: undefined } : s))
-    );
     try {
-      if (session.jobId) {
-        await deleteExploreJob(session.jobId);
-      }
-      const res = await fetch("/api/explore", {
+      await fetch("/api/live-run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          strategy_id: session.strategyId,
-          title: session.title,
-          params: session.params,
-          initial_capital: session.initialCapital,
-          from_date: session.fromDate,
-          to_date: session.toDate,
-          instrument: session.instrument,
-          broker_source: session.brokerSource,
-        }),
+        body: JSON.stringify({ action: "stop", strategy_id: activeId }),
       });
-      const json = (await res.json()) as { ok?: boolean; job_id?: string; message?: string };
-      if (!res.ok || !json.job_id) {
-        throw new Error(json.message ?? "Failed to start explore");
-      }
-      setExploreSessions((prev) =>
-        prev.map((s) =>
-          s.id === sessionId ? { ...s, jobId: json.job_id, status: "running" } : s
-        )
-      );
-    } catch (err) {
-      setExploreSessions((prev) =>
-        prev.map((s) =>
-          s.id === sessionId
-            ? { ...s, status: "error", error: err instanceof Error ? err.message : "Failed" }
-            : s
-        )
-      );
+    } catch {
+      // best effort; UI and prepare-bootstrap also clear server state
     }
-  }, [exploreSessions]);
+  }, []);
 
-  const runBotSession = useCallback(
-    async (sessionId: string) => {
-      const session = botSessions.find((s) => s.id === sessionId);
-      if (!session) return;
-      setBotSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? { ...s, status: "queued", error: undefined } : s))
-      );
-      try {
-        if (session.jobId) {
-          await deleteBotJob(session.jobId);
-        }
-        const res = await fetch("/api/bot", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            strategy_id: session.strategyId,
-            title: session.title,
-            params: session.params,
-            instrument: session.instrument,
-            timeframe: session.timeframe,
-            broker_source: session.brokerSource,
-            days_to_fetch: session.daysToFetch,
-            use_sandbox: session.useSandbox,
-            initial_capital: session.initialCapital,
-          }),
-        });
-        const json = (await res.json()) as { ok?: boolean; job_id?: string; message?: string };
-        if (!res.ok || !json.job_id) {
-          throw new Error(json.message ?? "Failed to start trading bot");
-        }
-        setBotSessions((prev) =>
-          prev.map((s) =>
-            s.id === sessionId ? { ...s, jobId: json.job_id, status: "running" } : s
-          )
-        );
-      } catch (err) {
-        setBotSessions((prev) =>
-          prev.map((s) =>
-            s.id === sessionId
-              ? { ...s, status: "error", error: err instanceof Error ? err.message : "Failed" }
-              : s
-          )
-        );
-      }
-    },
-    [botSessions]
-  );
-
-  const stopBotSession = useCallback(async (sessionId: string) => {
-    const session = botSessions.find((s) => s.id === sessionId);
-    if (!session?.jobId) {
-      setBotSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? { ...s, status: "stopped" } : s))
-      );
+  const applyLiveTick = useCallback((payload: {
+    active?: boolean;
+    strategy?: StrategyResult;
+    strategy_id?: string;
+    stopped_reason?: string;
+  }) => {
+    if (!payload.active || payload.stopped_reason) {
+      setLiveStrategyId(null);
+      setData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          strategies: prev.strategies.map((strategy) => ({
+            ...strategy,
+            live_active: false,
+          })),
+        };
+      });
       return;
     }
+    const strategyId = payload.strategy_id ?? payload.strategy?.strategy_id;
+    if (!strategyId || !payload.strategy) return;
+    setLiveStrategyId(strategyId);
+    setData((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        strategies: applyLiveStrategy(prev.strategies, strategyId, payload.strategy as StrategyResult),
+      };
+    });
+  }, []);
+
+  const toggleStrategyEnabled = useCallback(async (strategyId: string, enabled: boolean) => {
+    setActionError(null);
+    setTogglingEnabledId(strategyId);
     try {
-      await stopBotJob(session.jobId);
-      setBotSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? { ...s, status: "stopped" } : s))
-      );
+      const res = await fetch(`/api/strategies/${encodeURIComponent(strategyId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      const json = (await res.json()) as { ok?: boolean; message?: string; params?: Record<string, unknown> };
+      if (!res.ok || !json.ok) {
+        throw new Error(json.message ?? "Failed to update strategy");
+      }
+      setData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          strategies: prev.strategies.map((strategy) =>
+            strategy.strategy_id === strategyId
+              ? {
+                  ...strategy,
+                  params: {
+                    ...strategy.params,
+                    ...(json.params as Record<string, number | boolean> | undefined),
+                    enabled,
+                  },
+                }
+              : strategy
+          ),
+        };
+      });
     } catch (err) {
-      setBotSessions((prev) =>
-        prev.map((s) =>
-          s.id === sessionId
-            ? { ...s, status: "error", error: err instanceof Error ? err.message : "Failed to stop" }
-            : s
-        )
-      );
+      setActionError(err instanceof Error ? err.message : "Failed to update strategy");
+    } finally {
+      setTogglingEnabledId(null);
     }
-  }, [botSessions]);
+  }, []);
+
+  const toggleLiveStrategy = useCallback(
+    async (strategyId: string, params: Record<string, number>, isLive: boolean) => {
+      setActionError(null);
+      if (isLive) {
+        setLiveBusyId(strategyId);
+        try {
+          await stopLiveRefresh();
+        } finally {
+          setLiveBusyId(null);
+        }
+        return;
+      }
+
+      setLiveBusyId(strategyId);
+      try {
+        const res = await fetch("/api/live-run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "start", strategy_id: strategyId, params }),
+        });
+        const json = (await res.json()) as {
+          ok?: boolean;
+          strategy?: StrategyResult;
+          strategy_id?: string;
+          message?: string;
+        };
+        if (!res.ok || !json.ok) {
+          throw new Error(json.message ?? "Failed to start live refresh");
+        }
+        applyLiveTick({
+          active: true,
+          strategy: json.strategy,
+          strategy_id: json.strategy_id ?? strategyId,
+        });
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : "Failed to start live refresh");
+      } finally {
+        setLiveBusyId(null);
+      }
+    },
+    [applyLiveTick, stopLiveRefresh]
+  );
 
   const loadDashboard = useCallback(async () => {
     const res = await fetch("/api/dashboard", { cache: "no-store" });
     const json = (await res.json()) as DashboardData;
     setData((prev) => {
-      if (!runRequestedRef.current) {
-        return json;
+      const merged: DashboardData = {
+        ...json,
+        strategies: json.strategies.map((strategy) => {
+          const previous = prev?.strategies.find((s) => s.strategy_id === strategy.strategy_id);
+          const params = {
+            ...strategy.params,
+            enabled:
+              strategy.params.enabled ??
+              previous?.params.enabled ??
+              true,
+          };
+          return {
+            ...strategy,
+            params,
+          };
+        }),
+      };
+
+      if (!runRequestedRef.current || !prev) {
+        return merged;
       }
 
-      const updatedAt = json.last_updated ? new Date(json.last_updated).getTime() : 0;
-      if (updatedAt >= runStartedAtRef.current - 2000) {
-        return json;
+      const serverRunActive = merged.strategies.some((strategy) => strategy.status === "running");
+      if (!serverRunActive) {
+        return {
+          ...merged,
+          instrument: prev.instrument,
+          timeframe: prev.timeframe,
+          data_source: prev.data_source,
+          ranking: prev.ranking,
+          strategies: merged.strategies.map((strategy) => {
+            const optimistic = prev.strategies.find((s) => s.strategy_id === strategy.strategy_id);
+            if (optimistic?.status === "running") {
+              return {
+                ...strategy,
+                status: "running" as const,
+                error: null,
+                chart_points: [],
+                trade_log: [],
+                params: optimistic.params,
+              };
+            }
+            return strategy;
+          }),
+        };
       }
 
-      return prev ?? json;
+      const updatedAt = merged.last_updated ? new Date(merged.last_updated).getTime() : 0;
+      if (updatedAt < runStartedAtRef.current) {
+        return prev;
+      }
+
+      return merged;
     });
   }, []);
 
@@ -1384,10 +1372,10 @@ export default function Page() {
         ranking: { computed_at: null, entries: [] },
         strategies: prev.strategies.map((strategy) => ({
           ...strategy,
-          status: "running" as const,
-          error: null,
-          chart_points: [],
-          trade_log: [],
+          status: isStrategyEnabled(strategy.params) ? ("running" as const) : strategy.status,
+          error: isStrategyEnabled(strategy.params) ? null : strategy.error,
+          chart_points: isStrategyEnabled(strategy.params) ? [] : strategy.chart_points,
+          trade_log: isStrategyEnabled(strategy.params) ? [] : strategy.trade_log,
         })),
       };
     });
@@ -1490,11 +1478,66 @@ export default function Page() {
   const anyBusy = bootstrapActive;
 
   useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/live-run", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((json: { active?: boolean; strategy_id?: string }) => {
+        if (cancelled) return;
+        if (json.active && json.strategy_id) {
+          setLiveStrategyId(json.strategy_id);
+        }
+      })
+      .catch(() => {
+        // ignore status errors on load
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!liveStrategyId || anyBusy) return;
+
+    let cancelled = false;
+    const timeframe = data?.timeframe ?? "1h";
+    const pollMs = livePollMs(timeframe);
+
+    const tick = async () => {
+      if (cancelled || !liveStrategyIdRef.current) return;
+      try {
+        const res = await fetch("/api/live-run/tick", { method: "POST", cache: "no-store" });
+        const json = (await res.json()) as {
+          ok?: boolean;
+          active?: boolean;
+          cached?: boolean;
+          strategy?: StrategyResult;
+          stopped_reason?: string;
+          message?: string;
+        };
+        if (!res.ok || !json.ok) {
+          throw new Error(json.message ?? "Live refresh failed");
+        }
+        applyLiveTick(json);
+      } catch (err) {
+        if (!cancelled) {
+          setActionError(err instanceof Error ? err.message : "Live refresh failed");
+        }
+      }
+    };
+
+    const timer = window.setInterval(() => void tick(), pollMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [liveStrategyId, anyBusy, data?.timeframe, applyLiveTick]);
+
+  useEffect(() => {
     if (!runRequested || !data) return;
     if (anyRunning) return;
 
     const updatedAt = data.last_updated ? new Date(data.last_updated).getTime() : 0;
-    if (updatedAt < runStartedAtRef.current - 2000) return;
+    if (updatedAt < runStartedAtRef.current) return;
     if (!isRankingReady(data.strategies, data.ranking)) return;
 
     setRunRequested(false);
@@ -1512,7 +1555,8 @@ export default function Page() {
   }, [loadDashboard, runRequested]);
 
   useEffect(() => {
-    const ms = anyBusy ? POLL_RUNNING_MS : POLL_IDLE_MS;
+    if (!anyBusy) return;
+    const ms = POLL_RUNNING_MS;
     const timer = setInterval(loadDashboard, ms);
     return () => clearInterval(timer);
   }, [loadDashboard, anyBusy]);
@@ -1550,11 +1594,7 @@ export default function Page() {
   }, []);
 
   return (
-    <div
-      className={`page-bg${
-        exploreSessions.length || botSessions.length ? " has-explore-dock has-workflow-dock" : ""
-      }`}
-    >
+    <div className="page-bg">
       <main className="app-shell">
         <header className="hero">
           <div className="hero-top">
@@ -1576,6 +1616,7 @@ export default function Page() {
 
         <BacktestControlPanel
           busy={anyBusy}
+          onBeforeRun={stopLiveRefresh}
           onRunStart={beginRun}
           onRun={runBacktest}
           onStop={stopBacktest}
@@ -1583,9 +1624,9 @@ export default function Page() {
 
         <AddStrategyPanel busy={anyBusy} onAdded={loadDashboard} />
 
-        {(workflowConfigError || workflowActionError) && (
+        {actionError && (
           <div className="workflow-config-error" role="alert">
-            {workflowActionError ?? workflowConfigError}
+            {actionError}
           </div>
         )}
 
@@ -1597,10 +1638,13 @@ export default function Page() {
               rankEntry={rankMap.get(strategy.strategy_id)}
               highlighted={highlightedStrategyId === strategy.strategy_id}
               busy={anyBusy}
-              showLoading={bootstrapActive}
+              showLoading={strategy.status === "running"}
               onDelete={deleteStrategy}
-              onExplore={(params) => openExplore(strategy, params)}
-              onBot={(params) => openBot(strategy, params)}
+              onToggleLive={toggleLiveStrategy}
+              liveBusy={liveBusyId === strategy.strategy_id}
+              liveStrategyId={liveStrategyId}
+              onToggleEnabled={toggleStrategyEnabled}
+              togglingEnabled={togglingEnabledId === strategy.strategy_id}
             />
           ))}
 
@@ -1611,65 +1655,6 @@ export default function Page() {
           )}
         </section>
       </main>
-      <WorkflowDock
-        mode={workflowMode}
-        onModeChange={setWorkflowMode}
-        exploreSessions={exploreSessions}
-        activeExploreId={activeExploreId}
-        workflowSchema={workflowSchema ?? workflowSchemaFallback()}
-        botSessions={botSessions}
-        activeBotId={activeBotId}
-        collapsed={workflowDockCollapsed}
-        onToggleCollapse={() => setWorkflowDockCollapsed((v) => !v)}
-        onExploreSelect={setActiveExploreId}
-        onExploreClose={(id) => {
-          const session = exploreSessions.find((s) => s.id === id);
-          if (session) {
-            dismissExploreSession(session);
-            if (session.jobId) {
-              void deleteExploreJob(session.jobId);
-            }
-          } else {
-            dismissExploreSession({ id });
-          }
-          setExploreSessions((prev) => {
-            const remaining = prev.filter((s) => s.id !== id);
-            setActiveExploreId((current) => (current === id ? remaining[0]?.id ?? null : current));
-            return remaining;
-          });
-        }}
-        onExplorePatch={(id, patch) =>
-          setExploreSessions((prev) =>
-            prev.map((s) => (s.id === id ? { ...s, ...patch } : s))
-          )
-        }
-        onExploreRun={runExploreSession}
-        onBotSelect={setActiveBotId}
-        onBotClose={async (id) => {
-          const session = botSessions.find((s) => s.id === id);
-          if (session?.status === "running" && session.jobId) {
-            await stopBotJob(session.jobId);
-          }
-          if (session) {
-            dismissBotSession(session);
-            if (session.jobId) {
-              void deleteBotJob(session.jobId);
-            }
-          } else {
-            dismissBotSession({ id });
-          }
-          setBotSessions((prev) => {
-            const remaining = prev.filter((s) => s.id !== id);
-            setActiveBotId((current) => (current === id ? remaining[0]?.id ?? null : current));
-            return remaining;
-          });
-        }}
-        onBotPatch={(id, patch) =>
-          setBotSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)))
-        }
-        onBotRun={runBotSession}
-        onBotStop={stopBotSession}
-      />
     </div>
   );
 }
