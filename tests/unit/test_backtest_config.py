@@ -27,13 +27,14 @@ def test_validate_timeframe_rejects_empty_and_unknown():
         validate_timeframe("2h")
 
 
-def test_validate_lookback_days_respects_tbank_limit():
+def test_validate_lookback_days_allows_large_values():
+    assert validate_lookback_days("1h", 10_000, data_source="tbank") == 10_000
+    assert validate_lookback_days("1m", 365, data_source="bybit") == 365
+
+
+def test_validate_lookback_days_rejects_excessive_value():
     with pytest.raises(ConfigValidationError):
-        validate_lookback_days("1h", 200, data_source="tbank")
-
-
-def test_validate_lookback_days_allows_wider_range_for_bybit():
-    assert validate_lookback_days("1h", 200, data_source="bybit") == 200
+        validate_lookback_days("1h", 500_000, data_source="tbank")
 
 
 def test_validate_lookback_days_rejects_non_positive():

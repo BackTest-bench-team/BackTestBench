@@ -10,6 +10,8 @@ tags:
   - name: Tokens
   - name: Explore
   - name: Bot
+  - name: Live
+  - name: Progress
 paths:
   /api/dashboard:
     get:
@@ -87,6 +89,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/run-progress:
+    get:
+      tags: [Progress]
+      summary: Bootstrap fetch/backtest progress
+      operationId: getRunProgress
+      responses:
+        "200":
+          description: Progress payload or inactive
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
   /api/config:
     get:
       tags: [Config]
@@ -182,6 +197,55 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
   /api/strategies/{id}:
+    patch:
+      tags: [Strategies]
+      summary: Toggle strategy enabled for bootstrap
+      operationId: patchStrategyEnabled
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  strategy_id:
+                    type: string
+                  enabled:
+                    type: boolean
+                  params:
+                    type: object
+                    additionalProperties: true
+        "400":
+          description: Update failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       tags: [Strategies]
       summary: Delete composable strategy
@@ -481,6 +545,71 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/live-run:
+    get:
+      tags: [Live]
+      summary: Live refresh status
+      operationId: getLiveRun
+      responses:
+        "200":
+          description: Active flag and strategy state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveRunResponse"
+        "500":
+          description: Status failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [Live]
+      summary: Start or stop live refresh
+      operationId: postLiveRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LiveRunRequest"
+      responses:
+        "200":
+          description: Start/stop result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveRunResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Request failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/live-run/tick:
+    post:
+      tags: [Live]
+      summary: Run one live tick
+      operationId: postLiveRunTick
+      responses:
+        "200":
+          description: Updated strategy metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveRunResponse"
+        "500":
+          description: Tick failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     ErrorResponse:
@@ -736,4 +865,36 @@ components:
           type: string
           enum: [resume]
         job_id:
+          type: string
+    LiveRunRequest:
+      type: object
+      required: [action, strategy_id]
+      properties:
+        action:
+          type: string
+          enum: [start, stop]
+        strategy_id:
+          type: string
+        params:
+          type: object
+          additionalProperties:
+            type: number
+    LiveRunResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        active:
+          type: boolean
+        strategy_id:
+          type: string
+        strategy:
+          type: object
+          additionalProperties: true
+        live:
+          type: object
+          additionalProperties: true
+        stopped_reason:
+          type: string
+        message:
           type: string

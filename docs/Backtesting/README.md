@@ -8,14 +8,13 @@ The PDFs in this directory are Week 2 design snapshots dated June 16, 2026:
 They remain useful target-architecture references, but they are not current implementation
 documentation.
 
-As of June 23, 2026:
+As of July 19, 2026:
 
 - `ExecutionEngine.run(strategy, candles, initial_capital)` is implemented;
 - candle-by-candle `ExecutionContext` and BUY/SELL/HOLD processing are implemented;
 - equity curve, TradeLog, analytics, and final-position close are implemented;
-- only one strategy is run at a time;
-- validation mode, multi-strategy orchestration, PostgreSQL persistence, Top-N workflow,
-  scheduler, and trading bot are not implemented.
+- dashboard runs multiple strategies in one bootstrap; Live refresh reruns one strategy;
+- validation mode, PostgreSQL persistence, scheduler, and live order routing are not implemented.
 
 For current contracts, see:
 

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 type TimeframeOption = {
   value: string;
-  max_lookback_days: number;
+  max_lookback_days?: number;
 };
 
 type OptimizationModeOption = {
@@ -42,6 +42,8 @@ export type RuntimeSettings = {
   initial_capital: number;
   optimization_mode: string;
   optimization_iterations: number;
+  commission_pct: number;
+  slippage_pct: number;
 };
 
 type TokenStatus = {
@@ -77,12 +79,51 @@ function sourceBadge(source: DataSourceOption): {
   return { label: "Token required", tone: "missing" };
 }
 
+type RunProgressPayload = {
+  active?: boolean;
+  phase?: "fetching" | "backtesting" | string;
+  current?: number;
+  total?: number;
+  pct?: number;
+  label?: string;
+};
+
+const LOOKBACK_INPUT_MAX = 365_000;
+const PROGRESS_POLL_MS = 900;
+
 type BacktestControlPanelProps = {
   busy: boolean;
+  onBeforeRun?: () => Promise<void>;
   onRunStart: (settings: RuntimeSettings) => void;
   onRun: (settings: RuntimeSettings) => Promise<void>;
   onStop: () => Promise<void>;
 };
+
+function RunProgressStrip({ progress }: { progress: RunProgressPayload }) {
+  const pct = Math.max(0, Math.min(100, Number(progress.pct ?? 0)));
+  const phase = progress.phase === "backtesting" ? "backtesting" : "fetching";
+  const label =
+    progress.label ??
+    (phase === "backtesting" ? "Running backtests" : "Loading market data");
+
+  return (
+    <div
+      className={`run-progress run-progress--${phase}`}
+      role="progressbar"
+      aria-valuenow={pct}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      <div className="run-progress-head">
+        <span className="run-progress-label">{label}</span>
+        <span className="run-progress-pct">{pct}%</span>
+      </div>
+      <div className="run-progress-track">
+        <div className="run-progress-fill" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
 
 async function loadConfigPayload(): Promise<{
   settings: Record<string, unknown>;
@@ -205,15 +246,13 @@ function settingsFromPayload(
   const rawInstrument = String(settings.instrument ?? source.default_instrument);
   const instrument = allowed.has(rawInstrument) ? rawInstrument : source.default_instrument;
   const timeframe = String(settings.timeframe ?? schema.defaults.timeframe ?? "1h");
-  const timeframeMeta = source.timeframes.find((item) => item.value === timeframe);
-  const maxLookback = timeframeMeta?.max_lookback_days ?? 30;
   const lookbackRaw = Number(settings.lookback_days ?? schema.defaults.lookback_days ?? 30);
 
   return {
     data_source: source.value,
     instrument,
     timeframe,
-    lookback_days: Math.min(Math.max(lookbackRaw, 1), maxLookback),
+    lookback_days: Math.max(lookbackRaw, 1),
     initial_capital: Number(settings.initial_capital ?? schema.defaults.initial_capital ?? 100_000),
     optimization_mode: String(
       settings.optimization_mode ?? schema.defaults.optimization_mode ?? "grid"
@@ -221,18 +260,57 @@ function settingsFromPayload(
     optimization_iterations: Number(
       settings.optimization_iterations ?? schema.defaults.optimization_iterations ?? 16
     ),
+    commission_pct: Number(settings.commission_pct ?? schema.defaults.commission_pct ?? 0.05),
+    slippage_pct: Number(settings.slippage_pct ?? schema.defaults.slippage_pct ?? 0.01),
   };
 }
 
-export function BacktestControlPanel({ busy, onRunStart, onRun, onStop }: BacktestControlPanelProps) {
+export function BacktestControlPanel({ busy, onBeforeRun, onRunStart, onRun, onStop }: BacktestControlPanelProps) {
   const [schema, setSchema] = useState<ConfigSchema | null>(null);
   const [draft, setDraft] = useState<RuntimeSettings | null>(null);
+  const [runProgress, setRunProgress] = useState<RunProgressPayload | null>(null);
+  const [runStarting, setRunStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [tokenStatus, setTokenStatus] = useState<Record<string, TokenStatus>>({});
   const [tokenDrafts, setTokenDrafts] = useState({ tinkoff: "", twelvedata: "" });
   const [tokenFeedback, setTokenFeedback] = useState<Record<string, TokenFeedback>>({});
   const [tokenBusy, setTokenBusy] = useState<"TINKOFF_TOKEN" | "TWELVEDATA_TOKEN" | null>(null);
+
+  useEffect(() => {
+    if (busy) {
+      setRunStarting(false);
+    }
+  }, [busy]);
+
+  useEffect(() => {
+    if (!busy && !runStarting) {
+      setRunProgress(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/run-progress", { cache: "no-store" });
+        const json = (await res.json()) as RunProgressPayload & { ok?: boolean; active?: boolean };
+        if (cancelled) return;
+        if (json.active) {
+          setRunProgress(json);
+        }
+      } catch {
+        // ignore transient poll errors
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), PROGRESS_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [busy, runStarting]);
 
   const refreshPanel = useCallback(async () => {
     const configPayload = await loadConfigPayload();
@@ -338,11 +416,6 @@ export function BacktestControlPanel({ busy, onRunStart, onRun, onStop }: Backte
     [schema, draft]
   );
 
-  const selectedTimeframe = useMemo(
-    () => selectedSource?.timeframes.find((item) => item.value === draft?.timeframe),
-    [selectedSource, draft?.timeframe]
-  );
-
   const patch = useCallback((partial: Partial<RuntimeSettings>) => {
     setDraft((prev) => {
       if (!prev || !schema) return prev;
@@ -353,34 +426,28 @@ export function BacktestControlPanel({ busy, onRunStart, onRun, onStop }: Backte
         if (!allowed.has(next.instrument)) {
           next.instrument = source.default_instrument;
         }
-        const tfMeta = source.timeframes.find((item) => item.value === next.timeframe);
-        if (tfMeta) {
-          next.lookback_days = Math.min(next.lookback_days, tfMeta.max_lookback_days);
-        }
-      }
-      if (partial.timeframe) {
-        const tfMeta = selectedSource?.timeframes.find((item) => item.value === partial.timeframe);
-        if (tfMeta) {
-          next.lookback_days = Math.min(next.lookback_days, tfMeta.max_lookback_days);
-        }
       }
       return next;
     });
     setError(null);
-  }, [schema, selectedSource]);
+  }, [schema]);
 
   const handleRun = useCallback(async () => {
-    if (!draft || busy) return;
+    if (!draft || busy || runStarting) return;
     setError(null);
+    setRunStarting(true);
     onRunStart(draft);
     try {
+      await onBeforeRun?.();
       await onRun(draft);
     } catch (err) {
+      setRunStarting(false);
       setError(err instanceof Error ? err.message : "Run failed");
     }
-  }, [busy, draft, onRun, onRunStart]);
+  }, [busy, draft, onBeforeRun, onRun, onRunStart, runStarting]);
 
   const handleStop = useCallback(async () => {
+    setRunStarting(false);
     setError(null);
     try {
       await onStop();
@@ -389,7 +456,17 @@ export function BacktestControlPanel({ busy, onRunStart, onRun, onStop }: Backte
     }
   }, [onStop]);
 
-  const isRunning = busy;
+  const isRunning = busy || runStarting;
+  const progressTitle =
+    runProgress?.phase === "backtesting" ? "Backtesting strategies" : "Loading market data";
+
+  const handleRunToggle = useCallback(async () => {
+    if (isRunning) {
+      await handleStop();
+      return;
+    }
+    await handleRun();
+  }, [handleRun, handleStop, isRunning]);
 
   if (loading || !draft || !schema || !selectedSource) {
     return (
@@ -409,32 +486,6 @@ export function BacktestControlPanel({ busy, onRunStart, onRun, onStop }: Backte
         <div>
           <p className="control-panel-kicker">Backtest control</p>
           <h2 className="control-panel-title">Run settings</h2>
-        </div>
-        <div className="control-panel-actions">
-          <button
-            className={`control-btn control-btn-run${isRunning ? " is-running" : ""}`}
-            type="button"
-            disabled={runDisabled}
-            aria-busy={isRunning}
-            onClick={handleRun}
-          >
-            {isRunning ? (
-              <>
-                <span className="control-btn-spinner" aria-hidden="true" />
-                Running…
-              </>
-            ) : (
-              "Run backtest"
-            )}
-          </button>
-          <button
-            className="control-btn control-btn-stop"
-            type="button"
-            disabled={!isRunning}
-            onClick={handleStop}
-          >
-            Stop
-          </button>
         </div>
       </div>
 
@@ -572,8 +623,7 @@ export function BacktestControlPanel({ busy, onRunStart, onRun, onStop }: Backte
             ))}
           </select>
           <span className="control-hint">
-            Min resolution 1m. Max lookback for {draft.timeframe}:{" "}
-            {selectedTimeframe?.max_lookback_days ?? "—"} days
+            Minimum resolution 1m. Lookback is limited only by broker history and disk space.
           </span>
         </label>
 
@@ -582,7 +632,7 @@ export function BacktestControlPanel({ busy, onRunStart, onRun, onStop }: Backte
           <DeferredNumberInput
             className="control-input"
             min={1}
-            max={selectedTimeframe?.max_lookback_days ?? 3600}
+            max={LOOKBACK_INPUT_MAX}
             value={draft.lookback_days}
             disabled={isRunning}
             onCommit={(lookback_days) => patch({ lookback_days })}
@@ -601,6 +651,34 @@ export function BacktestControlPanel({ busy, onRunStart, onRun, onStop }: Backte
             onCommit={(initial_capital) => patch({ initial_capital })}
           />
           <span className="control-hint">Starting portfolio cash for each strategy</span>
+        </label>
+
+        <label className="control-field">
+          <span className="control-label">Commission %</span>
+          <DeferredNumberInput
+            className="control-input"
+            min={0}
+            max={10}
+            step={0.01}
+            value={draft.commission_pct}
+            disabled={isRunning}
+            onCommit={(commission_pct) => patch({ commission_pct })}
+          />
+          <span className="control-hint">Per-side fee as percent of notional (MOEX default 0.05%)</span>
+        </label>
+
+        <label className="control-field">
+          <span className="control-label">Slippage %</span>
+          <DeferredNumberInput
+            className="control-input"
+            min={0}
+            max={5}
+            step={0.01}
+            value={draft.slippage_pct}
+            disabled={isRunning}
+            onCommit={(slippage_pct) => patch({ slippage_pct })}
+          />
+          <span className="control-hint">Price adjustment on each fill (default 0.01%)</span>
         </label>
       </div>
 
@@ -643,6 +721,28 @@ export function BacktestControlPanel({ busy, onRunStart, onRun, onStop }: Backte
             </label>
           ))}
         </div>
+      </div>
+
+      <div className="control-panel-runbar">
+        <div className="control-panel-runbar-summary">
+          <span className="control-panel-runbar-title">
+            {isRunning ? progressTitle : "Ready to run"}
+          </span>
+          <span className="control-panel-runbar-meta">
+            {draft.instrument} · {draft.timeframe} · {draft.lookback_days}d lookback ·{" "}
+            {draft.optimization_mode === "grid" ? "full grid" : `${draft.optimization_iterations} trials`}
+          </span>
+          {isRunning && runProgress?.active && <RunProgressStrip progress={runProgress} />}
+        </div>
+        <button
+          className={`control-run-toggle${isRunning ? " is-running" : ""}`}
+          type="button"
+          disabled={!isRunning && runDisabled}
+          aria-busy={isRunning}
+          onClick={() => void handleRunToggle()}
+        >
+          {isRunning ? "Stop backtest" : "Run backtest"}
+        </button>
       </div>
     </section>
   );

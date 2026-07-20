@@ -1,6 +1,6 @@
 # Database Schema (MVP1)
 
-> **Status as of July 7, 2026:** hybrid implementation. The **`candles`** table is
+> **Status as of July 19, 2026:** hybrid implementation. The **`candles`** table is
 > operational in SQLite (`data/backtest.db`) via `src/db/models.py` (`CandleModel`) and
 > `src/data_loader/loader.py`. Relational tables for strategies, backtest runs, trades, and
 > metrics remain **target schema only**. The integrated pipeline stores the latest multi-strategy
@@ -24,8 +24,11 @@ The Data Loader:
 
 - validates candles before storage (`validate_candles()`);
 - normalises broker candles into `CandleModel` rows;
-- skips T-Bank fetch when SQLite already covers the requested lookback window;
+- `load_candles_for_backtest()` / `ensure_backtest_candles()` fetch missing ranges in broker-safe chunks and upsert;
+- reuses SQLite when the cached window covers the requested lookback; clears or extends cache on timeframe / lookback changes;
 - optionally uses an in-memory `CandleCache` for hot instrument/timeframe pairs.
+
+Runtime progress during fetch/backtest is written to `data/run-progress.json` (see `GET /api/run-progress`).
 
 Default database URL resolves to `data/backtest.db`. Set `DATABASE_URL` in `.env` to override.
 
