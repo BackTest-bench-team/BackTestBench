@@ -1,0 +1,652 @@
+openapi: 3.0.3
+info:
+  title: BackTestBench Dashboard API
+  description: |
+    Live Next.js route handlers used by the MVP2 dashboard (`http://localhost:3000`).
+
+    Python subprocesses write JSON state under `data/`. This is not a durable run-history store.
+
+    Planned FastAPI routes on port 8000 are listed under the **Planned** tag — they are not callable yet.
+
+    Markdown reference: `docs/api_description.md`
+  version: 1.0.0
+  contact:
+    name: BackTestBench
+servers:
+  - url: http://localhost:3000
+    description: Local Next.js dev server
+tags:
+  - name: Dashboard
+    description: Backtest run state and control
+  - name: Config
+    description: Runtime settings persisted in config/dashboard.json
+  - name: Strategies
+    description: Composable YAML strategy files
+  - name: Tokens
+    description: Broker API token status and persistence
+  - name: Live
+    description: Single-strategy live refresh (poll + tick)
+  - name: Progress
+    description: Bootstrap run progress
+  - name: Planned
+    description: Target FastAPI contract — not implemented
+paths:
+  /api/dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Get dashboard state
+      description: |
+        Returns the latest multi-strategy dashboard payload from `data/runtime-dashboard.json`.
+        If the file is missing or invalid, returns a valid idle state with HTTP 200.
+      operationId: getDashboard
+      responses:
+        "200":
+          description: Dashboard payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardState"
+  /api/bootstrap:
+    post:
+      tags: [Dashboard]
+      summary: Start bootstrap backtest
+      description: |
+        Runs all composable strategies from `config/strategies/*.yaml` via `python main.py bootstrap`.
+        Settings come from `config/dashboard.json`.
+      operationId: postBootstrap
+      responses:
+        "202":
+          description: Bootstrap subprocess started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartResponse"
+        "500":
+          description: Token missing or launch failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/stop:
+    post:
+      tags: [Dashboard]
+      summary: Stop running bootstrap
+      description: Writes a stop request file and terminates the running bootstrap process when possible.
+      operationId: postStop
+      responses:
+        "202":
+          description: Stop request accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, stopped]
+                properties:
+                  ok:
+                    type: boolean
+                  stopped:
+                    type: boolean
+                  killed:
+                    type: boolean
+                  dashboard_updated:
+                    type: boolean
+        "500":
+          description: Stop request failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/refresh-ranking:
+    post:
+      tags: [Dashboard]
+      summary: Refresh strategy Top-N ranking
+      description: Recomputes ranking from completed strategy metrics without rerunning backtests.
+      operationId: postRefreshRanking
+      responses:
+        "202":
+          description: Ranking refresh started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartResponse"
+        "500":
+          description: Launch failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/config:
+    get:
+      tags: [Config]
+      summary: Load runtime settings schema
+      description: Returns current settings, validation schema, and optional token status.
+      operationId: getConfig
+      responses:
+        "200":
+          description: Settings and schema
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigGetResponse"
+        "500":
+          description: Failed to load schema
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [Config]
+      summary: Save runtime settings
+      operationId: postConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuntimeSettings"
+      responses:
+        "200":
+          description: Settings saved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, settings]
+                properties:
+                  ok:
+                    type: boolean
+                  settings:
+                    type: object
+                    additionalProperties: true
+        "400":
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Save failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/strategies:
+    post:
+      tags: [Strategies]
+      summary: Add composable strategy YAML
+      operationId: postStrategy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [yaml]
+              properties:
+                yaml:
+                  type: string
+                  description: Full composable strategy YAML document
+      responses:
+        "200":
+          description: Strategy added
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, strategy]
+                properties:
+                  ok:
+                    type: boolean
+                  strategy:
+                    $ref: "#/components/schemas/StrategySummary"
+        "400":
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Save failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/strategies/{id}:
+    patch:
+      tags: [Strategies]
+      summary: Toggle strategy enabled for bootstrap
+      operationId: patchStrategyEnabled
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    delete:
+      tags: [Strategies]
+      summary: Delete composable strategy
+      operationId: deleteStrategy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Strategy identifier (filename stem)
+      responses:
+        "200":
+          description: Strategy deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, deleted, file]
+                properties:
+                  ok:
+                    type: boolean
+                  deleted:
+                    type: string
+                  file:
+                    type: string
+        "400":
+          description: Delete failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/tokens:
+    get:
+      tags: [Tokens]
+      summary: Get broker token status
+      operationId: getTokens
+      responses:
+        "200":
+          description: Token status per provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenStatusResponse"
+        "500":
+          description: Failed to load token status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [Tokens]
+      summary: Save and optionally verify tokens
+      operationId: postTokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenSaveRequest"
+      responses:
+        "200":
+          description: Tokens saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenStatusResponse"
+        "400":
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenStatusResponse"
+        "500":
+          description: Save failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/run-progress:
+    get:
+      tags: [Progress]
+      summary: Bootstrap fetch/backtest progress
+      operationId: getRunProgress
+      responses:
+        "200":
+          description: Progress payload or inactive
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /api/live-run:
+    get:
+      tags: [Live]
+      summary: Live refresh status
+      operationId: getLiveRun
+      responses:
+        "200":
+          description: Active flag and strategy_id
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    post:
+      tags: [Live]
+      summary: Start or stop live refresh
+      operationId: postLiveRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Start/stop result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /api/live-run/tick:
+    post:
+      tags: [Live]
+      summary: Run one live tick
+      operationId: postLiveRunTick
+      responses:
+        "200":
+          description: Updated strategy metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500":
+          description: Tick failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /health:
+    get:
+      tags: [Planned]
+      summary: "[Planned] API health check"
+      description: Not implemented. Target FastAPI service on port 8000.
+      operationId: plannedHealth
+      servers:
+        - url: http://localhost:8000
+      responses:
+        "501":
+          description: Not implemented
+  /strategies:
+    get:
+      tags: [Planned]
+      summary: "[Planned] List registered strategies"
+      description: Not implemented. Target FastAPI service on port 8000.
+      operationId: plannedListStrategies
+      servers:
+        - url: http://localhost:8000
+      responses:
+        "501":
+          description: Not implemented
+  /backtest/run:
+    post:
+      tags: [Planned]
+      summary: "[Planned] Start configurable backtest run"
+      description: Not implemented. Target FastAPI service on port 8000.
+      operationId: plannedBacktestRun
+      servers:
+        - url: http://localhost:8000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlannedBacktestRequest"
+      responses:
+        "501":
+          description: Not implemented
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: false
+        message:
+          type: string
+    StartResponse:
+      type: object
+      required: [ok, started]
+      properties:
+        ok:
+          type: boolean
+          example: true
+        started:
+          type: boolean
+          example: true
+        message:
+          type: string
+    StrategySummary:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        file:
+          type: string
+    StrategyMetrics:
+      type: object
+      properties:
+        total_pnl:
+          type: number
+        sharpe_ratio:
+          type: number
+        max_drawdown:
+          type: number
+        win_rate:
+          type: number
+        deposit_baseline_pnl:
+          type: number
+    StrategyEntry:
+      type: object
+      properties:
+        strategy_id:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+          enum: [idle, running, completed, error]
+        params:
+          type: object
+          additionalProperties: true
+        metrics:
+          $ref: "#/components/schemas/StrategyMetrics"
+        chart_points:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        trade_log:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    RankingEntry:
+      type: object
+      properties:
+        rank:
+          type: integer
+        strategy_id:
+          type: string
+        instrument:
+          type: string
+        total_pnl:
+          type: number
+        sharpe_ratio:
+          type: number
+        max_drawdown:
+          type: number
+        win_rate:
+          type: number
+        previous_rank:
+          type: integer
+          nullable: true
+        rank_delta:
+          type: integer
+          nullable: true
+    DashboardState:
+      type: object
+      properties:
+        instrument:
+          type: string
+          example: SBER
+        timeframe:
+          type: string
+          example: 1h
+        data_source:
+          type: string
+        initial_capital:
+          type: number
+        strategies:
+          type: array
+          items:
+            $ref: "#/components/schemas/StrategyEntry"
+        ranking:
+          type: object
+          properties:
+            computed_at:
+              type: string
+              nullable: true
+              format: date-time
+            entries:
+              type: array
+              items:
+                $ref: "#/components/schemas/RankingEntry"
+        last_updated:
+          type: string
+          nullable: true
+          format: date-time
+    RuntimeSettings:
+      type: object
+      properties:
+        data_source:
+          type: string
+        instrument:
+          type: string
+        timeframe:
+          type: string
+        lookback_days:
+          type: integer
+        initial_capital:
+          type: number
+        optimization_mode:
+          type: string
+        optimization_iterations:
+          type: integer
+        optimization_seed:
+          type: integer
+    ConfigGetResponse:
+      type: object
+      required: [ok, settings, schema]
+      properties:
+        ok:
+          type: boolean
+        settings:
+          type: object
+          additionalProperties: true
+        schema:
+          type: object
+          additionalProperties: true
+        tokens:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              configured:
+                type: boolean
+              masked:
+                type: string
+                nullable: true
+    TokenInfo:
+      type: object
+      properties:
+        configured:
+          type: boolean
+        masked:
+          type: string
+          nullable: true
+        valid:
+          type: boolean
+        message:
+          type: string
+    TokenStatusResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        tokens:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/TokenInfo"
+        message:
+          type: string
+    TokenSaveRequest:
+      type: object
+      properties:
+        tinkoff_token:
+          type: string
+        twelvedata_token:
+          type: string
+        verify:
+          type: boolean
+          description: When true, validate tokens against broker APIs before saving
+    PlannedBacktestRequest:
+      type: object
+      properties:
+        strategy_id:
+          type: string
+          example: ma_crossover
+        instrument:
+          type: string
+          example: SBER
+        from_dt:
+          type: string
+          format: date-time
+        to_dt:
+          type: string
+          format: date-time
+        timeframe:
+          type: string
+          example: 1h
+        initial_capital:
+          type: number
+          example: 100000
+        params:
+          type: object
+          additionalProperties: true
