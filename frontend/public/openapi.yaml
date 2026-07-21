@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: BackTestBench Dashboard API
   description: |
-    Live Next.js route handlers used by the MVP2 dashboard (`http://localhost`, Docker Compose default port 80).
+    Live Next.js route handlers used by the MVP2 dashboard (`http://localhost:3000`).
 
     Python subprocesses write JSON state under `data/`. This is not a durable run-history store.
 
@@ -13,12 +13,15 @@ info:
   contact:
     name: BackTestBench
 servers:
-  - url: http://localhost
-    description: Docker Compose (default host port 80)
+  - url: http://localhost:3000
+    description: Local Next.js dev server
 tags:
   - name: Dashboard
+    description: Backtest run state and control
   - name: Config
+    description: Runtime settings persisted in config/dashboard.json
   - name: Strategies
+    description: Composable YAML strategy files
   - name: Tokens
     description: Broker API token status and persistence
   - name: Live
@@ -32,6 +35,9 @@ paths:
     get:
       tags: [Dashboard]
       summary: Get dashboard state
+      description: |
+        Returns the latest multi-strategy dashboard payload from `data/runtime-dashboard.json`.
+        If the file is missing or invalid, returns a valid idle state with HTTP 200.
       operationId: getDashboard
       responses:
         "200":
@@ -44,16 +50,19 @@ paths:
     post:
       tags: [Dashboard]
       summary: Start bootstrap backtest
+      description: |
+        Runs all composable strategies from `config/strategies/*.yaml` via `python main.py bootstrap`.
+        Settings come from `config/dashboard.json`.
       operationId: postBootstrap
       responses:
         "202":
-          description: Bootstrap started
+          description: Bootstrap subprocess started
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/StartResponse"
         "500":
-          description: Launch failure
+          description: Token missing or launch failure
           content:
             application/json:
               schema:
@@ -62,10 +71,11 @@ paths:
     post:
       tags: [Dashboard]
       summary: Stop running bootstrap
+      description: Writes a stop request file and terminates the running bootstrap process when possible.
       operationId: postStop
       responses:
         "202":
-          description: Stop accepted
+          description: Stop request accepted
           content:
             application/json:
               schema:
@@ -81,7 +91,7 @@ paths:
                   dashboard_updated:
                     type: boolean
         "500":
-          description: Stop failed
+          description: Stop request failed
           content:
             application/json:
               schema:
@@ -90,6 +100,7 @@ paths:
     post:
       tags: [Dashboard]
       summary: Refresh strategy Top-N ranking
+      description: Recomputes ranking from completed strategy metrics without rerunning backtests.
       operationId: postRefreshRanking
       responses:
         "202":
@@ -104,23 +115,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-  /api/run-progress:
-    get:
-      tags: [Progress]
-      summary: Bootstrap fetch/backtest progress
-      operationId: getRunProgress
-      responses:
-        "200":
-          description: Progress payload or inactive
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
   /api/config:
     get:
       tags: [Config]
       summary: Load runtime settings schema
+      description: Returns current settings, validation schema, and optional token status.
       operationId: getConfig
       responses:
         "200":
@@ -130,7 +129,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ConfigGetResponse"
         "500":
-          description: Load failed
+          description: Failed to load schema
           content:
             application/json:
               schema:
@@ -186,6 +185,7 @@ paths:
               properties:
                 yaml:
                   type: string
+                  description: Full composable strategy YAML document
       responses:
         "200":
           description: Strategy added
@@ -250,6 +250,7 @@ paths:
           required: true
           schema:
             type: string
+          description: Strategy identifier (filename stem)
       responses:
         "200":
           description: Strategy deleted
@@ -284,13 +285,13 @@ paths:
       operationId: getTokens
       responses:
         "200":
-          description: Token status
+          description: Token status per provider
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TokenStatusResponse"
         "500":
-          description: Load failed
+          description: Failed to load token status
           content:
             application/json:
               schema:
@@ -388,71 +389,45 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-  /api/live-run:
+  /health:
     get:
-      tags: [Live]
-      summary: Live refresh status
-      operationId: getLiveRun
+      tags: [Planned]
+      summary: "[Planned] API health check"
+      description: Not implemented. Target FastAPI service on port 8000.
+      operationId: plannedHealth
+      servers:
+        - url: http://localhost:8000
       responses:
-        "200":
-          description: Active flag and strategy state
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LiveRunResponse"
-        "500":
-          description: Status failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: Not implemented
+  /strategies:
+    get:
+      tags: [Planned]
+      summary: "[Planned] List registered strategies"
+      description: Not implemented. Target FastAPI service on port 8000.
+      operationId: plannedListStrategies
+      servers:
+        - url: http://localhost:8000
+      responses:
+        "501":
+          description: Not implemented
+  /backtest/run:
     post:
-      tags: [Live]
-      summary: Start or stop live refresh
-      operationId: postLiveRun
+      tags: [Planned]
+      summary: "[Planned] Start configurable backtest run"
+      description: Not implemented. Target FastAPI service on port 8000.
+      operationId: plannedBacktestRun
+      servers:
+        - url: http://localhost:8000
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/LiveRunRequest"
+              $ref: "#/components/schemas/PlannedBacktestRequest"
       responses:
-        "200":
-          description: Start/stop result
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LiveRunResponse"
-        "400":
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Request failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-  /api/live-run/tick:
-    post:
-      tags: [Live]
-      summary: Run one live tick
-      operationId: postLiveRunTick
-      responses:
-        "200":
-          description: Updated strategy metrics
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LiveRunResponse"
-        "500":
-          description: Tick failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: Not implemented
 components:
   schemas:
     ErrorResponse:
@@ -460,6 +435,7 @@ components:
       properties:
         ok:
           type: boolean
+          example: false
         message:
           type: string
     StartResponse:
@@ -468,8 +444,10 @@ components:
       properties:
         ok:
           type: boolean
+          example: true
         started:
           type: boolean
+          example: true
         message:
           type: string
     StrategySummary:
@@ -547,8 +525,10 @@ components:
       properties:
         instrument:
           type: string
+          example: SBER
         timeframe:
           type: string
+          example: 1h
         data_source:
           type: string
         initial_capital:
@@ -648,33 +628,25 @@ components:
           description: When true, validate tokens against broker APIs before saving
     PlannedBacktestRequest:
       type: object
-      required: [action, strategy_id]
       properties:
-        action:
-          type: string
-          enum: [start, stop]
         strategy_id:
           type: string
+          example: ma_crossover
+        instrument:
+          type: string
+          example: SBER
+        from_dt:
+          type: string
+          format: date-time
+        to_dt:
+          type: string
+          format: date-time
+        timeframe:
+          type: string
+          example: 1h
+        initial_capital:
+          type: number
+          example: 100000
         params:
           type: object
-          additionalProperties:
-            type: number
-    LiveRunResponse:
-      type: object
-      properties:
-        ok:
-          type: boolean
-        active:
-          type: boolean
-        strategy_id:
-          type: string
-        strategy:
-          type: object
           additionalProperties: true
-        live:
-          type: object
-          additionalProperties: true
-        stopped_reason:
-          type: string
-        message:
-          type: string

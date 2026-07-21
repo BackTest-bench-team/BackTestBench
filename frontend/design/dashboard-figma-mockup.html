@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BackTestBench — Figma mockup (static UI)</title>
+  <style>
+    /* Design tokens from globals.css */
+    :root {
+      --bg-page: #d4dce8;
+      --surface: #f3f6fb;
+      --surface-muted: #e8eef6;
+      --border: #b8c8dc;
+      --text: #1a2740;
+      --text-secondary: #3d4f68;
+      --muted: #5a6d86;
+      --accent: #475ee6;
+      --accent-hover: #3b4fd4;
+      --green: #2f9e44;
+      --red: #c92a2a;
+      --amber: #c27803;
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      --radius-lg: 8px;
+      --shadow-sm: 0 1px 3px rgba(26, 39, 64, 0.08);
+      font-family: "Segoe UI", "Inter", system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text);
+    }
+
+    * { box-sizing: border-box; margin: 0; }
+
+    body {
+      min-height: 100vh;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(71, 94, 230, 0.08), transparent 55%),
+        linear-gradient(180deg, #ccd6e6 0%, var(--bg-page) 42%, #c9d4e4 100%);
+    }
+
+    .app-shell {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 20px 40px;
+      display: grid;
+      gap: 16px;
+    }
+
+    /* —— Hero —— */
+    .hero {
+      margin-top: 16px;
+      padding: 16px 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      box-shadow: var(--shadow-sm);
+      display: grid;
+      gap: 14px;
+    }
+
+    .hero-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .eyebrow {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .hero-title {
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    .meta-chip {
+      padding: 4px 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--surface-muted);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .strategy-search { display: grid; gap: 4px; flex: 1; }
+
+    .strategy-search-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .strategy-search-row { display: flex; gap: 8px; }
+
+    .strategy-search-input {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: #fff;
+      font-size: 13px;
+    }
+
+    .strategy-search-btn {
+      padding: 8px 16px;
+      border: 1px solid var(--border-strong, #9eb2cc);
+      border-radius: var(--radius-md);
+      background: var(--surface-muted);
+      font-weight: 600;
+      cursor: default;
+    }
+
+    /* —— Control panel —— */
+    .control-panel {
+      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      box-shadow: var(--shadow-sm);
+      display: grid;
+      gap: 20px;
+    }
+
+    .control-panel-kicker {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .control-panel-title { font-size: 16px; font-weight: 700; margin-top: 2px; }
+
+    .control-section-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .data-source-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+    .data-source-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .data-source-card.is-selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+    .data-source-card-select {
+      width: 100%;
+      display: flex;
+      gap: 10px;
+      padding: 12px;
+      border: none;
+      background: transparent;
+      text-align: left;
+      cursor: default;
+    }
+
+    .data-source-indicator {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .is-selected .data-source-indicator {
+      border-color: var(--accent);
+      background: var(--accent);
+      box-shadow: inset 0 0 0 3px #fff;
+    }
+
+    .data-source-name { font-weight: 700; font-size: 13px; }
+
+    .data-source-badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 999px;
+      text-transform: uppercase;
+    }
+
+    .data-source-badge.is-ready { background: #e6f4ea; color: var(--green); }
+    .data-source-badge.is-public { background: #e4e9fc; color: var(--accent); }
+    .data-source-badge.is-missing { background: #fce8e8; color: var(--red); }
+
+    .data-source-card-top { display: flex; align-items: center; gap: 8px; }
+
+    .data-source-desc { font-size: 12px; color: var(--muted); display: block; margin-top: 4px; }
+
+    .data-source-card-foot {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      background: var(--surface-muted);
+    }
+
+    .data-source-token-group { display: flex; gap: 8px; }
+
+    .data-source-token-input {
+      flex: 1;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+    }
+
+    .data-source-token-save {
+      padding: 6px 12px;
+      border: 1px solid var(--accent);
+      border-radius: var(--radius-sm);
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      font-size: 12px;
+      cursor: default;
+    }
+
+    .control-panel-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .control-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .control-input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: #fff;
+      font-size: 13px;
+    }
+
+    .control-hint { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    .optimization-mode-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+    .optimization-mode-card {
+      display: grid;
+      gap: 4px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: #fff;
+      cursor: default;
+    }
+
+    .optimization-mode-card.is-selected { border-color: var(--accent); background: #f8f9ff; }
+
+    .optimization-mode-name { font-weight: 700; text-transform: uppercase; font-size: 12px; }
+
+    .optimization-mode-desc { font-size: 12px; color: var(--muted); }
+
+    .control-panel-runbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--surface-muted);
+    }
+
+    .control-panel-runbar-title { font-weight: 700; display: block; }
+
+    .control-panel-runbar-meta { font-size: 12px; color: var(--muted); }
+
+    .run-progress { margin-top: 8px; }
+
+    .run-progress-head { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
+
+    .run-progress-track {
+      height: 6px;
+      border-radius: 999px;
+      background: #d0dae8;
+      overflow: hidden;
+    }
+
+    .run-progress-fill {
+      height: 100%;
+      width: 42%;
+      background: linear-gradient(90deg, var(--accent), #6b7ef0);
+      border-radius: 999px;
+    }
+
+    .control-run-toggle {
+      padding: 10px 20px;
+      border: 1px solid var(--accent);
+      border-radius: var(--radius-md);
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      font-size: 13px;
+      white-space: nowrap;
+      cursor: default;
+    }
+
+    .control-run-toggle.is-running {
+      background: var(--red);
+      border-color: var(--red);
+    }
+
+    /* —— Add strategy —— */
+    .add-strategy-panel {
+      padding: 16px 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .add-strategy-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .control-btn-run {
+      padding: 8px 16px;
+      border: 1px solid var(--accent);
+      border-radius: var(--radius-md);
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      cursor: default;
+    }
+
+    /* —— Strategy card —— */
+    .strategy-list { display: grid; gap: 16px; }
+
+    .strategy-card {
+      padding: 18px 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .strategy-card.is-live { border-color: #e8c468; box-shadow: 0 0 0 1px rgba(200, 120, 3, 0.25); }
+
+    .strategy-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .strategy-header-main { display: flex; align-items: flex-start; gap: 8px; }
+
+    .strategy-run-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    .rank-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      font-weight: 700;
+      font-size: 12px;
+    }
+
+    .rank-up { color: var(--green); font-size: 11px; }
+
+    .strategy-kicker { font-size: 12px; color: var(--muted); }
+
+    .strategy-title { font-size: 16px; font-weight: 700; }
+
+    .strategy-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    .strategy-action-btn-live {
+      padding: 6px 12px;
+      border: 1px solid var(--amber);
+      border-radius: var(--radius-md);
+      background: #faf3dd;
+      color: #8a5a00;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: default;
+    }
+
+    .strategy-delete-btn {
+      padding: 6px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: default;
+    }
+
+    .status-pill {
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .status-done { background: #e6f4ea; color: var(--green); }
+    .status-live { background: #faf3dd; color: var(--amber); }
+
+    .strategy-final { font-weight: 700; color: var(--green); font-size: 13px; }
+
+    .params-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+
+    .param-chip {
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      font-size: 11px;
+    }
+
+    .param-chip-value { font-weight: 700; margin-left: 4px; }
+
+    .strategy-health {
+      margin-bottom: 12px;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(16, 122, 88, 0.35);
+      background: rgba(16, 122, 88, 0.06);
+    }
+
+    .strategy-health.is-caution {
+      border-color: rgba(180, 130, 20, 0.35);
+      background: rgba(255, 248, 220, 0.55);
+    }
+
+    .strategy-health-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .strategy-health-kicker {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .strategy-health-grade {
+      font-weight: 800;
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+
+    .strategy-health-grade.is-pass { background: #e6f4ea; color: var(--green); }
+    .strategy-health-grade.is-caution { background: #faf3dd; color: var(--amber); }
+
+    .strategy-health-metrics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .metric-card {
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: #fff;
+    }
+
+    .metric-title {
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .metric-value { font-size: 15px; font-weight: 700; }
+
+    .metric-hint { display: block; font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+    .chart-box {
+      height: 220px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: linear-gradient(180deg, #fff 0%, var(--surface-muted) 100%);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .chart-placeholder-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--accent);
+      opacity: 0.6;
+    }
+
+    .chart-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .legend-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 4px;
+    }
+
+    .figma-note {
+      margin: 12px 0 0;
+      padding: 10px 14px;
+      border: 1px dashed var(--border);
+      border-radius: var(--radius-md);
+      background: rgba(255,255,255,0.5);
+      font-size: 12px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main class="app-shell">
+
+    <!-- HERO -->
+    <header class="hero">
+      <div class="hero-top">
+        <div>
+          <p class="eyebrow">Trading Analytics</p>
+          <h1 class="hero-title">BackTestBench</h1>
+        </div>
+        <div class="hero-meta">
+          <span class="meta-chip">Instrument: SBER</span>
+          <span class="meta-chip">TF: 1h</span>
+          <span class="meta-chip">Source: T-Bank</span>
+        </div>
+      </div>
+      <div class="strategy-search">
+        <span class="strategy-search-label">Find strategy</span>
+        <div class="strategy-search-row">
+          <input class="strategy-search-input" type="text" placeholder="Search by name or ID…" readonly />
+          <button class="strategy-search-btn" type="button">Go</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- BACKTEST CONTROL -->
+    <section class="control-panel" aria-label="Backtest control panel">
+      <div>
+        <p class="control-panel-kicker">Backtest control</p>
+        <h2 class="control-panel-title">Run settings</h2>
+      </div>
+
+      <div>
+        <p class="control-section-title">Data source</p>
+        <div class="data-source-list">
+          <div class="data-source-card is-selected">
+            <button class="data-source-card-select" type="button">
+              <span class="data-source-indicator"></span>
+              <span>
+                <span class="data-source-card-top">
+                  <span class="data-source-name">T-Bank</span>
+                  <span class="data-source-badge is-ready">Ready</span>
+                </span>
+                <span class="data-source-desc">MOEX equities via Tinkoff Invest API</span>
+              </span>
+            </button>
+            <div class="data-source-card-foot">
+              <div class="data-source-token-group">
+                <input class="data-source-token-input" type="password" value="••••••••••••" readonly />
+                <button class="data-source-token-save" type="button">Save</button>
+              </div>
+            </div>
+          </div>
+          <div class="data-source-card">
+            <button class="data-source-card-select" type="button">
+              <span class="data-source-indicator"></span>
+              <span>
+                <span class="data-source-card-top">
+                  <span class="data-source-name">Twelve Data</span>
+                  <span class="data-source-badge is-missing">Token required</span>
+                </span>
+                <span class="data-source-desc">US and global equities</span>
+              </span>
+            </button>
+          </div>
+          <div class="data-source-card">
+            <button class="data-source-card-select" type="button">
+              <span class="data-source-indicator"></span>
+              <span>
+                <span class="data-source-card-top">
+                  <span class="data-source-name">Bybit</span>
+                  <span class="data-source-badge is-public">Public API</span>
+                </span>
+                <span class="data-source-desc">Crypto spot klines</span>
+              </span>
+            </button>
+          </div>
+          <div class="data-source-card">
+            <button class="data-source-card-select" type="button">
+              <span class="data-source-indicator"></span>
+              <span>
+                <span class="data-source-card-top">
+                  <span class="data-source-name">Binance</span>
+                  <span class="data-source-badge is-public">Public API</span>
+                </span>
+                <span class="data-source-desc">Crypto spot klines</span>
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="control-panel-grid">
+        <label class="control-field">
+          <span class="control-label">Instrument</span>
+          <select class="control-input"><option>SBER</option></select>
+        </label>
+        <label class="control-field">
+          <span class="control-label">Timeframe</span>
+          <select class="control-input"><option>1h</option></select>
+        </label>
+        <label class="control-field">
+          <span class="control-label">Lookback days</span>
+          <input class="control-input" type="text" value="365" readonly />
+        </label>
+        <label class="control-field">
+          <span class="control-label">Initial capital (RUB)</span>
+          <input class="control-input" type="text" value="100000" readonly />
+        </label>
+        <label class="control-field">
+          <span class="control-label">Commission %</span>
+          <input class="control-input" type="text" value="0.05" readonly />
+        </label>
+        <label class="control-field">
+          <span class="control-label">Slippage %</span>
+          <input class="control-input" type="text" value="0.01" readonly />
+        </label>
+      </div>
+
+      <div>
+        <p class="control-section-title">Optimization</p>
+        <div class="optimization-mode-list">
+          <label class="optimization-mode-card is-selected">
+            <span class="optimization-mode-name">grid</span>
+            <span class="optimization-mode-desc">Exhaustive search over all parameter combinations</span>
+          </label>
+          <label class="optimization-mode-card">
+            <span class="optimization-mode-name">sample</span>
+            <span class="optimization-mode-desc">Random sample of parameter combinations</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="control-panel-runbar">
+        <div>
+          <span class="control-panel-runbar-title">Ready to run</span>
+          <span class="control-panel-runbar-meta">SBER · 1h · 365d lookback · full grid</span>
+          <!-- Uncomment for "running" state mockup:
+          <div class="run-progress">
+            <div class="run-progress-head"><span>Loading market data</span><span>42%</span></div>
+            <div class="run-progress-track"><div class="run-progress-fill"></div></div>
+          </div>
+          -->
+        </div>
+        <button class="control-run-toggle" type="button">Run backtest</button>
+        <!-- Running state: <button class="control-run-toggle is-running" type="button">Stop backtest</button> -->
+      </div>
+    </section>
+
+    <!-- ADD STRATEGY -->
+    <section class="add-strategy-panel">
+      <div class="add-strategy-head">
+        <div>
+          <p class="control-panel-kicker">Strategies</p>
+          <h2 class="control-panel-title">Registered from config/strategies/</h2>
+        </div>
+        <button class="control-btn-run" type="button">Add strategy</button>
+      </div>
+    </section>
+
+    <!-- STRATEGY CARDS -->
+    <section class="strategy-list">
+
+      <!-- Card #1 PASS -->
+      <article class="strategy-card">
+        <header class="strategy-header">
+          <div class="strategy-header-main">
+            <label class="strategy-run-toggle"><input type="checkbox" checked readonly /> Run</label>
+            <span class="rank-badge"><span>#1</span><span class="rank-up">▲1</span></span>
+            <div>
+              <p class="strategy-kicker">MA + RSI Composable</p>
+              <h2 class="strategy-title">ma_rsi_composable</h2>
+            </div>
+          </div>
+          <div class="strategy-status">
+            <button class="strategy-action-btn-live" type="button">Go Live</button>
+            <button class="strategy-delete-btn" type="button">Delete</button>
+            <span class="status-pill status-done">Ready</span>
+            <span class="strategy-final">+12.4%</span>
+          </div>
+        </header>
+
+        <div class="params-summary">
+          <span class="param-chip">Fast<span class="param-chip-value">12</span></span>
+          <span class="param-chip">Slow<span class="param-chip-value">30</span></span>
+          <span class="param-chip">Order size<span class="param-chip-value">1</span></span>
+        </div>
+
+        <div class="strategy-health">
+          <div class="strategy-health-head">
+            <span class="strategy-health-kicker">Strategy health</span>
+            <span class="strategy-health-grade is-pass">PASS</span>
+          </div>
+          <div class="strategy-health-metrics">
+            <span>Return +12.4%</span>
+            <span>PF 1.42</span>
+            <span>Consistency 75%</span>
+            <span>vs B&amp;H +3.1%</span>
+            <span>vs Deposit +8.2%</span>
+          </div>
+        </div>
+
+        <div class="metrics-grid">
+          <div class="metric-card"><span class="metric-title">Return</span><span class="metric-value">+12.4%</span></div>
+          <div class="metric-card"><span class="metric-title">Sharpe</span><span class="metric-value">1.18</span></div>
+          <div class="metric-card"><span class="metric-title">Drawdown</span><span class="metric-value">8.2%</span></div>
+          <div class="metric-card"><span class="metric-title">Win rate</span><span class="metric-value">54%</span></div>
+          <div class="metric-card"><span class="metric-title">Profit factor</span><span class="metric-value">1.42</span></div>
+          <div class="metric-card"><span class="metric-title">Calmar</span><span class="metric-value">0.91</span></div>
+          <div class="metric-card"><span class="metric-title">Consistency</span><span class="metric-value">75%</span><span class="metric-hint">Positive months</span></div>
+          <div class="metric-card"><span class="metric-title">vs Buy&amp;Hold</span><span class="metric-value">+3.1%</span></div>
+          <div class="metric-card"><span class="metric-title">vs Deposit</span><span class="metric-value">+8.2%</span><span class="metric-hint">13% baseline</span></div>
+        </div>
+
+        <div class="chart-box">
+          <div class="chart-placeholder-line" style="top:35%; transform:rotate(-8deg); width:110%; left:-5%"></div>
+          <div class="chart-placeholder-line" style="top:55%; transform:rotate(4deg); width:110%; left:-5%; background:#94a3b8; opacity:0.5"></div>
+        </div>
+        <div class="chart-legend">
+          <span><span class="legend-dot" style="background:var(--accent)"></span>Strategy (in market)</span>
+          <span><span class="legend-dot" style="background:#94a3b8"></span>Buy &amp; hold</span>
+          <span><span class="legend-dot" style="background:#2f9e44"></span>BUY</span>
+          <span><span class="legend-dot" style="background:#c92a2a"></span>SELL</span>
+        </div>
+      </article>
+
+      <!-- Card #2 CAUTION + Live -->
+      <article class="strategy-card is-live">
+        <header class="strategy-header">
+          <div class="strategy-header-main">
+            <label class="strategy-run-toggle"><input type="checkbox" checked readonly /> Run</label>
+            <span class="rank-badge"><span>#2</span></span>
+            <div>
+              <p class="strategy-kicker">SMA Cross Demo</p>
+              <h2 class="strategy-title">sma_cross_demo</h2>
+            </div>
+          </div>
+          <div class="strategy-status">
+            <button class="strategy-action-btn-live" type="button">Stop Live</button>
+            <span class="status-pill status-live">Live</span>
+            <button class="strategy-delete-btn" type="button">Delete</button>
+            <span class="status-pill status-done">Ready</span>
+            <span class="strategy-final">+6.8%</span>
+          </div>
+        </header>
+
+        <div class="params-summary">
+          <span class="param-chip">Fast<span class="param-chip-value">21</span></span>
+          <span class="param-chip">Slow<span class="param-chip-value">30</span></span>
+        </div>
+
+        <div class="strategy-health is-caution">
+          <div class="strategy-health-head">
+            <span class="strategy-health-kicker">Strategy health</span>
+            <span class="strategy-health-grade is-caution">CAUTION</span>
+          </div>
+          <div class="strategy-health-metrics">
+            <span>Return +6.8%</span>
+            <span>PF 1.15</span>
+            <span>Consistency 42%</span>
+            <span>vs B&amp;H +1.2%</span>
+            <span>vs Deposit +2.5%</span>
+          </div>
+        </div>
+
+        <div class="metrics-grid">
+          <div class="metric-card"><span class="metric-title">Return</span><span class="metric-value">+6.8%</span></div>
+          <div class="metric-card"><span class="metric-title">Sharpe</span><span class="metric-value">0.82</span></div>
+          <div class="metric-card"><span class="metric-title">Drawdown</span><span class="metric-value">11.4%</span></div>
+          <div class="metric-card"><span class="metric-title">Win rate</span><span class="metric-value">48%</span></div>
+          <div class="metric-card"><span class="metric-title">Profit factor</span><span class="metric-value">1.15</span></div>
+        </div>
+
+        <div class="chart-box">
+          <div class="chart-placeholder-line" style="top:45%; transform:rotate(-2deg); width:110%; left:-5%"></div>
+        </div>
+      </article>
+
+    </section>
+
+    <p class="figma-note">
+      Figma: open this file in Chrome → plugin <strong>html.to.design</strong> → Import webpage.
+      All controls are static <code>&lt;button&gt;</code> / inputs with no JavaScript.
+      Toggle running state via commented blocks in the runbar section.
+    </p>
+  </main>
+</body>
+</html>

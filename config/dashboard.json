@@ -38,8 +38,15 @@
       "fast": 15,
       "order_size": 1,
       "slow": 100,
-      "stop_loss_pct": 1.5,
+      "stop_loss_pct": 1.0,
       "take_profit_pct": 0.3
+    },
+    "sma_cross_demo": {
+      "order_size": 1,
+      "fast": 21,
+      "slow": 100,
+      "stop_loss_pct": 1.5,
+      "take_profit_pct": 0.5
     }
   },
   "commission_pct": 0.05,

@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "BackTestBench",
-  description: "MVP dashboard for backtesting",
+  description: "BackTestBench dashboard for backtesting",
 };
 
 export default function RootLayout({

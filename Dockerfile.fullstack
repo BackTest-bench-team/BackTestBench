@@ -29,6 +29,7 @@ ENV PYTHON_BIN=python3 \
 
 # Build Next.js app once during image build
 WORKDIR /app/frontend
+RUN cp ../docs/openapi.yaml public/openapi.yaml
 RUN npm run build
 
 # Standalone output needs static assets beside server.js
