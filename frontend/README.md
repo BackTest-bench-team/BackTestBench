@@ -14,7 +14,7 @@ Browser
    └─ Poll ──────────► GET /api/dashboard
 ```
 
-**API docs:** [http://localhost:3000/docs](http://localhost:3000/docs) (Swagger from `docs/openapi.yaml`).
+**API docs:** [http://localhost/docs](http://localhost/docs) (Swagger from `docs/openapi.yaml`; default Compose port 80).
 
 ## Folder layout
 
@@ -61,7 +61,7 @@ npm --prefix frontend ci
 npm --prefix frontend run dev
 ```
 
-Open http://localhost:3000. The frontend finds repo root via `main.py` or `REPO_ROOT`.
+Open the URL printed by the dev server. The frontend finds repo root via `main.py` or `REPO_ROOT`.
 
 ### Tokens
 
@@ -97,7 +97,7 @@ npm run lint
 
 ## Related docs
 
-- [`../README.md`](../README.md)
-- [`../docs/api_description.md`](../docs/api_description.md)
-- [`../src/data_loader/README.md`](../src/data_loader/README.md)
-- [`../DOCKER.md`](../DOCKER.md)
+- [`README.md`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/README.md)
+- [`docs/api_description.md`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/docs/api_description.md)
+- [`src/data_loader/README.md`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/src/data_loader/README.md)
+- [`DOCKER.md`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/DOCKER.md)

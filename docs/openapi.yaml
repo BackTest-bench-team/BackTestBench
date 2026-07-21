@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: BackTestBench Dashboard API
   description: |
-    Live Next.js route handlers used by the MVP2 dashboard (`http://localhost:3000`).
+    Live Next.js route handlers used by the MVP2 dashboard (`http://localhost`, Docker Compose default port 80).
 
     Python subprocesses write JSON state under `data/`. This is not a durable run-history store.
 
@@ -13,8 +13,8 @@ info:
   contact:
     name: BackTestBench
 servers:
-  - url: http://localhost:3000
-    description: Local Next.js dev server
+  - url: http://localhost
+    description: Docker Compose (default host port 80)
 tags:
   - name: Dashboard
     description: Backtest run state and control

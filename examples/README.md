@@ -1,12 +1,12 @@
 # Examples — Broker Adapter Usage
 
 This folder contains ready-to-run examples for the **broker adapter** layer. The
-main entry point is [`tbank_adapter_usage.py`](./tbank_adapter_usage.py), which
+main entry point is [`tbank_adapter_usage.py`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/examples/tbank_adapter_usage.py), which
 provides a thin, friendly wrapper around the low-level adapters
-([`TBankAdapter`](../src/broker_adapter/tbank.py),
-[`TwelveDataAdapter`](../src/broker_adapter/twelvedata.py),
-[`BybitAdapter`](../src/broker_adapter/bybit.py), and
-[`BinanceAdapter`](../src/broker_adapter/binance.py)) for fetching historical
+([`TBankAdapter`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/src/broker_adapter/tbank.py),
+[`TwelveDataAdapter`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/src/broker_adapter/twelvedata.py),
+[`BybitAdapter`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/src/broker_adapter/bybit.py), and
+[`BinanceAdapter`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/src/broker_adapter/binance.py)) for fetching historical
 market candles (OHLC/V) and running simple backtests.
 
 > The file's primary purpose is **parsing/fetching data from a data API**.
@@ -112,7 +112,7 @@ use identical parameters either way.
    do not pass the token explicitly.
 
 3. **Dependencies installed** (`aiohttp`, `python-dotenv`, protobuf, etc.) — see
-   the project [`requirements.txt`](../requirements.txt).
+   the project [`requirements.txt`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/requirements.txt).
 
 ---
 
@@ -526,7 +526,7 @@ skipping past the last received open time to avoid duplicates), so a single
 
 Both `fetch_candles` and `run_fetch_candles` return a `List[Candle]` in
 **chronological order** (oldest first). `Candle` is the unified dataclass from
-[`src/engine/models.py`](../src/engine/models.py):
+[`src/engine/models.py`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/src/engine/models.py):
 
 ```python
 @dataclass
@@ -622,7 +622,7 @@ rules apply as for fetching.
 | `BrokerError`                 | Any other adapter-level/transport error (e.g. gRPC `30014` for an overly wide explicit T-Bank intraday window). |
 
 All of these except `ValueError` come from
-[`src/broker_adapter/base.py`](../src/broker_adapter/base.py).
+[`src/broker_adapter/base.py`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/src/broker_adapter/base.py).
 
 ---
 

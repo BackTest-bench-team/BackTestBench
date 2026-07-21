@@ -18,7 +18,7 @@ As of July 19, 2026:
 
 For current contracts, see:
 
-- [`../interfaces_description.md`](../interfaces_description.md);
-- [`../strategy_module_architecture.md`](../strategy_module_architecture.md);
-- [`../analytics_data_model_specification.md`](../analytics_data_model_specification.md);
-- [`../../README.md`](../../README.md).
+- [`interfaces_description.md`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/docs/interfaces_description.md);
+- [`strategy_module_architecture.md`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/docs/strategy_module_architecture.md);
+- [`analytics_data_model_specification.md`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/docs/analytics_data_model_specification.md);
+- [`README.md`](https://github.com/BackTest-bench-team/BackTestBench/blob/main/README.md).

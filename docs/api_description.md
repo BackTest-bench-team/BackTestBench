@@ -2,7 +2,7 @@
 
 Last audited: **July 19, 2026**.
 
-Implemented Next.js routes on `http://localhost:3000`. FastAPI under `src/api` is **not** implemented.
+Implemented Next.js routes on `http://localhost` (Docker Compose, default port 80). FastAPI under `src/api` is **not** implemented.
 
 - **Swagger UI:** `/docs`
 - **OpenAPI:** `/api/openapi` (source: `docs/openapi.yaml`)
