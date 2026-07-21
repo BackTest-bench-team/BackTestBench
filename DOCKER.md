@@ -25,7 +25,7 @@ server:
 docker compose up --build
 ```
 
-Open <http://localhost:3000> (or the host port from `APP_PORT`, default 80).
+Open <http://localhost> (or the host port from `APP_PORT`, default 80).
 
 The `app` service bind-mounts host `.env`, `data/`, and `config/` into the container so
 API tokens saved from the dashboard UI persist across `docker compose down` / `up`. Tokens
@@ -84,7 +84,7 @@ docker compose --profile dev run --rm dev
 - installs Node.js 20;
 - installs Python dependencies from `requirements.txt`;
 - installs frontend dependencies with `npm ci`;
-- starts Next.js on `0.0.0.0:3000`.
+- starts Next.js on `0.0.0.0:80`.
 
 ### `Dockerfile`
 
@@ -138,7 +138,7 @@ count and coverage vary by branch; CI runs the full suite on every PR.
 
 The Docker job creates `.env` from the `TINKOFF_TOKEN` GitHub secret and sets
 `APP_PORT=8080`. Ephemeral runners tear down after each job, so no separate cleanup job is
-required on PR close. Local Compose defaults to `${APP_PORT:-80}:3000`.
+required on PR close. Local Compose defaults to `${APP_PORT:-80}:80`.
 
 The full-stack image runs the Next.js **standalone** server (`node server.js`), not
 `npm run start`.
@@ -154,7 +154,7 @@ Create it with `cp .env.example .env`.
 Set `TINKOFF_TOKEN` in `.env`. The pipeline cannot fetch T-Bank candles when the SQLite
 cache is empty and no token is available.
 
-### Port 80 or 3000 is busy
+### Port 80 is busy
 
 Set a different host port before starting Compose:
 
@@ -168,7 +168,7 @@ Or use a local `docker-compose.override.yml`:
 services:
   app:
     ports:
-      - "3001:3000"
+      - "8080:80"
 ```
 
 ### Reinstall frontend dependencies
@@ -224,7 +224,7 @@ mkdir -p data
 
 ## Current Limitations
 
-- The full-stack image serves the Next.js standalone build on port 3000 inside the container.
+- The full-stack image serves the Next.js standalone build on port 80 inside the container.
 - The application is a single-container MVP, not the multi-container API/database/scheduler
   deployment described in the Week 2 target architecture.
 - The default Compose service depends on a real T-Bank token when candles are not already
